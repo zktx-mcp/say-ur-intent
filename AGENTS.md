@@ -183,6 +183,14 @@ a task easier.
 - If a requirement is missing, weakened, removed, or unverified, say that
   directly. Do not relabel it as cleanup, simplification, alignment, or a
   harmless tradeoff.
+- Status or progress wording such as `blocked`, `unverified`, `follow-up`, or
+  `limitation` must not soften, downplay, or justify a missed requirement,
+  failed check, or completion claim when completion criteria are unmet. Do not
+  use `partially complete` as a completion status; if progress matters, name
+  completed subtasks and remaining requirements.
+- Completion judgment for a scoped task is binary. If any required behavior is
+  unimplemented, required cleanup remains undone, or verification is missing or
+  failing, the task is not complete.
 - Run relevant checks and report what passed or failed.
 - Check `git status --short` before the final response and classify unexpected
   files.

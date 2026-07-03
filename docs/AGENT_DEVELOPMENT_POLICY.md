@@ -47,6 +47,18 @@ section should be updated when the difference is intentional.
   state that concrete fact directly. Do not relabel it as alignment, cleanup,
   simplification, consolidation, follow-up, or a harmless tradeoff when the
   verified fact is that required behavior was not implemented or was narrowed.
+- Use status labels and progress reports only when they name the actual state.
+  `blocked` must identify the blocking condition, `unverified` must identify the
+  missing verification, and a progress report must name completed subtasks and
+  remaining requirements. Do not use `partially complete` as a success state.
+  These labels and reports must not soften a defect, downplay a missed
+  requirement, or support a completion claim when completion criteria are unmet.
+- A scoped unit of work has no partial-success state. Progress can be reported by
+  naming completed subtasks, but that progress is not task success. The unit
+  succeeds only when every required behavior is implemented, every required
+  cleanup is done, and every verification point passes. Otherwise report the
+  unit as not complete and name the concrete blocker, missing requirement,
+  failed check, or unverified requirement.
 - Do not hide a defect to preserve momentum or protect prior work. If a previous
   answer, plan, review, or commit claimed completion incorrectly, correct the
   record explicitly.
