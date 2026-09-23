@@ -289,7 +289,7 @@ export function deepbookUsdcPriceHistoryUserAnswerUse(): UserAnswerUse {
     answerFields: [
       "pair",
       "requested.range",
-      "coverageStatus",
+      "candleAvailability",
       "bars",
       "source.candles",
       "responseSummary",
@@ -325,7 +325,7 @@ export function deepbookUsdcPriceAtTimeUserAnswerUse(matchAvailable: boolean): U
             "matchedCandle.close"
           ]
         : []),
-      "coverageStatus",
+      "candleAvailability",
       "source.candles",
       "responseSummary",
       "unsupportedClaims"

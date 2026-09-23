@@ -27,7 +27,7 @@ whose bytes must recompute to the reviewed commitment before the user signs in
 their own wallet. After the page reports the signed transaction digest, the
 review server re-reads Sui mainnet and records normalized chain receipt
 evidence. The review page also displays the server-read chain
-receipt facts inline, and a public Receipt Analytics page reads on-chain receipt
+receipt facts inline, and an internal Receipt card reads on-chain receipt
 facts for any transaction digest, without adding signing or execution authority. MCP responses and ordinary review-session JSON never
 expose transaction bytes, request wallet signatures, provide signing readiness,
 or execute on the user's behalf.
@@ -50,12 +50,12 @@ and both must stay explicit in this file:
   the local review page offers a digest-gated byte handoff, user-controlled
   wallet signing, chain submission from the page, signed-digest reporting, and
   server-read chain receipt recording. The local review page shows
-  server-read execution facts inline on terminal review sessions, and a public
-  Receipt Analytics page reads on-chain receipt facts by transaction digest. MCP responses and
+  server-read execution facts inline on terminal review sessions, and an internal
+  Receipt card reads on-chain receipt facts by transaction digest. MCP responses and
   ordinary review-session JSON never expose transaction bytes, request wallet
   signatures, provide signing readiness, or execute on the user's behalf.
 - Deliberately sequenced next: further analysis views beyond the current inline
-  review receipt and public Receipt Analytics page, further protocol adapters, and external proposal
+  review receipt and internal Receipt card, further protocol adapters, and external proposal
   execution, each added only after Say Ur Intent independently builds or
   verifies the transaction material inside a human-readable local review, and
   never outside the product's permanent boundaries.
@@ -145,6 +145,25 @@ a task easier.
 - Open and read `AGENTS.md` from disk before starting. Do not rely on memory,
   previous turns, or summaries as a substitute.
 - Inspect the current repository state before editing.
+- For every task, finish collecting the task-relevant evidence before beginning
+  evaluation. Define the collection scope from the user's objective and affected
+  boundaries, including existing implementations, examples, tests, and recorded
+  observations. During collection, record facts, sources, and missing evidence;
+  do not form or report findings, rank alternatives, or assign priorities.
+- State when collection is complete before evaluating the collected material.
+  If evaluation reveals a material evidence gap, pause that evaluation, return
+  to collection, and resume only after the gap has been investigated. Do not
+  carry an earlier assessment forward as an established fact.
+- Reuse applicable implementation and verification evidence before proposing
+  new checks. Each additional check must name the changed boundary or missing
+  fact it resolves and the implementation or release decision that consumes it.
+  Unverified behavior alone does not make a separate pre-refactoring gate
+  necessary; distinguish prior evidence, integration checks, and release checks.
+- Do not create one-item/one-test development stages merely to satisfy a
+  procedure. Group related changes by the user flow they complete. Do not
+  repeat an established review or check unless the relevant code or process
+  changes, or new evidence invalidates its result. Apply this to this project's
+  existing implementation as well as reference projects.
 - Before reporting repository status, pending work, a task list, a plan,
   whether the tree is clean, or the current/next task name, re-check disk state
   in that same turn. At minimum inspect `git status --short --branch`,
@@ -222,6 +241,23 @@ For non-trivial work:
 Do not interpret a user request as the lowest-effort literal edit that satisfies
 the words in isolation. Interpret it by the product outcome, affected boundary,
 and adjacent invariants that must hold for the work to be complete.
+
+### Objectives And Means
+
+- In every task, the accepted user outcome is the objective. Tools,
+  architectures, abstractions, tests, documentation, and procedures are means
+  to that outcome and must never become independent objectives.
+- Improve a means only when collected evidence connects the improvement to a
+  concrete product behavior or quality requirement within the accepted task.
+  If that contribution cannot be explained, do not proceed. Greater internal
+  completeness, elegance, generality, test counts, or process sophistication
+  alone are not product quality improvements.
+- Once a means satisfies the product requirements it serves, stop improving
+  that means and continue toward the user outcome. Add no independent review
+  gate, report, or framework merely to perfect the means.
+- This rule does not permit reducing the accepted objective, weakening product
+  boundaries, or leaving required correctness, safety, or functionality
+  incomplete to fit a chosen means.
 
 ## Implementation Rules
 

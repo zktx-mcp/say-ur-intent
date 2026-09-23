@@ -6,12 +6,12 @@ This document is for maintainers and contributors who change local state, import
 
 ## Runtime Boundary
 
-The runtime starts these local components:
+The process that binds the configured loopback port initializes these local components. Other stdio processes authenticate that server and forward their calls; they do not open SQLite:
 
 - a local SQLite store;
 - a mainnet guard for the configured Sui gRPC endpoint;
 - the local review HTTP server on `127.0.0.1`;
-- the stdio MCP transport.
+- authenticated internal MCP sessions, reached by each client through a stdio forwarder.
 
 The GraphQL endpoint is also mainnet-guarded when it is saved through settings, imported from a local-data backup, or first used by Sui activity tools.
 
@@ -67,9 +67,9 @@ PRAGMA synchronous=NORMAL;
 PRAGMA foreign_keys=ON;
 ```
 
-Writes use SQLite's normal file-backed engine. On startup, the runtime creates the tables listed in [Tables](#tables) when the database file is empty.
+Writes use SQLite's normal file-backed engine. An empty file is initialized to the current schema. An existing file is checked read-only before opening for writes: its format identifier and schema metadata must match the current definitions. The runtime does not migrate, repair or silently reset another format.
 
-Delete the local DB files or set a new `SAY_UR_INTENT_DATA_DIR` when resetting local product data files.
+Use an empty `SAY_UR_INTENT_DATA_DIR` for a new installation. Existing files remain untouched. Product reset is a separate confirmed Settings action.
 
 WAL mode can create companion files next to the main database, such as `say-ur-intent.sqlite-wal` and `say-ur-intent.sqlite-shm`. Backups and manual moves should keep those files together with the main database while the MCP server is stopped. Avoid placing `SAY_UR_INTENT_DATA_DIR` in cloud-synchronized folders such as iCloud Drive, Dropbox, or similar sync roots because WAL companion files can be copied out of order.
 
@@ -124,34 +124,37 @@ update triggers reject revision-unaware writers: inserts must use
 `revision = 0` and the current write-contract marker, and updates must increase
 the revision by exactly one and keep the current write-contract marker.
 
-Logical local data reset is the local settings page action that clears stored product state through the runtime without requiring manual database-file deletion. Replace-only import is the settings page import path that replaces local product state from a validated backup. Both logical local data reset and replace-only import clear `coin_metadata_cache`. Clearing active account context does not clear it because coin metadata is account-independent.
+Logical local data reset is the local settings page action that clears stored product state through the runtime without requiring manual database-file deletion. Replace-only import is the settings page import path that replaces local product state from a validated backup. Both logical local data reset and replace-only import clear `coin_metadata_cache`, card records, live review/wallet/settings sessions, private review artifacts and transaction material in the same SQLite transaction. A rollback preserves the existing data and permissions. No separate HTTP cleanup call owns permission invalidation. Clearing active account context does not clear it because coin metadata is account-independent.
 
 Non-terminal review session expiry is recorded lazily when the session is read or mutated after its TTL. There is no background expiry worker.
 
-## Shared single-origin review server
+## Shared local server
 
-All live session state lives in this one shared database, so multiple local AI clients (for example Claude and Codex running at the same time) share it. Exactly one process binds the fixed review port and serves every client's review pages from the shared database. A second client's MCP does not take the port over; it defers to that healthy peer and takes the origin over only if the owner exits. Because whichever process owns the port reads and writes the same session rows, a review created by one client is servable by the review server of another, and the single fixed origin keeps the browser wallet autoconnect stable.
+Exactly one stdio process binds the configured loopback port and creates the shared services and SQLite stores. Other clients authenticate the listener before sending control credentials and forward MCP messages to it. The authentication covers database identity, runtime API version, configuration and server instance. Proof and subsequent dispatch use the same TCP connection. Host/Origin validation is separate from authentication; neither protects against a malicious process running as the same OS user.
 
-Cross-process writes rely on WAL plus `PRAGMA busy_timeout`. Live review-session
-mutations commit through revision-aware transitions on the shared SQLite
-connection. Runtime product transitions that also write activity/audit rows
-commit the live row and the activity rows in one immediate SQLite transaction.
-The wallet handoff lock remains a conditional write on
-`live_review_sessions.pending_handoff_digest`, and it also increments the live
-row revision, so two processes cannot hand off two different transactions for
-the same session or silently overwrite a newer live session state.
+The private `runtime-control.key` file is separate from UI permissions and wallet credentials and is excluded from product backups. Stdio closure and process signals close the owned server; no client signals another process. A peer can acquire the port after it becomes free. Failed calls are not replayed automatically.
+
+All state-writing MCP callers use this owner, including reads that save activity, metadata or chain results. An asynchronous operation carries the current data generation. Access after replacement or shutdown is refused, preventing a late response from writing into replacement data. Live review transitions retain revision/CAS and SQLite transactions. No network wait is held inside a database transaction.
+
+### Read cards
+
+`live_read_cards` owns the read card kind, permission hash, backend owner, revision, original/accepted input, state/reason and saved result. Admission and result writes use conditional updates. Expiry is applied by the backend to unsubmitted input; a View timer only requests state. Frame recreation and chat navigation perform no close transition. The backend rejects late writes after local data replacement or owner changes, and recovery closes unfinished cards without repeating their source query.
+
+The same record contains a model-safe result and, for receipts, separately validated UI-only input values and PTB display data. They are projections of one source read. They are not activity evidence or serialized signing material. Public saved resources exclude the private partition, and product backups exclude card records and permission hashes entirely.
+
+Input TTL is not a result-retention deadline. Completed results survive restart and remain until explicit local data reset/import; there is no automatic age-based deletion or per-card size cap. Existing query limits still apply. DB size can therefore grow with usage. Reset/import affects other local data too and must retain its explicit confirmation and failure-atomicity contract.
 
 ### Unsigned transaction material on disk
 
 `live_transaction_materials` stores locally built unsigned transaction bytes so a review can be signed by whichever process owns the port. The data directory is created `0700` and the database file is set `0600` so other operating-system users cannot read them; the bytes carry a short TTL and are deleted on signing, terminal result, or expiry. This store is separate from the review evidence path: the MCP tool layer still does not return transaction bytes, and the activity-store evidence inputs still reject transaction bytes, signatures, and signing material before write.
 
-### Schema versioning across shared clients
+### Current format and backups
 
-The live session write contract uses `user_version` as the shared-schema
-compatibility guard. A runtime that sees a newer `user_version` fails closed
-instead of opening the shared database. Every MCP client sharing the same data
-directory must run a runtime that supports the current schema before writing
-live review-session state.
+The current `user_version` is 8. It identifies one supported schema; there is no migration registry or older-format decoder. All clients sharing a data directory must use the same compatible runtime.
+
+A current backup carries `format`, `schemaVersion`, `network`, `exportedAt` and its product data. Import rejects a missing or different schema identifier, incomplete required fields, invalid references or invalid raw quantities. Missing settings or activity arrays are not filled from defaults. Supported `function_scan` provenance remains part of the current format. Validation failure leaves current data intact.
+
+New installations do not inherit older local review records, activity scans, known/active accounts or stored endpoints. Users configure the required context again; environment overrides retain their existing precedence. Empty local history does not imply an absence of on-chain transactions. Existing DB and backup files are not deleted by startup.
 
 ## Boundaries
 
@@ -159,7 +162,7 @@ The active account is a read context only. It is not signing authorization, logi
 
 NDJSON event logs remain optional audit/debug logs. They are not the product activity source of truth. User-facing activity summaries read from SQLite. Event log write failures do not fail product session transitions or SQLite evidence writes.
 
-Session tokens, token hashes, and URL fragment tokens are never stored in SQLite. The activity-store evidence input types do not accept session token material, and review evidence JSON is checked with the same forbidden-field-name policy used for MCP output. Transaction bytes, signatures, serialized signing material, token-hash/session-token-like fields, seeds, mnemonics, and private-key-like field names are rejected before write. External proposal ingestion also rejects recognized Sui private-key strings, valid English BIP39 mnemonic phrases, obvious sensitive markers, and suspicious raw secret-like payloads before storing the sanitized requested intent. Generic asset metadata such as token symbols remains allowed.
+Raw session tokens are not stored in SQLite. Live session records store token hashes for validation; this private state is separate from activity evidence and product backups. The activity-store evidence input types do not accept session token material, and review evidence JSON is checked with the same forbidden-field-name policy used for MCP output. Transaction bytes, signatures, serialized signing material, token-hash/session-token-like fields, seeds, mnemonics, and private-key-like field names are rejected before write. External proposal ingestion also rejects recognized Sui private-key strings, valid English BIP39 mnemonic phrases, obvious sensitive markers, and suspicious raw secret-like payloads before storing the sanitized requested intent. Generic asset metadata such as token symbols remains allowed.
 
 The local settings table is not a secret store. It stores only allowlisted local preferences such as the Sui mainnet gRPC and GraphQL endpoints. It must not store database paths, tokens, credentials, private keys, mnemonics, seeds, or arbitrary API keys. Environment overrides such as `SUI_GRPC_URL` and `SUI_GRAPHQL_URL` can temporarily supersede stored endpoints without mutating the database.
 

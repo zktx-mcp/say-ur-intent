@@ -78,7 +78,6 @@ describe("smoke mainnet read assertions", () => {
           sentByAccount: false,
           balanceChangeCompleteness: "complete",
           balanceChangeEvidence: "account_balance_changes_returned",
-          accountBalanceChangeAbsenceProven: false,
           accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
           balanceChanges: [
             {
@@ -345,8 +344,7 @@ function requestedAccountFactForFixture(transaction: unknown): Record<string, un
     role: "affected_only",
     sentByAccount: false,
     balanceChangeEvidence: "no_account_balance_changes_returned",
-    accountBalanceChangeAbsenceProven: true,
-    accountBalanceChangeInferencePolicy: "account_absence_proven_by_complete_details",
+    accountBalanceChangeInferencePolicy: "no_account_balance_changes_in_complete_details",
     balanceChangeCompleteness: "complete",
     balanceChanges: [],
     coinFlows: [],
@@ -358,17 +356,15 @@ function requestedAccountFactForFixture(transaction: unknown): Record<string, un
     : balanceChanges.length === 0
       ? "no_account_balance_changes_returned"
       : "account_balance_changes_returned";
-  const accountBalanceChangeAbsenceProven = balanceChangeEvidence === "no_account_balance_changes_returned";
   const accountBalanceChangeInferencePolicy = typeof effect.accountBalanceChangeInferencePolicy === "string"
     ? effect.accountBalanceChangeInferencePolicy
-    : accountBalanceChangeAbsenceProven
-      ? "account_absence_proven_by_complete_details"
+    : balanceChangeEvidence === "no_account_balance_changes_returned"
+      ? "no_account_balance_changes_in_complete_details"
       : balanceChangeEvidence === "account_balance_changes_returned"
         ? "use_returned_account_balance_changes"
         : "do_not_infer_from_transaction_context";
   const requestedAccountEffect = {
     ...effect,
-    accountBalanceChangeAbsenceProven,
     accountBalanceChangeInferencePolicy
   };
   const digest = typeof transactionObject?.digest === "string" ? transactionObject.digest : "abc";
@@ -379,7 +375,6 @@ function requestedAccountFactForFixture(transaction: unknown): Record<string, un
     accountRole: effect.role ?? "affected_only",
     sentByAccount: effect.sentByAccount ?? false,
     accountBalanceChangeEvidence: balanceChangeEvidence,
-    accountBalanceChangeAbsenceProven,
     accountBalanceChangeInferencePolicy,
     accountBalanceChangeCompleteness: effect.balanceChangeCompleteness ?? "complete",
     accountBalanceChanges: balanceChanges,

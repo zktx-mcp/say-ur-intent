@@ -27,7 +27,7 @@ export type SuiAccountBalanceChangeEvidence =
   | "account_balance_changes_unavailable";
 export type SuiAccountBalanceChangeInferencePolicy =
   | "use_returned_account_balance_changes"
-  | "account_absence_proven_by_complete_details"
+  | "no_account_balance_changes_in_complete_details"
   | "do_not_infer_from_transaction_context";
 export type SuiTransactionAccountRole = "sender" | "affected_only";
 export type SuiTransactionAccountEffectLimitation =
@@ -47,7 +47,6 @@ export type SuiTransactionAccountEffects = {
   role: SuiTransactionAccountRole;
   sentByAccount: boolean;
   balanceChangeEvidence: SuiAccountBalanceChangeEvidence;
-  accountBalanceChangeAbsenceProven: boolean;
   accountBalanceChangeInferencePolicy: SuiAccountBalanceChangeInferencePolicy;
   balanceChangeCompleteness: SuiAccountBalanceChangeCompleteness;
   balanceChanges: SuiAccountScopedBalanceChange[];

@@ -229,7 +229,6 @@ describe("TransactionActivityService", () => {
         accountEffects: {
           sentByAccount: false,
           balanceChangeEvidence: "account_balance_changes_returned",
-          accountBalanceChangeAbsenceProven: false,
           balanceChangeCompleteness: "complete",
           balanceChanges: [
             {
@@ -505,7 +504,6 @@ describe("TransactionActivityService", () => {
       role: "affected_only",
       sentByAccount: false,
       balanceChangeEvidence: "account_balance_changes_returned",
-      accountBalanceChangeAbsenceProven: false,
       accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
       balanceChangeCompleteness: "complete",
       balanceChanges: [
@@ -561,7 +559,7 @@ describe("TransactionActivityService", () => {
 
     expect(result.requestedAccount.balanceChangeCompleteness).toBe("truncated");
     expect(result.transactions[0]?.accountEffects?.balanceChangeEvidence).toBe("incomplete_account_balance_changes");
-    expect(result.transactions[0]?.accountEffects?.accountBalanceChangeAbsenceProven).toBe(false);
+    expect(result.transactions[0]?.accountEffects?.balanceChangeEvidence).toBe("incomplete_account_balance_changes");
     expect(result.transactions[0]?.accountEffects?.accountBalanceChangeInferencePolicy).toBe(
       "do_not_infer_from_transaction_context"
     );

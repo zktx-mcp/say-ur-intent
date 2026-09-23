@@ -33,7 +33,7 @@ Do not silently choose USDC or USDT, infer inverse output-target quotes, use web
 `What can I sell?`
 Class: `wallet_asset_read`.
 Use active account context or explicit address, then call `read.classify_wallet_assets`.
-Expose returned spendable coin-balance classes, gas asset context, DeepBook token registry matches, and `uninspectedAssetClasses`.
+Expose returned zero/nonzero coin-balance classes, gas asset context, DeepBook token registry matches, and `uninspectedAssetClasses`.
 Do not treat staked, locked, DeepBook manager, LP, vault, NFT, object, unsupported, or unknown classes as zero balances or sellable candidates.
 
 `Sell DEEP for USDC.`

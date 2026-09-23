@@ -188,10 +188,6 @@ function summarizeRequestedAccountTransactionFacts(
       fact.accountBalanceChangeEvidence,
       `${toolName}.data.requestedAccountTransactionFacts[${factIndex}].accountBalanceChangeEvidence`
     );
-    const absenceProven = requiredBoolean(
-      fact.accountBalanceChangeAbsenceProven,
-      `${toolName}.data.requestedAccountTransactionFacts[${factIndex}].accountBalanceChangeAbsenceProven`
-    );
     const inferencePolicy = requiredAccountBalanceChangeInferencePolicy(
       fact.accountBalanceChangeInferencePolicy,
       `${toolName}.data.requestedAccountTransactionFacts[${factIndex}].accountBalanceChangeInferencePolicy`
@@ -234,18 +230,13 @@ function summarizeRequestedAccountTransactionFacts(
         `${toolName}.data.requestedAccountTransactionFacts[${factIndex}] empty complete account evidence must be no_account_balance_changes_returned`
       );
     }
-    const expectedAbsenceProven = completeness === "complete" && balanceChanges.length === 0;
-    if (absenceProven !== expectedAbsenceProven) {
-      throw new SmokeResponseShapeError(
-        `${toolName}.data.requestedAccountTransactionFacts[${factIndex}].accountBalanceChangeAbsenceProven is inconsistent with evidence completeness and row count`
-      );
+    if (completeness === "complete" && balanceChanges.length > 0 && evidence !== "account_balance_changes_returned") {
+      throw new SmokeResponseShapeError(`${toolName} complete account rows require account_balance_changes_returned`);
     }
-    if (requestedAccountEffect.accountBalanceChangeAbsenceProven !== absenceProven) {
-      throw new SmokeResponseShapeError(
-        `${toolName}.data.requestedAccountTransactionFacts[${factIndex}].requestedAccountEffect.accountBalanceChangeAbsenceProven does not match flat field`
-      );
+    if (requestedAccountEffect.balanceChangeEvidence !== evidence || requestedAccountEffect.balanceChangeCompleteness !== completeness) {
+      throw new SmokeResponseShapeError(`${toolName} nested account evidence and completeness must match flat fields`);
     }
-    const expectedInferencePolicy = expectedAccountBalanceChangeInferencePolicy(evidence, absenceProven);
+    const expectedInferencePolicy = expectedAccountBalanceChangeInferencePolicy(evidence);
     if (inferencePolicy !== expectedInferencePolicy) {
       throw new SmokeResponseShapeError(
         `${toolName}.data.requestedAccountTransactionFacts[${factIndex}].accountBalanceChangeInferencePolicy is inconsistent with account evidence`
@@ -480,11 +471,11 @@ function requiredAccountBalanceChangeInferencePolicy(
   value: unknown,
   path: string
 ): "use_returned_account_balance_changes"
-  | "account_absence_proven_by_complete_details"
+  | "no_account_balance_changes_in_complete_details"
   | "do_not_infer_from_transaction_context" {
   if (
     value === "use_returned_account_balance_changes" ||
-    value === "account_absence_proven_by_complete_details" ||
+    value === "no_account_balance_changes_in_complete_details" ||
     value === "do_not_infer_from_transaction_context"
   ) {
     return value;
@@ -496,16 +487,15 @@ function expectedAccountBalanceChangeInferencePolicy(
   evidence: "account_balance_changes_returned"
     | "no_account_balance_changes_returned"
     | "incomplete_account_balance_changes"
-    | "account_balance_changes_unavailable",
-  absenceProven: boolean
+    | "account_balance_changes_unavailable"
 ): "use_returned_account_balance_changes"
-  | "account_absence_proven_by_complete_details"
+  | "no_account_balance_changes_in_complete_details"
   | "do_not_infer_from_transaction_context" {
   if (evidence === "account_balance_changes_returned") {
     return "use_returned_account_balance_changes";
   }
-  if (evidence === "no_account_balance_changes_returned" && absenceProven) {
-    return "account_absence_proven_by_complete_details";
+  if (evidence === "no_account_balance_changes_returned") {
+    return "no_account_balance_changes_in_complete_details";
   }
   return "do_not_infer_from_transaction_context";
 }

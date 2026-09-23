@@ -6,6 +6,7 @@ import {
   shortHex,
   shortType,
   signedRawToDisplay,
+  suiAmount,
   SUI_DECIMALS
 } from "../review-app/src/format.js";
 
@@ -49,6 +50,21 @@ describe("mistToSui", () => {
     expect(SUI_DECIMALS).toBe(9);
     expect(mistToSui("275256")).toBe("0.000275256");
     expect(mistToSui("1000000000")).toBe("1");
+  });
+
+  it("preserves net gas refunds through the SUI display entry points", () => {
+    // Receipt components: 123600 + 78561200 - 78761232 = -76432 MIST.
+    // Expected decimal strings follow 1 SUI = 10^9 MIST, independently of the formatter.
+    for (const [mist, display] of [
+      ["-76432", "-0.000076432"],
+      ["-1000000001", "-1.000000001"],
+      ["0", "0"],
+      ["-0", "0"],
+      ["1000000001", "1.000000001"]
+    ] as const) {
+      expect(mistToSui(mist)).toBe(display);
+      expect(suiAmount(mist)).toBe(`${display} SUI`);
+    }
   });
 });
 

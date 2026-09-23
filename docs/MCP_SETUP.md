@@ -393,6 +393,16 @@ Explicit-address coin balance reads through `read.summarize_wallet_assets` and `
 
 The wallet identity page captures only the selected account address and chain identifier. It does not prepare a transaction or request wallet authorization. MCP client sidebars and embedded webviews are not supported wallet identity surfaces; use the same machine's system browser.
 
+## Internal read cards
+
+Ask the AI client to show an account asset card, a transaction result card, or a DeepBook USDC chart. The corresponding tools are `ui.open_account`, `ui.open_receipt`, and `ui.open_chart`. Claude Desktop and Codex desktop use their internal MCP Apps view. A client without that UI receives `ui_unavailable`; ordinary read tools still provide evidence.
+
+A card accepts one read selection. Moving between chats or recreating its frame does not close valid unsubmitted input. After the server accepts the selection or its input period expires, the original input stays closed. Request a new card for a different selection. A server restart ends unfinished cards without repeating their queries; completed results remain readable. If a reply is lost, use the same card’s saved-state recovery before starting another request. These read cards do not connect a wallet, sign or submit transactions. Cards do not provide clipboard or copy-button features.
+
+## Local data format
+
+Start this runtime with an empty `SAY_UR_INTENT_DATA_DIR` or a database already in its current format. A mismatched existing database is refused before writes. There is no older DB or backup migration. Older local records, known/active accounts and stored endpoints are not inherited; set the needed account context and endpoints again. Existing files are left in place, and environment overrides keep their existing precedence. See [Local DB Architecture](LOCAL_DB_ARCHITECTURE.md) for the current format, backup scope and card-result retention. Card results do not expire with the input period and can increase DB size. Reset/import removes them along with the affected local data; it is not a card-only space cleanup operation.
+
 ## Local Settings
 
 Beginner setup uses the built-in Sui mainnet gRPC and GraphQL endpoints. You do not need to copy an endpoint into Claude, Codex, Cursor, or another MCP client.
@@ -414,8 +424,8 @@ The settings page lets the user:
 Settings validation rules:
 
 - Import preview validates the backup shape without contacting the imported endpoint.
-- Import preview reports `defaultsInjected` when a backup is missing a setting that the current runtime requires; the preview fills that setting from the current default.
-- Backups that contain `function_scan` provenance can be imported by the current runtime. Unsupported scan-kind values are rejected rather than partially imported.
+- Import accepts only the current backup format and schema identifier. Required settings and activity fields must be present; missing fields are not filled from defaults.
+- Current-format backups can contain `function_scan` provenance. Unsupported formats and scan-kind values are rejected rather than partially imported.
 - Endpoint chain-identifier verification runs only when the user confirms the replace-only import.
 - A custom gRPC endpoint must be an `http` or `https` URL with an explicit port and no credentials, path, query string, or fragment.
 - A custom GraphQL endpoint must be an `https` URL with no credentials, query string, or fragment.

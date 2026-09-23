@@ -12,8 +12,8 @@ It is not the contributor rulebook and it is not enforcement. Development rules 
 | --- | --- | --- |
 | Sui mainnet state reads | Current | Use read tools for supported balances, DeepBook pools, FlowX pools, token registry metadata, mid-price snapshots, orderbook context, raw-quantity quotes, and DeepBook account inventory. |
 | DeepBook USDC candle-history reads | Current DeepBookV3 official Indexer candle evidence | `read.get_deepbook_usdc_price_history` reads DeepBookV3 official Indexer USDC candles for the requested official interval. `read.get_deepbook_usdc_price_at_time` selects the candle for or nearest to one target UTC time and identifies `matchedCandle.close` as the representative price. Treat both as external official Indexer candle evidence, not a live quote, chain recomputation by Say Ur Intent, USD value, route choice, P&L, tax, transaction-building input, signing readiness, or user-account history. |
-| DeepBook USDC candle chart page | Current local read-only chart page | `/charts/deepbook-usdc` displays DeepBookV3 official Indexer USDC-denominated candles through local chart APIs. It is a same-machine browser page, not an MCP tool. It does not require a wallet, session token, review session, signing state, account history, auto-refresh, direct browser access to the official Indexer, route choice, P&L, tax, cost-basis, USD value, or a USDC/USD peg claim. |
-| DeepBook and FlowX swap review sessions | Digest-gated handoff; user-controlled signing on the review page | A review URL can be created. The review URL displays the proposal and local review evidence. The account-bound review can build local unsigned DeepBook or FlowX swap transaction material inside the review server, internally bind a Sui transaction digest to that stored material, and derive object ownership, quote/policy provenance, human-readable review facts, and review-time simulation evidence from the same private review artifacts. This release does not provide a sign action, signing data, MCP-visible transaction bytes, or signing readiness. The local review page requests a digest-gated byte handoff for a `ready_for_wallet_review` state, then the user signs in their own wallet. After the page reports the signed transaction digest, the review server re-reads Sui mainnet and records normalized chain receipt evidence. The review page shows server-read chain receipt facts inline on a terminal review session, and a public Receipt Analytics page reads on-chain receipt facts for any transaction digest, without adding wallet or MCP authority. |
+| Account, Receipt and DeepBook USDC cards | Internal read-only MCP Apps | Use `ui.open_account`, `ui.open_receipt`, or `ui.open_chart` for an interactive read card. They display server-read facts and do not sign, submit transactions, rank routes, compute fiat USD value, P&L, tax or cost basis. |
+| DeepBook and FlowX swap review sessions | Digest-gated handoff; user-controlled signing on the review page | A review URL can be created. The review URL displays the proposal and local review evidence. The account-bound review can build local unsigned DeepBook or FlowX swap transaction material inside the review server, internally bind a Sui transaction digest to that stored material, and derive object ownership, quote/policy provenance, human-readable review facts, and review-time simulation evidence from the same private review artifacts. Ordinary MCP responses do not provide a sign action, signing data, transaction bytes, or signing readiness. The local review page requests a digest-gated byte handoff for a `ready_for_wallet_review` state, then the user signs in their own wallet. After the page reports the signed transaction digest, the review server re-reads Sui mainnet and records normalized chain receipt evidence. The review page shows server-read chain receipt facts inline on a terminal review session, and a internal Receipt card reads on-chain receipt facts for any transaction digest, without adding wallet or MCP authority. |
 | External proposal review sessions | Non-signable review in the current release | `action.prepare_external_proposal_review` can create a review URL from a structured external payment or Sui action proposal. Treat the proposal as untrusted display and review context only. It does not build, verify, simulate, sign, or execute transaction material. |
 | Wallet signing | User-controlled on the local review page | MCP tools do not return signing readiness, signing data, or executable transaction bytes. Signing and submission happen only from the local review page after the digest-gated handoff; after the page reports the signed transaction digest, the review server records server-read chain receipt evidence keyed by the review session. |
 | PTB visualization | Rendered with emitted wallet review contracts | `reviewState.ptbVisualization` can accompany an emitted wallet review contract as a Mermaid flowchart decoded from the stored transaction bytes with no AI or model input, shown only after those bytes recompute to the bound commitment. Treat it as visualization evidence only, not transaction-building input, wallet authorization, signing data, signing readiness, payment execution readiness, or route recommendation. |
@@ -44,7 +44,7 @@ When a tool response includes `userAnswerUse`, treat it as the response-local an
 - do not answer claims listed in `userAnswerUse.cannotAnswer`;
 - when present, use `userAnswerUse.followUp.inputFields` as the fields to pass into `userAnswerUse.followUp.tool`, then use `userAnswerUse.followUp.answerFields` in that follow-up response.
 
-When a USD-denominated settlement-asset response includes `answerSourceStatus`, check `answerSourceStatus.canUseThisResponseForUserAnswer`.
+When a USD-denominated settlement-asset response includes `toolAvailability`, check `toolAvailability.requiredToolsAvailable`.
 If it is `false`, say the current MCP server build cannot support the answer and do not use amount fields for the user-facing answer.
 
 If the user asks "What is 1 SUI worth?", answer with the current read context available to the tools. Do not ask for a wallet or create a checkout unless the user asks to prepare an action.
@@ -66,10 +66,10 @@ For DeepBook USDC candle-history questions:
 
 - Use `read.get_deepbook_usdc_price_at_time` when the user asks for one supported official USDC-quoted DeepBook pool price at one target time, such as "3 hours ago" after resolving the target to a canonical UTC timestamp.
 - Use `read.get_deepbook_usdc_price_history` when the user asks for observed DeepBook USDC historical candles, OHLCV-like bars, or a UTC range for a supported official USDC-quoted DeepBook pool.
-- If the user asks to view a chart, send them to the local page `/charts/deepbook-usdc`. The page uses local chart APIs and official DeepBookV3 Indexer candles. Do not describe it as an MCP tool, live feed, direct official-Indexer browser fetch, wallet/account page, route tool, USD value page, P&L page, or trading interface.
+- If the user asks to view a chart, use `ui.open_chart`. For account assets or a transaction result card, use `ui.open_account` or `ui.open_receipt`. Use ordinary read tools for ordinary evidence answers. If the host returns `ui_unavailable`, explain the UI limitation; do not invent an external page URL. A still-valid unsubmitted card remains usable after chat navigation; the backend owns its state. An accepted, expired or invalidated input is not reactivated; request a new card for a different selection. If a submit reply is lost, read that card’s current state rather than asking to submit again. Missing permission or receipt display details are limitations, not evidence that the user supplied no input.
 - Provide exactly one selector: `poolName`, `assetSymbol`, or `coinType`. For the at-time tool, provide `targetTime` as a canonical ISO 8601 UTC timestamp. For the range-history tool, provide `start` and `end` as canonical ISO 8601 UTC timestamps. Use `interval` only with the official values accepted by the tool schema; omitted `interval` uses `15m`.
-- For `read.get_deepbook_usdc_price_at_time`, answer from `target`, `match`, `matchedCandle`, `coverageStatus`, `source.candles`, `quantitySemantics`, and `responseSummary`. Use `match.representativePrice.value`, which is `matchedCandle.close`, as the representative target-time price. Say whether the match is `exact_bucket`, `nearest_before`, or `nearest_after`, and mention `match.distanceMinutes` when it is not zero.
-- For `read.get_deepbook_usdc_price_history`, answer from `bars`, `coverageStatus`, `source.candles`, `quantitySemantics`, and `responseSummary`.
+- For `read.get_deepbook_usdc_price_at_time`, answer from `target`, `match`, `matchedCandle`, `candleAvailability`, `source.candles`, `quantitySemantics`, and `responseSummary`. Use `match.representativePrice.value`, which is `matchedCandle.close`, as the representative target-time price. Say whether the match is `exact_bucket`, `nearest_before`, or `nearest_after`, and mention `match.distanceMinutes` when it is not zero.
+- For `read.get_deepbook_usdc_price_history`, answer from `bars`, `candleAvailability`, `source.candles`, `quantitySemantics`, and `responseSummary`.
 - Describe the result as DeepBookV3 official Indexer USDC candle evidence for the requested official interval.
 - Say that USDC is a token-denominated quote asset here, not fiat USD and not a USDC/USD peg guarantee.
 - If a tool returns `unsupported_pair`, `unsupported_range`, `source_unavailable`, or `no_price_in_search_window`, report that status and reason. Do not synthesize candles, interpolate missing bars, carry forward the previous bar, run an on-demand chain-history scan, or web-search a replacement unless the user explicitly asks for outside Say Ur Intent context.
@@ -104,7 +104,7 @@ Answer only from current tool evidence. For natural-language dollar, USD-like, s
 1. Call `read.get_server_status`; require the current evidence policy plus `read.list_settlement_asset_groups` and `read.preview_intent_evidence`.
 2. Call `read.list_settlement_asset_groups`.
 3. Call `read.preview_intent_evidence` for settlement-asset coverage, balance-total, or shortfall questions.
-4. Confirm `answerSourceStatus.canUseThisResponseForUserAnswer` is `true`.
+4. Confirm `toolAvailability.requiredToolsAvailable` is `true`.
 5. Use `userAnswerUse.answerFields` for the answer. Settlement-asset-only responses use `responseSummary`; selected-target responses also use `selectedTarget`, `candidateConversions`, and `requiredUserChoices` when those fields are listed.
 
 `responseSummary.answerCompleteness.answerCompleteFor` names the answer class. Use only the fields in `responseSummary.answerCompleteness.requiredAnswerFields` and `userAnswerUse.answerFields` for that class.
@@ -113,7 +113,7 @@ For selected-target direct quote evidence, require both `responseEvidence.suppor
 
 Do not call quote tools for the same payment coverage, balance-total, or shortfall question when `responseSummary.doNotCallQuoteToolsForThisQuestion` is `true`.
 
-When `answerSourceStatus.canUseThisResponseForUserAnswer` is `true` and `responseSummary.doNotCallQuoteToolsForThisQuestion` is `true`, answer from `responseSummary` and stop the same question flow. Do not call `read.classify_wallet_assets`, `read.summarize_wallet_assets`, or quote tools to look for other source tokens for that same coverage, balance-total, or shortfall question. Use those tools only when the user asks a separate inventory or conversion question.
+When `toolAvailability.requiredToolsAvailable` is `true` and `responseSummary.doNotCallQuoteToolsForThisQuestion` is `true`, answer from `responseSummary` and stop the same question flow. Do not call `read.classify_wallet_assets`, `read.summarize_wallet_assets`, or quote tools to look for other source tokens for that same coverage, balance-total, or shortfall question. Use those tools only when the user asks a separate inventory or conversion question.
 
 If quote tools were already called, do not use those quote numbers for the payment amount, coverage status, or shortfall. Use only the fields named by `responseSummary.amountsUsedForAnswer`.
 
@@ -258,14 +258,14 @@ Treat `uninspectedAssetClasses` as explicit classifier-uninspected boundaries, n
 
 Inventory facts do not imply:
 
-- spendability;
+- that the held assets can be spent or transferred;
 - funding availability;
 - route liquidity;
 - payment readiness;
 - portfolio completeness;
 - transaction-building inputs;
 - signing data;
-- not signing readiness.
+- signing readiness.
 
 Treat `quantitySemantics.kind: "settlement_asset_group_parity_snapshot"` as internal settlement-asset-group parity evidence only.
 
@@ -319,7 +319,7 @@ Display addresses in shortened lowercase form by default: `0x` plus the first 4 
 Pending wallet identity and review waits are local process memory only.
 
 - If the local MCP server restarts, call `account.get_active_account` before creating a new wallet identity session.
-- Use `session.get_interaction_status` to inspect active account context and pending in-memory interactions.
+- Use `session.get_interaction_status` to inspect active account context and pending shared interactions.
 - In `session.get_interaction_status`, `pendingReviewSessions` includes non-final review sessions whose `statusCategory` is `non_terminal`, `awaiting_chain_result`, or `user_action_required`.
 - `session.get_review_status` returns `pollingStatus` and `statusCategory`; use both fields when explaining whether a review is final, still pending, waiting for a chain result, or waiting for user or review-flow action.
 - `session.wait_execution_result` observes stored review-server transitions and
@@ -330,7 +330,7 @@ Pending wallet identity and review waits are local process memory only.
 - `failure` with `failureReason: "chain_execution_failed"` means Sui mainnet returned failed effects for the digest, and the result can still include `executionResult.chainReceipt`.
 - `failure` with `failureReason: "chain_receipt_unavailable"` or `"receipt_verification_failed"` means the server could not record a verified successful chain receipt for the signed digest.
 - A chain receipt is server-read execution evidence for the digest. It is not transaction bytes, signing data, signing readiness, an execution guarantee, route quality, fiat value, P&L, tax evidence, best-price evidence, or peg evidence.
-- The local review page shows the server-read chain receipt inline on a terminal review session, and a public Receipt Analytics page reads on-chain receipt facts by transaction digest. Treat both as local browser inspection surfaces for server-read receipt facts, not an MCP signing or execution capability and not a second safety verdict.
+- The local review page shows the server-read chain receipt inline on a terminal review session, and a internal Receipt card reads on-chain receipt facts by transaction digest. Treat both as inspection surfaces for server-read receipt facts, not an MCP signing or execution capability and not a second safety verdict.
 - `blocked` means user action or refresh is required, not final success or failure.
 - execution waits stop at `blocked` only while required review evidence is missing; after user signing on the local review page they progress through `signed_pending_result` to `success` or `failure`.
 
@@ -378,7 +378,7 @@ Incomplete balance evidence means unknown, not zero:
 - `accountBalanceChangeEvidence: "incomplete_account_balance_changes"` is not zero-balance evidence.
 - `account_balance_changes_unavailable` is not zero-balance evidence.
 - `accountBalanceChangeInferencePolicy: "do_not_infer_from_transaction_context"` means do not infer the requested account amount from transaction context, visible recipient patterns, current wallet balances, compact counts, or aggregate analysis.
-- Only `accountBalanceChangeAbsenceProven: true` supports saying no requested-account balance change was returned.
+- Only `no_account_balance_changes_returned` with complete details supports saying no requested-account balance change was returned.
 
 Compact and analysis fields are transaction or page facts:
 

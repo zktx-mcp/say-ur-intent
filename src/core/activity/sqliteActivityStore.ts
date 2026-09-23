@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
@@ -11,6 +11,7 @@ import type { ActionPlan, ExecutionResult, ReviewState } from "../action/types.j
 import { parseSuiAddress } from "../suiAddress.js";
 import { SqlitePreferencesRepository } from "../preferences/sqlitePreferencesRepository.js";
 import { SqliteTransactionMaterialStore } from "../session/sqliteTransactionMaterialStore.js";
+import { SqliteCardRecordStore } from "../session/sqliteCardStore.js";
 import type { LocalTransactionMaterialStore } from "../session/transactionMaterialStore.js";
 import {
   SqliteSessionRecordStore,
@@ -73,6 +74,7 @@ import {
   REVIEW_ACTIVITY_LOW_SAMPLE_THRESHOLD
 } from "./activityStore.js";
 import {
+  assertCurrentDatabaseFormat,
   configureDatabase,
   initializeDatabase
 } from "./sqliteActivityStoreSchema.js";
@@ -165,10 +167,15 @@ export class SqliteActivityStore implements ActivityStore {
         `Could not create the local activity data directory. Check directory permissions or set ${DATA_DIR_ENV}.`
       );
     }
-    this.db = new Database(options.databasePath);
+    if (options.databasePath !== ":memory:" && existsSync(options.databasePath)) {
+      const existing = new Database(options.databasePath, { readonly: true, fileMustExist: true });
+      try { assertCurrentDatabaseFormat(existing); } finally { existing.close(); }
+    }
+    const database = new Database(options.databasePath);
+    this.db = options.guardDatabase?.(database) ?? database;
     try {
-      configureDatabase(this.db);
       initializeDatabase(this.db);
+      configureDatabase(this.db);
     } catch (error) {
       this.db.close();
       throw error;
@@ -1221,6 +1228,10 @@ export class SqliteActivityStore implements ActivityStore {
 
   createSessionRecordStore(): SessionRecordStore {
     return new SqliteSessionRecordStore(this.db, { usesActivityStoreLiveSessionMutations: true });
+  }
+
+  createCardRecordStore(): SqliteCardRecordStore {
+    return new SqliteCardRecordStore(this.db);
   }
 
   createPrivateReviewArtifactStore(): PrivateReviewArtifactStore {

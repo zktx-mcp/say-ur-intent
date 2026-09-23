@@ -22,7 +22,7 @@ import {
   DEEPBOOK_MID_PRICE_SEMANTICS_KIND,
   DEEPBOOK_MID_PRICE_TYPE,
   DEEPBOOK_ACCOUNT_QUANTITY_KIND,
-  DEEPBOOK_USDC_PRICE_HISTORY_COVERAGE_STATUSES,
+  DEEPBOOK_USDC_CANDLE_AVAILABILITY,
   DEEPBOOK_USDC_PRICE_HISTORY_QUANTITY_KIND,
   DEEPBOOK_USDC_PRICE_HISTORY_SOURCE_UNAVAILABLE_REASONS,
   DEEPBOOK_USDC_PRICE_HISTORY_UNSUPPORTED_CLAIMS,
@@ -238,7 +238,7 @@ const deepbookUsdcPriceHistoryOutputSchema = z.object({
     deepbookUsdcPriceHistoryCommonOutputSchema.extend({
       status: z.literal("ok"),
       pair: deepbookUsdcPriceHistoryPairSchema,
-      coverageStatus: z.enum(DEEPBOOK_USDC_PRICE_HISTORY_COVERAGE_STATUSES),
+      candleAvailability: z.enum(DEEPBOOK_USDC_CANDLE_AVAILABILITY),
       barCount: z.number().int().nonnegative().max(MAX_DEEPBOOK_USDC_PRICE_HISTORY_BARS),
       bars: z.array(deepbookOfficialIndexerCandleSchema).max(MAX_DEEPBOOK_USDC_PRICE_HISTORY_BARS),
       source: deepbookUsdcPriceHistorySourceSchema
@@ -295,13 +295,13 @@ const deepbookUsdcPriceAtTimeOutputSchema = z.object({
       pair: deepbookUsdcPriceHistoryPairSchema,
       match: deepbookUsdcPriceAtTimeMatchSchema,
       matchedCandle: deepbookOfficialIndexerCandleSchema,
-      coverageStatus: z.enum(DEEPBOOK_USDC_PRICE_HISTORY_COVERAGE_STATUSES),
+      candleAvailability: z.enum(DEEPBOOK_USDC_CANDLE_AVAILABILITY),
       source: deepbookUsdcPriceHistorySourceSchema
     }).strict(),
     deepbookUsdcPriceAtTimeCommonOutputSchema.extend({
       status: z.literal("no_price_in_search_window"),
       pair: deepbookUsdcPriceHistoryPairSchema,
-      coverageStatus: z.enum(DEEPBOOK_USDC_PRICE_HISTORY_COVERAGE_STATUSES),
+      candleAvailability: z.enum(DEEPBOOK_USDC_CANDLE_AVAILABILITY),
       source: deepbookUsdcPriceHistorySourceSchema
     }).strict(),
     deepbookUsdcPriceAtTimeCommonOutputSchema.extend({

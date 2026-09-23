@@ -14,12 +14,7 @@ export default defineConfig({
       input: {
         review: resolve("review-app/src/review.ts"),
         connect: resolve("review-app/src/connect.ts"),
-        account: resolve("review-app/src/account.ts"),
-        receipt: resolve("review-app/src/receipt.ts"),
         settings: resolve("review-app/src/settings.ts"),
-        deepbookUsdcChart: resolve("review-app/src/deepbookUsdcChart.ts"),
-        homepage: resolve("review-app/src/homepage.ts"),
-        notFound: resolve("review-app/src/notFound.ts")
       },
       output: {
         entryFileNames: "[name].js",
@@ -27,12 +22,7 @@ export default defineConfig({
         assetFileNames: (assetInfo) =>
           assetInfo.name === "review.css" ||
           assetInfo.name === "connect.css" ||
-          assetInfo.name === "account.css" ||
-          assetInfo.name === "receipt.css" ||
-          assetInfo.name === "settings.css" ||
-          assetInfo.name === "deepbookUsdcChart.css" ||
-          assetInfo.name === "homepage.css" ||
-          assetInfo.name === "notFound.css"
+          assetInfo.name === "settings.css"
             ? "[name][extname]"
             : "[name]-[hash][extname]"
       }

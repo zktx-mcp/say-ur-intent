@@ -22,7 +22,9 @@ Target repository structure:
   custom-only product path.
 - `src/mcp/`: MCP server and tool definitions.
 - `src/review-server/`: local review HTTP server and session APIs.
-- `review-app/`: static review and signing web app.
+- `review-app/`: Connect, Review and Settings pages and shared display helpers.
+- `src/mcp-ui/`: internal read cards, their common lifecycle and view code.
+- `src/runtime/shared/`: authenticated server ownership and MCP forwarding.
 - `registry/`: local policy, allowlists, aliases, and generated mainnet metadata.
 - `protocols/`: AI-readable protocol notes.
 - `scripts/`: utility scripts for state inspection, registry generation, and
@@ -598,10 +600,12 @@ Keep account-independent planning separate from account-bound review.
 For the current implementation, the MCP layer and review layer must share the
 same authoritative session store.
 
-For the current implementation, a shared in-memory store inside the same Node
-process satisfies the authoritative-store quality bar. Do not split the MCP
-layer and review layer into separate processes unless a shared local store such
-as SQLite or file-backed storage is implemented first.
+The shared runtime uses SQLite as the authoritative source for card and live
+session state. Store methods commit admission, revision changes and results;
+MCP, HTTP and View consumers do not keep independent copies of that state.
+In-memory fixtures may model external dependencies in tests, but do not prove
+SQLite admission, rollback or restart guarantees. Frame recreation and chat
+navigation are not state transitions.
 
 Execution results must be keyed by `reviewSessionId`. Do not use ambiguous
 "latest result" semantics.

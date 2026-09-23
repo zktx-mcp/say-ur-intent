@@ -55,7 +55,7 @@ change that does not alter output may keep the current classifier version.
 Shared-object evidence is a separate false-positive boundary. MVR resolves
 package and type names; it does not verify shared objects such as registries,
 vaults, markets, pools, caps, or protocol configuration objects. A
-shared-object-only match must remain `confidence: "shared_object"` with no
+shared-object-only match must remain `matchBasis: "shared_object"` with no
 inferred action type unless a separate reviewed source verifies action-specific
 semantics.
 
@@ -111,7 +111,7 @@ Shared object use can identify the protocol surface touched by the transaction,
 but it does not prove the user's wallet owns a protocol position.
 
 Package rules can be scoped by evidence kind. A package recorded only as a type
-package must not create `direct_move_call` confidence.
+package must not create `direct_move_call` matchBasis.
 
 If multiple protocols match, preserve all evidence and choose one primary label
 only when a direct wrapper package is present. For example, a DeepTrade Core
@@ -138,7 +138,7 @@ type ProtocolActivityClassifierMatch = {
     | "fee_or_reward"
     | "admin_or_versioning"
     | "unknown";
-  confidence:
+  matchBasis:
     | "direct_move_call"
     | "event_type"
     | "object_type"
@@ -257,7 +257,7 @@ Action grouping:
 False-positive controls:
 
 - A pool object or BalanceManager object match without a DeepBook package call
-  is `shared_object` confidence at most.
+  is `shared_object` matchBasis at most.
 - A DEEP balance delta can support a fee/rebate explanation but must not create
   a DeepBook label by itself.
 - DeepBook dependency evidence inside a DeepTrade transaction should be related
@@ -316,7 +316,7 @@ False-positive controls:
 - If both DeepTrade and DeepBook evidence are present, the direct DeepTrade call
   is the primary label and DeepBook is related evidence.
 - Treasury or TradingFeeConfig object use without a DeepTrade package call is
-  `shared_object` confidence at most.
+  `shared_object` matchBasis at most.
 - Do not label Margin or Earn from the web-app surface name. Require concrete
   package/module/function evidence.
 
@@ -426,7 +426,7 @@ False-positive controls:
 - afSUI balance changes can support the label but must not prove exchange rate,
   delayed-unstake availability, validator exposure, or staking recommendation.
 - Vault object evidence without package/event evidence is `shared_object`
-  confidence at most.
+  matchBasis at most.
 - AMM package evidence belongs to a later Aftermath AMM classifier rule, not this
   afSUI rule.
 
@@ -435,17 +435,18 @@ False-positive controls:
 Use these rules before adding code:
 
 - If the transaction details are truncated for Move calls, object changes, or
-  events, the classifier may return only low-confidence matches from the facts
-  that remain and must include a truncation limitation.
+  events, classify only the returned facts, preserve their actual `matchBasis`,
+  and include the applicable truncation limitations. Missing details do not
+  establish that an activity did not occur.
 - If a package ID has a conflict between official docs, SDK constants, local
   registry, or onchain lookup, the classifier must name the chosen source in its
   classifier version notes.
 - If a verified MVR name exists, classifier package evidence should record the
   MVR name and the resolved current package ID. Keep package records for
   transaction interpretation separate from current package claims.
-- If only a shared object id matches, mark the confidence `shared_object` and do
+- If only a shared object id matches, mark the matchBasis `shared_object` and do
   not infer action type unless the object is action-specific and verified.
-- If only event type matches, mark the confidence `event_type` and preserve the
+- If only event type matches, mark the matchBasis `event_type` and preserve the
   event type as evidence.
 - If wrapper and underlying protocol evidence both appear, prefer the wrapper as
   primary only when the wrapper package is directly called.

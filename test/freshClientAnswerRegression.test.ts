@@ -718,7 +718,7 @@ describe("fresh-client answer regression", () => {
     const requiredDirections: RegExp[] = [
       /mainnet-only Sui DeFi intent evidence toolkit/i,
       /userAnswerUse\.answerFields/i,
-      /answerSourceStatus\.canUseThisResponseForUserAnswer/i,
+      /toolAvailability\.requiredToolsAvailable/i,
       /read\.get_server_status, then read\.list_settlement_asset_groups, then read\.preview_intent_evidence/i,
       /read\.summarize_settlement_asset_group_parity/i,
       /active account context/i,

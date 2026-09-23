@@ -1,3 +1,4 @@
+import { DB_USER_VERSION } from "./schemaVersion.js";
 import type Database from "better-sqlite3";
 import type { AdapterLifecycleValidator } from "../action/adapterLifecycleValidation.js";
 import { SuiEndpointError, parseGraphqlUrl, parseGrpcUrl } from "../suiEndpoint.js";
@@ -25,7 +26,6 @@ import {
 import {
   activeAccountChange,
   countsForPayload,
-  defaultsInjectedForImport,
   invalidBackup,
   maxNumber,
   parseLocalDataEnvelope,
@@ -52,6 +52,7 @@ export class SqliteLocalDataService implements LocalDataService {
   async exportLocalData(now = new Date()): Promise<LocalDataEnvelope> {
     return this.db.transaction(() => {
       const envelope = {
+        schemaVersion: DB_USER_VERSION,
         format: LOCAL_DATA_EXPORT_FORMAT,
         network: LOCAL_DATA_NETWORK,
         exportedAt: now.toISOString(),
@@ -68,16 +69,13 @@ export class SqliteLocalDataService implements LocalDataService {
         }
       };
       return parseLocalDataEnvelope(envelope, {
-        defaultSuiGraphqlUrl: this.options.suiGraphqlUrl,
         validateAdapterLifecycle: this.validateAdapterLifecycle
       });
     })();
   }
 
   async previewImportLocalData(input: unknown): Promise<LocalDataImportPreview> {
-    const defaultsInjected = defaultsInjectedForImport(input);
     const envelope = parseLocalDataEnvelope(input, {
-      defaultSuiGraphqlUrl: this.options.suiGraphqlUrl,
       validateAdapterLifecycle: this.validateAdapterLifecycle
     });
     return {
@@ -95,7 +93,6 @@ export class SqliteLocalDataService implements LocalDataService {
         envelope.data.activeAccountContext
       ),
       restartRequiredAfterImport: true,
-      defaultsInjected
     };
   }
 
@@ -114,6 +111,7 @@ export class SqliteLocalDataService implements LocalDataService {
       this.insertLocalSettings(envelope.data.localSettings);
       this.syncSqliteSequences(envelope.data);
     })();
+    this.options.onDataReplaced?.();
     return {
       status: "imported",
       dataCounts: this.getDataCountsSync(),
@@ -126,6 +124,7 @@ export class SqliteLocalDataService implements LocalDataService {
       this.resetLocalDataTables();
       this.insertDefaultSuiGrpcUrl(now);
     })();
+    this.options.onDataReplaced?.();
     return {
       status: "reset",
       dataCounts: this.getDataCountsSync(),
@@ -135,6 +134,12 @@ export class SqliteLocalDataService implements LocalDataService {
 
   private resetLocalDataTables(): void {
     for (const table of [
+      "live_read_cards",
+      "live_transaction_materials",
+      "live_private_review_artifacts",
+      "live_review_sessions",
+      "live_wallet_identity_sessions",
+      "live_settings_sessions",
       "external_activity_transactions",
       "external_activity_scans",
       "review_state_snapshots",
@@ -378,7 +383,6 @@ export class SqliteLocalDataService implements LocalDataService {
 
   private async parseAndVerifyImportEnvelope(input: unknown): Promise<LocalDataEnvelope> {
     const envelope = parseLocalDataEnvelope(input, {
-      defaultSuiGraphqlUrl: this.options.suiGraphqlUrl,
       validateAdapterLifecycle: this.validateAdapterLifecycle
     });
     await this.verifyImportedSuiGrpcUrl(suiGrpcUrlFromPayload(envelope.data));

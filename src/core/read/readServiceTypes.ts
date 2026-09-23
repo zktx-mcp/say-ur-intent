@@ -59,8 +59,8 @@ export const DEEPBOOK_USDC_PRICE_HISTORY_UNSUPPORTED_CLAIMS = [
   "cost_basis",
   "independent_chain_recomputation"
 ] as const;
-export const DEEPBOOK_USDC_PRICE_HISTORY_COVERAGE_STATUSES = [
-  "complete",
+export const DEEPBOOK_USDC_CANDLE_AVAILABILITY = [
+  "available",
   "no_candles_in_range"
 ] as const;
 export const DEEPBOOK_USDC_PRICE_HISTORY_UNSUPPORTED_PAIR_REASONS = [
@@ -125,13 +125,13 @@ export type WalletBalanceQuantitySemantics = {
 };
 
 export type WalletAssetClassificationRole = "gas_candidate" | "deepbook_registered";
-export type WalletAssetSpendability = "spendable" | "zero_balance";
+export type WalletAssetBalanceStatus = "nonzero" | "zero";
 
 export type ClassifiedWalletAsset = {
   balance: WalletBalanceWithUnit;
   classification: {
     assetClass: "coin_balance";
-    spendability: WalletAssetSpendability;
+    balanceStatus: WalletAssetBalanceStatus;
     roles: WalletAssetClassificationRole[];
   };
 };
@@ -279,13 +279,13 @@ export type SettlementAssetGroupParityQuantitySemantics = {
 export type SettlementAssetGroupParityAsset =
   | (SettlementAssetGroupAsset & {
       status: "reference_asset";
-      parityPrice: number;
+      priceInReferenceAsset: number;
       parityDirection: "reference_asset_per_group_asset";
       reason: "reference_asset_is_measurement_baseline_not_settlement_choice";
     })
   | (SettlementAssetGroupAsset & {
       status: "measured";
-      parityPrice: number;
+      priceInReferenceAsset: number;
       parityDirection: "reference_asset_per_group_asset";
       poolKey: string;
       direction: QuoteDirection;
@@ -332,17 +332,17 @@ export type SettlementAssetGroupParitySummary = {
     calculation: "computed_from_available_direct_deepbook_mid_price_snapshots";
     min: {
       symbol: string;
-      parityPrice: number;
+      priceInReferenceAsset: number;
     };
     max: {
       symbol: string;
-      parityPrice: number;
+      priceInReferenceAsset: number;
     };
     mean: {
-      parityPrice: number;
+      priceInReferenceAsset: number;
     };
     median: {
-      parityPrice: number;
+      priceInReferenceAsset: number;
     };
   };
   responseSummary: SettlementAssetGroupParityResponseSummary;
@@ -368,17 +368,17 @@ export type SettlementAssetGroupParityResponseSummary = {
   parityDirection: "reference_asset_per_group_asset";
   min: {
     symbol: string;
-    parityPrice: number;
+    priceInReferenceAsset: number;
   };
   max: {
     symbol: string;
-    parityPrice: number;
+    priceInReferenceAsset: number;
   };
   mean: {
-    parityPrice: number;
+    priceInReferenceAsset: number;
   };
   median: {
-    parityPrice: number;
+    priceInReferenceAsset: number;
   };
   excludedFromConclusion: [
     "settlement_token_selection",
@@ -1112,7 +1112,7 @@ export type DeepbookUsdcPriceHistoryResponseSummary = {
   excludedFromConclusion: DeepbookUsdcPriceHistoryUnsupportedClaim[];
 };
 
-export type DeepbookUsdcPriceHistoryCoverageStatus = typeof DEEPBOOK_USDC_PRICE_HISTORY_COVERAGE_STATUSES[number];
+export type DeepbookUsdcCandleAvailability = typeof DEEPBOOK_USDC_CANDLE_AVAILABILITY[number];
 
 export type DeepbookUsdcPriceHistoryUnsupportedPairReason =
   typeof DEEPBOOK_USDC_PRICE_HISTORY_UNSUPPORTED_PAIR_REASONS[number];
@@ -1129,7 +1129,7 @@ export type DeepbookUsdcPriceHistorySummary =
         range: DeepbookUsdcPriceHistoryRange;
       };
       pair: DeepbookUsdcPriceHistoryPair;
-      coverageStatus: DeepbookUsdcPriceHistoryCoverageStatus;
+      candleAvailability: DeepbookUsdcCandleAvailability;
       barCount: number;
       bars: DeepbookUsdcPriceHistoryBar[];
       source: DeepbookUsdcPriceHistorySource;
@@ -1217,7 +1217,7 @@ export type DeepbookUsdcPriceAtTimeSummary =
       pair: DeepbookUsdcPriceHistoryPair;
       match: DeepbookUsdcPriceAtTimeMatch;
       matchedCandle: DeepbookUsdcPriceHistoryBar;
-      coverageStatus: DeepbookUsdcPriceHistoryCoverageStatus;
+      candleAvailability: DeepbookUsdcCandleAvailability;
       source: DeepbookUsdcPriceHistorySource;
       userAnswerUse: UserAnswerUse;
       quantitySemantics: DeepbookUsdcPriceHistoryQuantitySemantics;
@@ -1233,7 +1233,7 @@ export type DeepbookUsdcPriceAtTimeSummary =
         range: DeepbookUsdcPriceHistoryRange;
       };
       pair: DeepbookUsdcPriceHistoryPair;
-      coverageStatus: DeepbookUsdcPriceHistoryCoverageStatus;
+      candleAvailability: DeepbookUsdcCandleAvailability;
       source: DeepbookUsdcPriceHistorySource;
       userAnswerUse: UserAnswerUse;
       quantitySemantics: DeepbookUsdcPriceHistoryQuantitySemantics;

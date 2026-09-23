@@ -39,7 +39,7 @@ Incomplete balance evidence:
 
 `accountBalanceChangeInferencePolicy: "do_not_infer_from_transaction_context"` means the requested account amount must not be inferred from transaction-level context, visible recipient patterns, or current wallet balances. Do not describe it as likely or almost certain.
 
-Only `accountBalanceChangeAbsenceProven: true` or complete evidence with `no_account_balance_changes_returned` proves no requested-account balance change was returned.
+Only `no_account_balance_changes_returned` with complete details supports saying no requested-account balance change was returned.
 
 Transaction context:
 Live scan and live-summary rows use `transactionContext` for transaction-level calls, objects, events, gas, truncation, and protocol labels. It intentionally omits transaction-wide balance-change aggregates.

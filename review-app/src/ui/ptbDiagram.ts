@@ -1,6 +1,6 @@
 // Shared PTB (Mermaid) graph renderer — the single source for turning Mermaid
 // text into an SVG in the page. Both the review page (the locally stored
-// transaction shape) and the public receipt page (an on-chain transaction's PTB
+// transaction shape) and the internal Receipt card (an on-chain transaction's PTB
 // graph) render through this, so the caching, no-flash refresh, and error
 // handling live in one place. The surrounding chrome (name toggle, Mermaid
 // source, diagnostics, boundary note) stays with each caller.
@@ -9,7 +9,7 @@
 // zoom-in/out/center controls) makes a large graph legible. It is off by default
 // so the review page's current behaviour is unchanged until it migrates.
 import mermaid from "mermaid";
-import { card, CHECK_ICON, COPY_ICON, element, iconButton, info } from "./ui.js";
+import { card, element, iconButton, info } from "./ui.js";
 import { t } from "../i18n/i18n.js";
 
 // Mermaid is themed from the app's own design tokens (read live from the document),
@@ -63,6 +63,10 @@ function ensureMermaid(): void {
 // Module-level so an exact-same graph renders instantly from cache and a changed
 // graph keeps the previous SVG visible while the new one renders (no blank flash).
 // Each page loads its own bundle, so this state is per page, never cross-page.
+const disposers = new WeakMap<Element, () => void>();
+export function disposePtbGraphs(root: HTMLElement): void {
+  for (const element of root.querySelectorAll(".ui-ptb-graph")) disposers.get(element)?.();
+}
 let renderSequence = 0;
 const svgCache = new Map<string, string>();
 let lastRenderedSvg: string | undefined;
@@ -79,6 +83,7 @@ export type PtbGraphView = {
   readonly element: HTMLElement;
   // Render (or re-render) the given Mermaid text into the element.
   render(mermaidText: string): void;
+  dispose(): void;
 };
 
 export function createPtbGraphView(labels?: {
@@ -111,7 +116,11 @@ export function createPtbGraphView(labels?: {
   content.textContent = renderingLabel;
 
   let lastText: string | undefined;
+  let disposed = false;
+  let revision = 0;
   const render = (text: string): void => {
+    if (disposed) return;
+    const requestedRevision = ++revision;
     lastText = text;
     // Re-init Mermaid when the app theme changed since the last render so the SVG is
     // repainted with the current tokens (this also clears the now-stale SVG cache).
@@ -136,12 +145,14 @@ export function createPtbGraphView(labels?: {
     void mermaid
       .render(`ptb-graph-${renderSequence}`, text)
       .then((rendered) => {
+        if (disposed || requestedRevision !== revision) return;
         svgCache.set(text, rendered.svg);
         lastRenderedSvg = rendered.svg;
         content.innerHTML = rendered.svg;
         panZoom?.center();
       })
       .catch((error: unknown) => {
+        if (disposed || requestedRevision !== revision) return;
         // Name the failure rather than hiding it behind the placeholder text.
         content.textContent = `${failedLabel}: ${error instanceof Error ? error.message : String(error)}`;
         element.classList.add("ui-ptb-graph--error");
@@ -161,7 +172,9 @@ export function createPtbGraphView(labels?: {
   });
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
-  return { element, render };
+  const dispose = () => { disposed = true; revision += 1; themeObserver.disconnect(); };
+  disposers.set(element, dispose);
+  return { element, render, dispose };
 }
 
 type PanZoomHandle = { center: () => void; zoomBy: (factor: number) => void };
@@ -252,14 +265,14 @@ function buildControls(handle: PanZoomHandle, labels?: { zoomIn?: string; zoomOu
 }
 
 // Graph-card title-bar eye icons: a password-style show/hide for the package-name ↔ raw-address
-// toggle. The copy/check icons are shared from ui.ts (COPY_ICON / CHECK_ICON).
+// toggle.
 const EYE_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.2A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.3 13.3 0 0 1-2.4 3.1M6.1 6.1A13.4 13.4 0 0 0 2 11s3.5 7 10 7a9 9 0 0 0 3.9-.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/></svg>';
 
 // The single shared "Transaction graph" card used by both the review page and the
-// public receipt: a titled card with a copy-source icon and a name↔address eye toggle
+// public receipt: a titled card with a name/address eye toggle
 // in the title bar, and the pan/zoom graph below. Callers pass only the Mermaid display
 // model { text (raw addresses), namedText (registered names) }; every label, the title,
 // and the diagnostics-only boundary tooltip come from the single i18n source, so the two
@@ -268,7 +281,7 @@ export function ptbGraphCard(opts: { mermaid: { text: string; namedText: string 
   const panel = card();
   panel.classList.add("ptb-graph-card");
   // Title bar: the "Transaction graph" text with its diagnostics-only ⓘ tooltip right
-  // beside it; the copy and eye actions sit on the far side.
+  // beside it; the eye action sits on the far side.
   const head = element("h2", "ui-card-head");
   const title = element("span", "ptb-graph-title", t.receipt.graph);
   title.append(" ", info(t.receipt.graphTip));
@@ -292,21 +305,6 @@ export function ptbGraphCard(opts: { mermaid: { text: string; namedText: string 
   slot.append(view.element);
 
   const actions = element("div", "ui-ptb-actions");
-  const copyButton = iconButton(COPY_ICON, t.receipt.graphCopy, () => {
-    const source = showingNames ? namedText : text;
-    void navigator.clipboard
-      .writeText(source)
-      .then(() => {
-        copyButton.innerHTML = CHECK_ICON;
-        copyButton.setAttribute("aria-label", t.receipt.graphCopied);
-        setTimeout(() => {
-          copyButton.innerHTML = COPY_ICON;
-          copyButton.setAttribute("aria-label", t.receipt.graphCopy);
-        }, 1500);
-      })
-      .catch(() => window.prompt(t.receipt.graphCopy, source));
-  });
-  actions.append(copyButton);
   if (hasNames) {
     const eyeButton = iconButton(EYE_ICON, t.receipt.graphShowAddresses, () => {
       showingNames = !showingNames;

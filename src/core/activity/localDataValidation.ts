@@ -1,3 +1,4 @@
+import { DB_USER_VERSION } from "./schemaVersion.js";
 import { z, type ZodType } from "zod";
 import type { AdapterLifecycleValidator } from "../action/adapterLifecycleValidation.js";
 import { assertNoForbiddenMcpFields } from "../action/forbiddenFields.js";
@@ -141,7 +142,7 @@ const externalActivityTransactionRowSchema: z.ZodType<ExternalActivityTransactio
   last_scan_id: z.string().min(1),
   first_fetched_at: isoTimestamp,
   last_fetched_at: isoTimestamp,
-  detail_json: z.string().nullable().default(null)
+  detail_json: z.string().nullable()
 }).strict();
 
 const localSettingRowSchema: z.ZodType<LocalSettingExportRow> = z.object({
@@ -157,12 +158,13 @@ const payloadSchema: z.ZodType<LocalDataPayload> = z.object({
   reviewStateSnapshots: z.array(reviewStateSnapshotRowSchema),
   reviewStatusTransitions: z.array(reviewStatusTransitionRowSchema),
   reviewExecutions: z.array(reviewExecutionRowSchema),
-  externalActivityScans: z.array(externalActivityScanRowSchema).default([]),
-  externalActivityTransactions: z.array(externalActivityTransactionRowSchema).default([]),
-  localSettings: z.array(localSettingRowSchema).min(1).max(2)
+  externalActivityScans: z.array(externalActivityScanRowSchema),
+  externalActivityTransactions: z.array(externalActivityTransactionRowSchema),
+  localSettings: z.array(localSettingRowSchema).length(2)
 }).strict();
 
 const envelopeSchema: z.ZodType<LocalDataEnvelope> = z.object({
+  schemaVersion: z.literal(DB_USER_VERSION),
   format: z.literal(LOCAL_DATA_EXPORT_FORMAT),
   network: z.literal(LOCAL_DATA_NETWORK),
   exportedAt: isoTimestamp,
@@ -171,7 +173,7 @@ const envelopeSchema: z.ZodType<LocalDataEnvelope> = z.object({
 
 export function parseLocalDataEnvelope(
   input: unknown,
-  options: { defaultSuiGraphqlUrl: string; validateAdapterLifecycle: AdapterLifecycleValidator }
+  options: { validateAdapterLifecycle: AdapterLifecycleValidator }
 ): LocalDataEnvelope {
   const parsed = envelopeSchema.safeParse(input);
   if (!parsed.success) {
@@ -179,17 +181,8 @@ export function parseLocalDataEnvelope(
       reason: "invalid_backup_shape"
     });
   }
-  const normalized = withDefaultSuiGraphqlSetting(parsed.data, options.defaultSuiGraphqlUrl);
-  validatePayloadSemantics(normalized.data, options.validateAdapterLifecycle);
-  return normalized;
-}
-
-export function defaultsInjectedForImport(input: unknown): Array<"suiGraphqlUrl"> {
-  const parsed = envelopeSchema.safeParse(input);
-  if (!parsed.success) {
-    return [];
-  }
-  return parsed.data.data.localSettings.some((row) => row.key === "suiGraphqlUrl") ? [] : ["suiGraphqlUrl"];
+  validatePayloadSemantics(parsed.data.data, options.validateAdapterLifecycle);
+  return parsed.data;
 }
 
 function validatePayloadSemantics(
@@ -326,26 +319,6 @@ function validateReviewStateJsonColumn(
   } catch {
     throw invalidBackup("invalid_json_shape", { field });
   }
-}
-
-function withDefaultSuiGraphqlSetting(envelope: LocalDataEnvelope, defaultSuiGraphqlUrl: string): LocalDataEnvelope {
-  if (envelope.data.localSettings.some((row) => row.key === "suiGraphqlUrl")) {
-    return envelope;
-  }
-  return {
-    ...envelope,
-    data: {
-      ...envelope.data,
-      localSettings: [
-        ...envelope.data.localSettings,
-        {
-          key: "suiGraphqlUrl",
-          value_json: JSON.stringify(parseGraphqlUrl(defaultSuiGraphqlUrl)),
-          updated_at: envelope.exportedAt
-        }
-      ]
-    }
-  };
 }
 
 export function suiGrpcUrlFromPayload(data: LocalDataPayload): string {

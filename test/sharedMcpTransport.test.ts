@@ -1,0 +1,116 @@
+import { randomBytes } from "node:crypto";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { expect, it } from "vitest";
+import { startSharedServer } from "../src/runtime/shared/server.js";
+import { createInternalMcpHandler } from "../src/runtime/shared/mcpHttp.js";
+import type { ControlIdentity } from "../src/runtime/shared/control.js";
+import { registerActionTools } from "../src/mcp/tools/action/prepareSuiActionReview.js";
+import { InMemorySessionStore } from "../src/core/session/sessionStore.js";
+import { InMemoryActivityStore } from "./fixtures/inMemoryActivityStore.js";
+import { validateSupportedAdapterLifecycle } from "../src/adapters/adapterLifecycleValidators.js";
+import { TOOL_NAMES } from "../src/mcp/toolNames.js";
+import { externalProposalSchema } from "../src/core/proposal/schemas.js";
+import { MAX_JSON_BODY_BYTES } from "../src/review-server/http.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { z } from "zod";
+import { startSharedStdio } from "../src/runtime/shared/stdio.js";
+import { registerMcpPrompts } from "../src/mcp/prompts.js";
+import { ADAPTER_PROMPT_SURFACES } from "../src/adapters/adapterPromptSurfaces.js";
+
+const logger = { info() {}, warn() {}, error() {} };
+it("preserves a valid external proposal larger than the card/HTTP body limit over authenticated MCP", async () => {
+  const control: ControlIdentity = { key: randomBytes(32).toString("base64url"), databaseId: "1".repeat(64), configurationId: "2".repeat(64) };
+  const activityStore = new InMemoryActivityStore();
+  const sessions = new InMemorySessionStore({ activityStore, logger, validateAdapterLifecycle: validateSupportedAdapterLifecycle });
+  const handler = createInternalMcpHandler(() => {
+    const server = new McpServer({ name: "proposal-transport-fixture", version: "1" });
+    registerActionTools(server, { sessions, activityStore, reviewBaseUrl: "http://127.0.0.1", logger });
+    return server;
+  });
+  const runtime = await startSharedServer({ port: 0, control, onError: () => {}, createApplication: async () => ({
+    handleMcp: handler.handle, handleHttp: async (_request, response) => { response.writeHead(404).end(); }, close: handler.close
+  }) });
+  const client = new Client({ name: "proposal-transport-test", version: "1" });
+  const [clientTransport, proxyTransport] = InMemoryTransport.createLinkedPair();
+  const proxy = await startSharedStdio({ stdio: proxyTransport, port: runtime.port, control, onError: () => {} });
+  try {
+    await client.connect(clientTransport);
+    const proposal = externalProposalSchema.parse({ type: "sui_action", id: "large-structured-proposal", source: { kind: "user", name: "Test input" },
+      network: "sui:mainnet", createdAt: "2026-09-22T00:00:00.000Z", purpose: "Structured proposal transport test",
+      assumptions: Array.from({ length: 20 }, () => "가".repeat(512)), requiredUserChoices: Array.from({ length: 20 }, () => "나".repeat(512)),
+      action: { actionKind: "inspection", target: { label: "Untrusted target" }, assetFlow: Array.from({ length: 20 }, () => ({ direction: "outgoing", amount: { amountDisplay: "1", symbol: "SUI" }, description: "다".repeat(512) })) }
+    });
+    expect(Buffer.byteLength(JSON.stringify(proposal))).toBeGreaterThan(MAX_JSON_BODY_BYTES);
+    const result = await client.callTool({ name: TOOL_NAMES.actionPrepareExternalProposalReview, arguments: { proposal } });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result.structuredContent)).toContain("proposal_review_only");
+    expect(JSON.stringify(result.structuredContent)).not.toContain('"transactionBytes":');
+  } finally { await client.close(); await proxy.close(); await runtime.close(); }
+});
+
+it("preserves MCP discovery, completions and private results across clients and owner replacement without replay", async () => {
+  const control: ControlIdentity = { key: randomBytes(32).toString("base64url"), databaseId: "1".repeat(64), configurationId: "2".repeat(64) };
+  const calls: Array<{ owner: string; caller: string | undefined; hold: boolean }> = [];
+  let dispatched!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => { dispatched = resolve; });
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  async function startOwner(port: number, id: string) {
+    const handler = createInternalMcpHandler(() => {
+      const server = new McpServer({ name: "shared-transport-fixture", version: "1" });
+      registerMcpPrompts(server, ADAPTER_PROMPT_SURFACES);
+      server.registerResource("fixture", "fixture://state", {}, async () => ({ contents: [{ uri: "fixture://state", text: id }] }));
+      server.registerTool("fixture.call", { inputSchema: { hold: z.boolean() } }, async ({ hold }) => {
+        calls.push({ owner: id, caller: server.server.getClientVersion()?.name, hold });
+        if (hold) { dispatched(); await held; }
+        return { content: [{ type: "text", text: id }], structuredContent: { owner: id }, _meta: { privateSentinel: "view-only" } };
+      });
+      return server;
+    });
+    return startSharedServer({ port, control, onError: () => {}, createApplication: async () => ({
+      handleMcp: handler.handle, handleHttp: async (_request, response) => { response.writeHead(404).end(); }, close: handler.close
+    }) });
+  }
+  const first = await startOwner(0, "first");
+  let second: Awaited<ReturnType<typeof startOwner>> | undefined;
+  const bridges: Awaited<ReturnType<typeof startSharedStdio>>[] = [];
+  const clients: Client[] = [];
+  try {
+    for (const name of ["client-a", "client-b"]) {
+      const [clientTransport, proxyTransport] = InMemoryTransport.createLinkedPair();
+      bridges.push(await startSharedStdio({ stdio: proxyTransport, port: first.port, control, onError: () => {} }));
+      const client = new Client({ name, version: "1" }); clients.push(client);
+      await client.connect(clientTransport);
+    }
+    const [a, b] = clients as [Client, Client];
+    expect((await a.listTools()).tools.map((tool) => tool.name)).toEqual(["fixture.call"]);
+    expect((await a.listResources()).resources.map((resource) => resource.uri)).toEqual(["fixture://state"]);
+    expect((await a.listResourceTemplates()).resourceTemplates).toEqual([]);
+    expect((await a.readResource({ uri: "fixture://state" })).contents).toEqual([{ uri: "fixture://state", text: "first" }]);
+    expect((await a.listPrompts()).prompts.some((prompt) => prompt.name === "swap")).toBe(true);
+    expect(JSON.stringify(await a.getPrompt({ name: "swap", arguments: { intent: "10 sui to usdc" } }))).toContain("Do not pick a protocol on your own");
+    expect((await a.complete({ ref: { type: "ref/prompt", name: "swap" }, argument: { name: "protocol", value: "f" } })).completion.values).toEqual(["flowx"]);
+    const result = await b.callTool({ name: "fixture.call", arguments: { hold: false } });
+    expect(result.structuredContent).toEqual({ owner: "first" });
+    expect(result._meta).toEqual({ privateSentinel: "view-only" });
+    const inFlight = a.callTool({ name: "fixture.call", arguments: { hold: true } })
+      .then(() => "unexpected-success", () => "connection-failed");
+    await started;
+    await first.close();
+    expect(await inFlight).toBe("connection-failed");
+    second = await startOwner(first.port, "second");
+    expect((await b.callTool({ name: "fixture.call", arguments: { hold: false } })).structuredContent).toEqual({ owner: "second" });
+    release();
+    expect(calls).toEqual([
+      { owner: "first", caller: "client-b", hold: false },
+      { owner: "first", caller: "client-a", hold: true },
+      { owner: "second", caller: "client-b", hold: false }
+    ]);
+  } finally {
+    release();
+    await Promise.all(clients.map((client) => client.close()));
+    await Promise.all(bridges.map((bridge) => bridge.close()));
+    await second?.close(); await first.close();
+  }
+});

@@ -118,7 +118,7 @@ const accountBalanceChangeEvidenceSchema = z.enum([
 ]);
 const accountBalanceChangeInferencePolicySchema = z.enum([
   "use_returned_account_balance_changes",
-  "account_absence_proven_by_complete_details",
+  "no_account_balance_changes_in_complete_details",
   "do_not_infer_from_transaction_context"
 ]);
 const transactionAccountRoleSchema = z.enum(["sender", "affected_only"]);
@@ -141,7 +141,6 @@ const transactionAccountEffectsSchema = z.object({
   role: transactionAccountRoleSchema,
   sentByAccount: z.boolean(),
   balanceChangeEvidence: accountBalanceChangeEvidenceSchema,
-  accountBalanceChangeAbsenceProven: z.boolean(),
   accountBalanceChangeInferencePolicy: accountBalanceChangeInferencePolicySchema,
   balanceChangeCompleteness: accountBalanceChangeCompletenessSchema,
   balanceChanges: z.array(z.object({
@@ -243,7 +242,6 @@ const requestedAccountTransactionFactSchema = z.object({
   accountRole: transactionAccountRoleSchema,
   sentByAccount: z.boolean(),
   accountBalanceChangeEvidence: accountBalanceChangeEvidenceSchema,
-  accountBalanceChangeAbsenceProven: z.boolean(),
   accountBalanceChangeInferencePolicy: accountBalanceChangeInferencePolicySchema,
   accountBalanceChangeCompleteness: accountBalanceChangeCompletenessSchema,
   accountBalanceChanges: transactionAccountEffectsSchema.shape.balanceChanges,
@@ -514,7 +512,7 @@ const accountAssetTimelineUsdcReferenceSummarySchema = z.object({
         }).strict(),
         priceConvention: z.literal(DEEPBOOK_OFFICIAL_INDEXER_USDC_REFERENCE.priceConvention)
       }).strict(),
-      coverageStatus: z.string(),
+      candleAvailability: z.enum(["available", "no_candles_in_range"]),
       source: z.object({
         kind: z.literal(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.kind),
         baseUrl: z.string(),

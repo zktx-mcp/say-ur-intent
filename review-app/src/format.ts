@@ -28,12 +28,12 @@ export function signedRawToDisplay(raw: string, decimals: number): string {
 // Gas and other SUI-denominated mist amounts: SUI decimals are a known constant,
 // so no coin-metadata lookup is needed to display them.
 export function mistToSui(mist: string): string {
-  return rawToDisplay(mist, SUI_DECIMALS);
+  return signedRawToDisplay(mist, SUI_DECIMALS);
 }
 
 // A mist amount rendered as a "<sui> SUI" display string — the single source for the
 // "amount + SUI ticker" idiom shared by the review fee rows, the receipt gas rows, and
-// the receipt Markdown export, so the ticker convention lives in exactly one place.
+// other SUI display consumers, so the ticker convention lives in exactly one place.
 export function suiAmount(mist: string): string {
   return `${mistToSui(mist)} SUI`;
 }

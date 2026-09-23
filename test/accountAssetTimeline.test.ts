@@ -446,7 +446,7 @@ function okHistory(bars: Extract<DeepbookUsdcPriceHistorySummary, { status: "ok"
       },
       priceConvention: "USDC_PER_BASE"
     },
-    coverageStatus: "complete",
+    candleAvailability: "available",
     barCount: bars.length,
     bars,
     source: {

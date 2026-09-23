@@ -72,7 +72,7 @@ export function classifyWalletBalance(
     balance,
     classification: {
       assetClass: "coin_balance",
-      spendability: balance.balance === "0" ? "zero_balance" : "spendable",
+      balanceStatus: balance.balance === "0" ? "zero" : "nonzero",
       roles
     }
   };

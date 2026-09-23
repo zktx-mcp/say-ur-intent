@@ -1,9 +1,9 @@
 // Shared on-chain receipt view: the verified facts for one transaction digest,
-// composed from shared atoms. Both the public Receipt Analytics page and the
+// composed from shared atoms. Both the internal Receipt card and the
 // review page's post-sign Result state render this same component from the same
 // `PublicChainReceipt`, so a confirmed transaction looks identical wherever it is
 // shown. It renders the display only — the page owns its own surrounding chrome,
-// the page-specific "Copy as Markdown" action, and the loading/error states.
+// and the loading/error states.
 
 import type {
   PublicChainReceipt,
@@ -54,7 +54,7 @@ export function chainReceiptView(receipt: PublicChainReceipt): HTMLElement {
   gasCard.append(gasSection(receipt.gas));
   wrap.append(gasCard);
 
-  // The shared Transaction graph card (name↔address eye toggle + copy source); a
+  // The shared Transaction graph card (name/address toggle); a
   // placeholder card holds the same slot when the transaction has no renderable graph.
   if (receipt.ptbGraph) {
     wrap.append(

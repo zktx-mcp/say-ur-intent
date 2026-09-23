@@ -268,7 +268,7 @@ if (autoConnectSettling) {
 
 // The shared shell in token mode (no navigation, brand not a link, theme toggle);
 // the page renders into shell.main, which the render path clears and rebuilds.
-const shell = renderShell(rootElement, "token");
+const shell = renderShell(rootElement);
 const main = shell.main;
 
 // The post-sign Result state shows the same full on-chain receipt as the Receipt
@@ -823,7 +823,7 @@ function renderDegradedReceipt(payload: ReviewSessionPayload): HTMLElement[] {
 }
 
 // Fetch the full public receipt by the execution digest (the same public,
-// same-origin endpoint the Receipt page uses), then re-render so the Result state
+// same-origin reader used by the internal Receipt card), then re-render so the Result state
 // shows it. Best-effort: on failure the verification status banner still shows.
 async function loadResultReceipt(digest: string): Promise<void> {
   if (resultReceiptDigest === digest) {

@@ -156,7 +156,6 @@ export async function routeSettingsApi(
   if (request.method === "POST" && matches.importLocalData) {
     const body = await readJsonBody(request, MAX_IMPORT_BODY_BYTES);
     const result = await mapLocalDataError(() => settings.localData.importLocalDataReplace(body));
-    await options.store.invalidateAllLocalSessions("local_data_import");
     sendJson(response, 200, result);
     return;
   }
@@ -164,7 +163,6 @@ export async function routeSettingsApi(
   if (request.method === "POST" && matches.resetLocalData) {
     await readJsonBody(request, MAX_SETTINGS_BODY_BYTES);
     const result = await mapLocalDataError(() => settings.localData.resetLocalData());
-    await options.store.invalidateAllLocalSessions("local_data_reset");
     sendJson(response, 200, result);
     return;
   }

@@ -31,7 +31,7 @@ const token = readPageToken();
 const dAppKit = createLocalDAppKit();
 
 // Token page: the shared shell in token mode (no navigation, brand not a link).
-const shell = renderShell(rootElement, "token");
+const shell = renderShell(rootElement);
 const main = shell.main;
 
 // The server wallet-identity session is the single source of truth for this page.

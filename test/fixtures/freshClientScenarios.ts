@@ -57,7 +57,7 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
       'User asks "1000 dollar payment possible?". The settlement-asset evidence response must carry every field a fresh client needs to answer without leaking quote or route conclusions.',
     tool: TOOL_NAMES.readPreviewIntentEvidence,
     toolExpectation: {
-      requiredPreconditionFields: ["answerSourceStatus"],
+      requiredPreconditionFields: ["toolAvailability"],
       requiredAnswerFields: ["responseSummary"],
       requiredCanAnswerClaims: [
         "usd_denominated_payment_coverage_status",
@@ -79,7 +79,7 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
     },
     responseRules: [
       { fieldPath: "responseSummary.doNotCallQuoteToolsForThisQuestion", equals: true },
-      { fieldPath: "answerSourceStatus.canUseThisResponseForUserAnswer", equals: true }
+      { fieldPath: "toolAvailability.requiredToolsAvailable", equals: true }
     ]
   },
   {
@@ -88,7 +88,7 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
       'User asks "is my balance enough?" before payment, and the same evidence path must answer balance-total without inventing a payment target.',
     tool: TOOL_NAMES.readPreviewIntentEvidence,
     toolExpectation: {
-      requiredPreconditionFields: ["answerSourceStatus"],
+      requiredPreconditionFields: ["toolAvailability"],
       requiredAnswerFields: ["responseSummary"],
       requiredCannotAnswerClaims: [
         "settlement_token_selection",
@@ -112,7 +112,7 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
       'User asks "Which USD settlement asset is closest/highest/lowest?". The parity response must answer only from responseSummary parity statistics and must identify the reference asset as a measurement reference, not a settlement choice.',
     tool: TOOL_NAMES.readSummarizeSettlementAssetGroupParity,
     toolExpectation: {
-      requiredPreconditionFields: ["answerSourceStatus"],
+      requiredPreconditionFields: ["toolAvailability"],
       requiredAnswerFields: [
         "responseSummary",
         "responseSummary.min",
@@ -173,7 +173,7 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
       requiredConclusionRuleFields: ["responseSummary.excludedFromConclusion", "unsupportedClaims"]
     },
     responseRules: [
-      { fieldPath: "answerSourceStatus.canUseThisResponseForUserAnswer", equals: true },
+      { fieldPath: "toolAvailability.requiredToolsAvailable", equals: true },
       { fieldPath: "responseSummary.questionKind", equals: "settlement_asset_group_parity" },
       {
         fieldPath: "responseSummary.referenceAssetRole",
@@ -523,8 +523,8 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
         equals: "do_not_infer_from_transaction_context"
       },
       {
-        fieldPath: "requestedAccountTransactionFacts[0].accountBalanceChangeAbsenceProven",
-        equals: false
+        fieldPath: "requestedAccountTransactionFacts[0].accountBalanceChangeEvidence",
+        oneOf: ["account_balance_changes_returned", "incomplete_account_balance_changes", "account_balance_changes_unavailable"]
       }
     ]
   },

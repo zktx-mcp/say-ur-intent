@@ -35,26 +35,6 @@ ${options.body}
 </html>`;
 }
 
-export function homeHtml(): string {
-  return pageDocument({
-    title: "Say Ur Intent",
-    css: "homepage.css",
-    js: "homepage.js",
-    ui: true,
-    body: `    <div id="home-app"></div>`
-  });
-}
-
-export function notFoundHtml(): string {
-  return pageDocument({
-    title: "Page not found · Say Ur Intent",
-    css: "notFound.css",
-    js: "notFound.js",
-    ui: true,
-    body: `    <div id="not-found-app"></div>`
-  });
-}
-
 export function reviewHtml(sessionId: string): string {
   return pageDocument({
     title: "Say Ur Intent Review",
@@ -75,26 +55,6 @@ export function connectHtml(sessionId: string): string {
   });
 }
 
-export function accountHtml(): string {
-  return pageDocument({
-    title: "Say Ur Intent Account",
-    css: "account.css",
-    js: "account.js",
-    ui: true,
-    body: `    <div id="account-app"></div>`
-  });
-}
-
-export function receiptHtml(): string {
-  return pageDocument({
-    title: "Say Ur Intent Receipt Analytics",
-    css: "receipt.css",
-    js: "receipt.js",
-    ui: true,
-    body: `    <div id="receipt-app"></div>`
-  });
-}
-
 export function settingsHtml(sessionId: string): string {
   return pageDocument({
     title: "Say Ur Intent Settings",
@@ -102,16 +62,6 @@ export function settingsHtml(sessionId: string): string {
     js: "settings.js",
     ui: true,
     body: `    <div id="settings-app" data-settings-session-id="${escapeHtml(sessionId)}"></div>`
-  });
-}
-
-export function deepbookUsdcChartHtml(): string {
-  return pageDocument({
-    title: "DeepBook USDC Candles",
-    css: "deepbookUsdcChart.css",
-    js: "deepbookUsdcChart.js",
-    ui: true,
-    body: `    <div id="deepbook-usdc-chart-app"></div>`
   });
 }
 

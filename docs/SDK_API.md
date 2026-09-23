@@ -4,6 +4,8 @@ This document records the pinned SDK APIs used by the current runtime. The sourc
 
 ## Package Versions
 
+- `@modelcontextprotocol/ext-apps`: `1.7.5`
+- `@modelcontextprotocol/sdk`: `1.29.0`
 - `@mysten/sui`: `2.17.0`
 - `@mysten/deepbook-v3`: `1.3.6`
 - `@mysten/dapp-kit-core`: `1.3.2`
@@ -11,6 +13,12 @@ This document records the pinned SDK APIs used by the current runtime. The sourc
 - `@stelis/agent-q-provider-sui`: `0.2.2`
 - `@zktx.io/ptb-model`: `0.5.0`
 - `mermaid`: `11.12.0`
+
+## MCP Apps
+
+`@modelcontextprotocol/ext-apps` is pinned to `1.7.5`, with MCP SDK `1.29.0`. The server uses `registerAppTool`, `registerAppResource` and `getUiCapability`; the view uses `App` for host-mediated calls and teardown. Account, Receipt and Chart are separate self-contained resources, so an account card does not load the PTB or chart renderer. The server keeps app-only permissions out of model content.
+
+The shared server uses the pinned MCP SDK Streamable HTTP transport behind authenticated loopback access. Stdio clients forward tool, resource and prompt requests with their original client identity and capabilities. Ordinary MCP input schemas remain unchanged by the transport; the 64 KiB card/HTTP input limit includes the card call envelope.
 
 ## Sui gRPC Client
 

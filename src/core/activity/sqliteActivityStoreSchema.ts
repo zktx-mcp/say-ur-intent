@@ -1,3 +1,4 @@
+import Database from "better-sqlite3";
 import { EXTERNAL_ACTIVITY_SCAN_MAX_LIMIT } from "./activityStore.js";
 import { DB_USER_VERSION } from "./schemaVersion.js";
 import { ActivityStoreError, type SqliteDatabase } from "./sqliteActivityStoreTypes.js";
@@ -10,23 +11,7 @@ import {
 const EXTERNAL_ACTIVITY_SCAN_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_external_activity_scans_account_fetched
   ON external_activity_scans(account_id, fetched_at)`;
 
-export function configureDatabase(db: SqliteDatabase): void {
-  db.exec("PRAGMA journal_mode=WAL");
-  db.exec("PRAGMA synchronous=NORMAL");
-  db.exec("PRAGMA foreign_keys=ON");
-  // Multiple client processes share this database; wait instead of failing with
-  // SQLITE_BUSY when another process holds the write lock.
-  db.exec("PRAGMA busy_timeout=5000");
-}
-
-export function initializeDatabase(db: SqliteDatabase): void {
-  const currentUserVersion = db.pragma("user_version", { simple: true }) as number;
-  if (currentUserVersion > DB_USER_VERSION) {
-    throw new ActivityStoreError(
-      `Local activity database version ${currentUserVersion} is newer than this runtime supports (${DB_USER_VERSION}).`
-    );
-  }
-  db.exec(`
+const CURRENT_SCHEMA_SQL = `
     CREATE TABLE IF NOT EXISTS accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       sui_address TEXT NOT NULL UNIQUE,
@@ -129,7 +114,7 @@ export function initializeDatabase(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_review_executions_digest
       ON review_executions(tx_digest);
 
-    ${externalActivityScansTableSql("external_activity_scans", { ifNotExists: true })};
+    ${externalActivityScansTableSql()};
 
     ${EXTERNAL_ACTIVITY_SCAN_INDEX_SQL};
 
@@ -172,13 +157,7 @@ export function initializeDatabase(db: SqliteDatabase): void {
       PRIMARY KEY (coin_type, chain_identifier)
     );
 
-  `);
 
-  // Live multi-client state: runtime session state lives in the shared database
-  // so any review-server process can serve any session. The hardened review-session
-  // write contract bumps DB_USER_VERSION so revision-unaware runtimes fail closed
-  // instead of silently sharing this table.
-  db.exec(`
     CREATE TABLE IF NOT EXISTS live_transaction_materials (
       material_id TEXT PRIMARY KEY,
       review_session_id TEXT NOT NULL,
@@ -226,47 +205,34 @@ export function initializeDatabase(db: SqliteDatabase): void {
       id TEXT PRIMARY KEY,
       session_json TEXT NOT NULL
     );
-  `);
-  migrateDatabase(db, currentUserVersion);
-  ensureLiveReviewSessionWriteContract(db);
-  if ((db.pragma("user_version", { simple: true }) as number) !== DB_USER_VERSION) {
-    db.pragma(`user_version = ${DB_USER_VERSION}`);
-  }
-}
 
-function migrateDatabase(db: SqliteDatabase, currentUserVersion: number): void {
-  if (currentUserVersion < 3 && !tableHasColumn(db, "external_activity_transactions", "detail_json")) {
-    db.exec("ALTER TABLE external_activity_transactions ADD COLUMN detail_json TEXT");
-  }
-  if (currentUserVersion > 0 && currentUserVersion < 4 && tableExists(db, "external_activity_scans")) {
-    rebuildExternalActivityScansForFunctionScan(db);
-  }
-  if (currentUserVersion > 0 && currentUserVersion < 5 && tableExists(db, "active_account_context")) {
-    if (!tableHasColumn(db, "active_account_context", "wallet_name")) {
-      db.exec("ALTER TABLE active_account_context ADD COLUMN wallet_name TEXT");
-    }
-    if (!tableHasColumn(db, "active_account_context", "wallet_id")) {
-      db.exec("ALTER TABLE active_account_context ADD COLUMN wallet_id TEXT");
-    }
-  }
-  if (
-    tableExists(db, "live_review_sessions") &&
-    (!tableHasColumn(db, "live_review_sessions", "revision") ||
-      !tableHasColumn(db, "live_review_sessions", "write_contract_version"))
-  ) {
-    rebuildLiveReviewSessionsForWriteContract(db);
-  }
-}
+    CREATE TABLE IF NOT EXISTS live_read_cards (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('account', 'receipt', 'chart')),
+      state TEXT NOT NULL CHECK (state IN ('ready', 'running', 'closed')),
+      reason TEXT CHECK (reason IN ('completed', 'expired', 'failed', 'server_restarted')),
+      error TEXT,
+      revision INTEGER NOT NULL CHECK (revision >= 0),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      input_json TEXT NOT NULL,
+      accepted_input_json TEXT,
+      result_json TEXT,
+      receipt_display_json TEXT,
+      CHECK ((state = 'closed' AND reason IS NOT NULL) OR (state != 'closed' AND reason IS NULL)),
+      CHECK (state != 'running' OR accepted_input_json IS NOT NULL),
+      CHECK (receipt_display_json IS NULL OR (kind = 'receipt' AND reason = 'completed'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_live_read_cards_owner_state ON live_read_cards(owner_id, state);
+    CREATE TRIGGER IF NOT EXISTS live_read_cards_insert_revision
+    BEFORE INSERT ON live_read_cards WHEN NEW.revision != 0
+    BEGIN SELECT RAISE(ABORT, 'card insert requires revision zero'); END;
+    CREATE TRIGGER IF NOT EXISTS live_read_cards_update_revision
+    BEFORE UPDATE ON live_read_cards WHEN NEW.revision != OLD.revision + 1
+    BEGIN SELECT RAISE(ABORT, 'card update requires the next revision'); END;
 
-function ensureLiveReviewSessionWriteContract(db: SqliteDatabase): void {
-  if (
-    !tableHasColumn(db, "live_review_sessions", "revision") ||
-    !tableHasColumn(db, "live_review_sessions", "write_contract_version")
-  ) {
-    throw new ActivityStoreError("Local activity database is missing the live review-session write contract.");
-  }
-
-  db.exec(`
     CREATE TRIGGER IF NOT EXISTS ${LIVE_REVIEW_SESSION_INSERT_TRIGGER}
     BEFORE INSERT ON live_review_sessions
     FOR EACH ROW
@@ -289,153 +255,55 @@ function ensureLiveReviewSessionWriteContract(db: SqliteDatabase): void {
     BEGIN
       SELECT RAISE(ABORT, 'live review session update requires the hardened write contract');
     END;
-  `);
+  `;
 
-  const triggerRows = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?)")
-    .all(LIVE_REVIEW_SESSION_INSERT_TRIGGER, LIVE_REVIEW_SESSION_UPDATE_TRIGGER) as Array<{ name: string }>;
-  if (triggerRows.length !== 2) {
-    throw new ActivityStoreError("Local activity database cannot enforce the live review-session write contract.");
-  }
+export function configureDatabase(db: SqliteDatabase): void {
+  db.exec("PRAGMA journal_mode=WAL");
+  db.exec("PRAGMA synchronous=NORMAL");
+  db.exec("PRAGMA foreign_keys=ON");
+  db.exec("PRAGMA busy_timeout=5000");
 }
 
-function rebuildLiveReviewSessionsForWriteContract(db: SqliteDatabase): void {
-  const previousForeignKeys = db.pragma("foreign_keys", { simple: true }) as number;
-  db.pragma("foreign_keys = OFF");
-  let transactionStarted = false;
+// SQLite normalizes its own DDL. Compare only schema metadata, never user rows.
+// The reference is built once from the single current schema, not from the DB being checked.
+let currentSchemaSignature: string | undefined;
+function schemaSignature(db: SqliteDatabase): string {
+  return JSON.stringify(db.prepare(
+    "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+  ).all());
+}
+function expectedSchemaSignature(): string {
+  if (currentSchemaSignature !== undefined) return currentSchemaSignature;
+  const reference = new Database(":memory:");
   try {
-    db.exec("BEGIN IMMEDIATE");
-    transactionStarted = true;
-    db.exec(`
-      DROP TABLE IF EXISTS live_review_sessions_new;
-      DROP TABLE IF EXISTS live_private_review_artifacts_new;
-      DROP TABLE IF EXISTS live_private_review_artifacts_backup;
-
-      CREATE TEMP TABLE live_private_review_artifacts_backup AS
-        SELECT review_session_id, artifacts_json
-        FROM live_private_review_artifacts;
-
-      CREATE TABLE live_review_sessions_new (
-        id TEXT PRIMARY KEY,
-        token_hash TEXT NOT NULL,
-        status TEXT NOT NULL,
-        account TEXT,
-        pending_handoff_digest TEXT,
-        plans_json TEXT NOT NULL,
-        review_state_json TEXT,
-        execution_result_json TEXT,
-        created_at TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        last_activity_at TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        write_contract_version TEXT NOT NULL
-      );
-
-      INSERT INTO live_review_sessions_new
-        (id, token_hash, status, account, pending_handoff_digest,
-         plans_json, review_state_json, execution_result_json,
-         created_at, expires_at, last_activity_at, revision, write_contract_version)
-      SELECT
-        id, token_hash, status, account, pending_handoff_digest,
-        plans_json, review_state_json, execution_result_json,
-        created_at, expires_at, last_activity_at,
-        0,
-        '${LIVE_REVIEW_SESSION_WRITE_CONTRACT_VERSION}'
-      FROM live_review_sessions;
-
-      DROP TABLE live_private_review_artifacts;
-      DROP TABLE live_review_sessions;
-      ALTER TABLE live_review_sessions_new RENAME TO live_review_sessions;
-
-      CREATE TABLE live_private_review_artifacts (
-        review_session_id TEXT PRIMARY KEY
-          REFERENCES live_review_sessions(id) ON DELETE CASCADE,
-        artifacts_json TEXT NOT NULL
-      );
-
-      INSERT INTO live_private_review_artifacts (review_session_id, artifacts_json)
-      SELECT review_session_id, artifacts_json
-      FROM live_private_review_artifacts_backup
-      WHERE review_session_id IN (SELECT id FROM live_review_sessions);
-
-      DROP TABLE live_private_review_artifacts_backup;
-    `);
-    const foreignKeyFailures = db.prepare("PRAGMA foreign_key_check").all();
-    if (foreignKeyFailures.length > 0) {
-      throw new ActivityStoreError("Local activity database migration failed foreign key check");
-    }
-    db.exec("COMMIT");
-    transactionStarted = false;
-  } catch (error) {
-    if (transactionStarted) {
-      try {
-        db.exec("ROLLBACK");
-      } catch {
-        // Preserve the migration error that caused the rollback attempt.
-      }
-    }
-    throw error;
+    reference.exec(CURRENT_SCHEMA_SQL);
+    currentSchemaSignature = schemaSignature(reference);
+    return currentSchemaSignature;
   } finally {
-    db.pragma(`foreign_keys = ${previousForeignKeys === 0 ? "OFF" : "ON"}`);
+    reference.close();
   }
 }
 
-function tableHasColumn(db: SqliteDatabase, table: string, column: string): boolean {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  return rows.some((row) => row.name === column);
+export function assertCurrentDatabaseFormat(db: SqliteDatabase): "empty" | "current" {
+  const version = db.pragma("user_version", { simple: true }) as number;
+  const signature = schemaSignature(db);
+  if (version === 0 && signature === "[]") return "empty";
+  if (version === DB_USER_VERSION && signature === expectedSchemaSignature()) return "current";
+  throw new ActivityStoreError(
+    "Local database format does not match this runtime. Use a new empty SAY_UR_INTENT_DATA_DIR; existing data is not converted or deleted."
+  );
 }
 
-function tableExists(db: SqliteDatabase, table: string): boolean {
-  const row = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(table) as { name: string } | undefined;
-  return row !== undefined;
-}
-
-function rebuildExternalActivityScansForFunctionScan(db: SqliteDatabase): void {
-  const previousForeignKeys = db.pragma("foreign_keys", { simple: true }) as number;
-  const rebuild = db.transaction(() => {
-    db.exec(`
-      DROP TABLE IF EXISTS external_activity_scans_new;
-
-      ${externalActivityScansTableSql("external_activity_scans_new", { ifNotExists: false })};
-
-      INSERT INTO external_activity_scans_new
-        (scan_id, kind, account_id, relationship, input_digest, from_checkpoint, to_checkpoint,
-         from_timestamp, to_timestamp, limit_count, request_cursor, response_cursor, endpoint_host,
-         chain_identifier, fetched_at, stored_count, skipped_count, has_more, window_complete,
-         incomplete_reason)
-      SELECT
-        scan_id, kind, account_id, relationship, input_digest, from_checkpoint, to_checkpoint,
-        from_timestamp, to_timestamp, limit_count, request_cursor, response_cursor, endpoint_host,
-        chain_identifier, fetched_at, stored_count, skipped_count, has_more, window_complete,
-        incomplete_reason
-      FROM external_activity_scans;
-
-      DROP TABLE external_activity_scans;
-      ALTER TABLE external_activity_scans_new RENAME TO external_activity_scans;
-      ${EXTERNAL_ACTIVITY_SCAN_INDEX_SQL};
-    `);
-    const foreignKeyFailures = db.prepare("PRAGMA foreign_key_check").all();
-    if (foreignKeyFailures.length > 0) {
-      throw new ActivityStoreError("Local activity database migration failed foreign key check");
-    }
+export function initializeDatabase(db: SqliteDatabase): void {
+  if (assertCurrentDatabaseFormat(db) === "current") return;
+  db.transaction(() => {
+    db.exec(CURRENT_SCHEMA_SQL);
     db.pragma(`user_version = ${DB_USER_VERSION}`);
-  });
-
-  db.pragma("foreign_keys = OFF");
-  try {
-    rebuild();
-  } finally {
-    db.pragma(`foreign_keys = ${previousForeignKeys === 0 ? "OFF" : "ON"}`);
-  }
+  })();
 }
 
-function externalActivityScansTableSql(
-  tableName: "external_activity_scans" | "external_activity_scans_new",
-  options: { ifNotExists: boolean }
-): string {
-  return `CREATE TABLE ${options.ifNotExists ? "IF NOT EXISTS " : ""}${tableName} (
+function externalActivityScansTableSql(): string {
+  return `CREATE TABLE IF NOT EXISTS external_activity_scans (
     scan_id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('digest_lookup', 'account_scan', 'function_scan')),
     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,

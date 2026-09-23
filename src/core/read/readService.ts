@@ -103,7 +103,7 @@ import {
   isSupportedIntentEvidenceKind
 } from "./intentEvidenceResponseFormatting.js";
 import {
-  roundDerivedParityPrice,
+  roundPriceInReferenceAsset,
   settlementAssetGroupParityQuantitySemantics,
   settlementAssetGroupParityResponseSummary,
   settlementAssetGroupParityStatistics
@@ -1214,13 +1214,13 @@ export class SuiReadService {
         return candleStart >= startMs && candleStart < endMs;
       })
       .sort((left, right) => Date.parse(left.start) - Date.parse(right.start));
-    const coverageStatus = bars.length === 0 ? "no_candles_in_range" : "complete";
+    const candleAvailability = bars.length === 0 ? "no_candles_in_range" : "available";
 
     return {
       status: "ok",
       ...common,
       pair: outputPair,
-      coverageStatus,
+      candleAvailability,
       barCount: bars.length,
       bars,
       source
@@ -1285,7 +1285,7 @@ export class SuiReadService {
         status: "no_price_in_search_window",
         ...common,
         pair: history.pair,
-        coverageStatus: history.coverageStatus,
+        candleAvailability: history.candleAvailability,
         source: history.source,
         userAnswerUse: deepbookUsdcPriceAtTimeUserAnswerUse(false)
       };
@@ -1297,7 +1297,7 @@ export class SuiReadService {
       pair: history.pair,
       match: matched.match,
       matchedCandle: matched.candle,
-      coverageStatus: history.coverageStatus,
+      candleAvailability: history.candleAvailability,
       source: history.source,
       userAnswerUse: deepbookUsdcPriceAtTimeUserAnswerUse(true)
     };
@@ -1812,7 +1812,7 @@ export class SuiReadService {
       return {
         ...asset,
         status: "reference_asset",
-        parityPrice: 1,
+        priceInReferenceAsset: 1,
         parityDirection: "reference_asset_per_group_asset",
         reason: "reference_asset_is_measurement_baseline_not_settlement_choice"
       };
@@ -1849,7 +1849,7 @@ export class SuiReadService {
     return {
       ...asset,
       status: "measured",
-      parityPrice: roundDerivedParityPrice(directPool.direction === "base_to_quote" ? poolMidPrice : 1 / poolMidPrice),
+      priceInReferenceAsset: roundPriceInReferenceAsset(directPool.direction === "base_to_quote" ? poolMidPrice : 1 / poolMidPrice),
       parityDirection: "reference_asset_per_group_asset",
       poolKey: directPool.poolKey,
       direction: directPool.direction,

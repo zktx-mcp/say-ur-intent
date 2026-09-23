@@ -522,7 +522,7 @@ describe("SuiReadService", () => {
     expect(coinTypes).not.toContain("0xdead::z::Z");
   });
 
-  it("classifies wallet coin balances with spendability and roles", async () => {
+  it("classifies wallet coin balances with balanceStatus and roles", async () => {
     const result = await createService({
       async listBalances() {
         return {
@@ -579,7 +579,7 @@ describe("SuiReadService", () => {
         {
           classification: {
             assetClass: "coin_balance",
-            spendability: "spendable",
+            balanceStatus: "nonzero",
             roles: ["gas_candidate", "deepbook_registered"]
           }
         },
@@ -587,7 +587,7 @@ describe("SuiReadService", () => {
           balance: { unit: { status: "unavailable", reason: "metadata_not_found" } },
           classification: {
             assetClass: "coin_balance",
-            spendability: "spendable",
+            balanceStatus: "nonzero",
             roles: []
           }
         }
@@ -676,7 +676,7 @@ describe("SuiReadService", () => {
     expect(result.classifiedAssets[0]).toMatchObject({
       classification: {
         assetClass: "coin_balance",
-        spendability: "zero_balance",
+        balanceStatus: "zero",
         roles: ["gas_candidate", "deepbook_registered"]
       }
     });
@@ -708,7 +708,7 @@ describe("SuiReadService", () => {
         }
       },
       classification: {
-        spendability: "spendable",
+        balanceStatus: "nonzero",
         roles: ["deepbook_registered"]
       }
     });
@@ -871,10 +871,10 @@ describe("SuiReadService", () => {
         sampleCount: 7,
         unavailableAssetCount: 0,
         parityDirection: "reference_asset_per_group_asset",
-        min: { symbol: "AUSD", parityPrice: 0.825005 },
-        max: { symbol: "WUSDC", parityPrice: 2.798605 },
-        mean: { parityPrice: 1.236620286 },
-        median: { parityPrice: 1 }
+        min: { symbol: "AUSD", priceInReferenceAsset: 0.825005 },
+        max: { symbol: "WUSDC", priceInReferenceAsset: 2.798605 },
+        mean: { priceInReferenceAsset: 1.236620286 },
+        median: { priceInReferenceAsset: 1 }
       },
       responseSummary: {
         questionKind: "settlement_asset_group_parity",
@@ -883,10 +883,10 @@ describe("SuiReadService", () => {
         referenceAssetSymbol: "USDC",
         referenceAssetRole: "measurement_reference_not_settlement_choice",
         parityDirection: "reference_asset_per_group_asset",
-        min: { symbol: "AUSD", parityPrice: 0.825005 },
-        max: { symbol: "WUSDC", parityPrice: 2.798605 },
-        mean: { parityPrice: 1.236620286 },
-        median: { parityPrice: 1 },
+        min: { symbol: "AUSD", priceInReferenceAsset: 0.825005 },
+        max: { symbol: "WUSDC", priceInReferenceAsset: 2.798605 },
+        mean: { priceInReferenceAsset: 1.236620286 },
+        median: { priceInReferenceAsset: 1 },
         excludedFromConclusion: expect.arrayContaining(["settlement_token_selection", "best_route"])
       },
       unsupportedClaims: expect.arrayContaining(["settlement_token_selection", "fiat_usd_cash_out", "best_route"])
@@ -896,7 +896,7 @@ describe("SuiReadService", () => {
         expect.objectContaining({
           symbol: "USDC",
           status: "reference_asset",
-          parityPrice: 1
+          priceInReferenceAsset: 1
         }),
         expect.objectContaining({
           symbol: "USDT",
@@ -904,7 +904,7 @@ describe("SuiReadService", () => {
           poolKey: "USDT_USDC",
           direction: "base_to_quote",
           poolMidPrice: 0.9991955,
-          parityPrice: 0.9991955
+          priceInReferenceAsset: 0.9991955
         })
       ])
     );
@@ -2196,7 +2196,7 @@ describe("SuiReadService", () => {
         },
         priceConvention: "USDC_PER_BASE"
       },
-      coverageStatus: "complete",
+      candleAvailability: "available",
       barCount: 2,
       source: {
         kind: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.kind,

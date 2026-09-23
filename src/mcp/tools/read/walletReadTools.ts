@@ -22,10 +22,10 @@ import { successOutputSchema } from "../../schemas.js";
 import { okToolResult } from "../../result.js";
 import type { McpServerDeps } from "../../server.js";
 import {
-  answerSourceStatus,
+  toolAvailability,
   USD_INTENT_ANSWER_REQUIRED_TOOLS,
   USD_PARITY_ANSWER_REQUIRED_TOOLS,
-  type AnswerSourceStatus
+  type ToolAvailability
 } from "../../serverInfo.js";
 import { TOOL_NAMES } from "../../toolNames.js";
 import { fetchedAtSchema, readSourceSchema, userAnswerUseSchema } from "./commonSchemas.js";
@@ -35,23 +35,23 @@ type ResponseWithUserAnswerUse = {
   userAnswerUse: UserAnswerUse;
 };
 
-function withAnswerSourceStatus<T extends ResponseWithUserAnswerUse>(
+function withToolAvailability<T extends ResponseWithUserAnswerUse>(
   data: T,
   requiredTools: readonly string[]
-): T & { answerSourceStatus: AnswerSourceStatus } {
+): T & { toolAvailability: ToolAvailability } {
   const preconditionFields = new Set(data.userAnswerUse.preconditionFields ?? []);
-  preconditionFields.add("answerSourceStatus");
+  preconditionFields.add("toolAvailability");
   return {
     ...data,
     userAnswerUse: {
       ...data.userAnswerUse,
       preconditionFields: [...preconditionFields]
     },
-    answerSourceStatus: answerSourceStatus(requiredTools)
+    toolAvailability: toolAvailability(requiredTools)
   };
 }
 
-const answerSourceStatusSchema = z.object({
+const toolAvailabilitySchema = z.object({
   statusTool: z.literal(TOOL_NAMES.readGetServerStatus),
   packageName: z.string(),
   version: z.string(),
@@ -60,8 +60,8 @@ const answerSourceStatusSchema = z.object({
   implementedToolsCount: z.number().int().nonnegative(),
   requiredTools: z.array(z.object({ name: z.string(), available: z.boolean() })),
   missingRequiredTools: z.array(z.string()),
-  canUseThisResponseForUserAnswer: z.boolean(),
-  cannotUseReason: z.literal("required_tool_missing_from_current_server_build").nullable()
+  requiredToolsAvailable: z.boolean(),
+  unavailableReason: z.literal("required_tool_missing_from_current_server_build").nullable()
 }).strict();
 
 const walletBalanceUnitSchema = z.discriminatedUnion("status", [
@@ -128,7 +128,7 @@ const classifiedWalletAssetSchema = z.object({
   balance: walletBalanceSchema,
   classification: z.object({
     assetClass: z.literal("coin_balance"),
-    spendability: z.enum(["spendable", "zero_balance"]),
+    balanceStatus: z.enum(["nonzero", "zero"]),
     roles: z.array(z.enum(["gas_candidate", "deepbook_registered"]))
   })
 });
@@ -239,13 +239,13 @@ const settlementAssetGroupParityQuantitySemanticsSchema = z.object({
 const settlementAssetGroupParityAssetSchema = z.discriminatedUnion("status", [
   settlementAssetGroupAssetSchema.extend({
     status: z.literal("reference_asset"),
-    parityPrice: z.number().positive(),
+    priceInReferenceAsset: z.number().positive(),
     parityDirection: z.literal("reference_asset_per_group_asset"),
     reason: z.literal("reference_asset_is_measurement_baseline_not_settlement_choice")
   }),
   settlementAssetGroupAssetSchema.extend({
     status: z.literal("measured"),
-    parityPrice: z.number().positive(),
+    priceInReferenceAsset: z.number().positive(),
     parityDirection: z.literal("reference_asset_per_group_asset"),
     poolKey: z.string(),
     direction: z.enum(["base_to_quote", "quote_to_base"]),
@@ -285,17 +285,17 @@ const settlementAssetGroupParityResponseSummarySchema = z.object({
   parityDirection: z.literal("reference_asset_per_group_asset"),
   min: z.object({
     symbol: z.string(),
-    parityPrice: z.number().positive()
+    priceInReferenceAsset: z.number().positive()
   }),
   max: z.object({
     symbol: z.string(),
-    parityPrice: z.number().positive()
+    priceInReferenceAsset: z.number().positive()
   }),
   mean: z.object({
-    parityPrice: z.number().positive()
+    priceInReferenceAsset: z.number().positive()
   }),
   median: z.object({
-    parityPrice: z.number().positive()
+    priceInReferenceAsset: z.number().positive()
   }),
   excludedFromConclusion: z.tuple([
     z.literal("settlement_token_selection"),
@@ -685,7 +685,7 @@ export function registerWalletReadTools(server: McpServer, deps: McpServerDeps):
         denomination: settlementAssetGroupAliasSchema,
         assetGroupId: z.literal(SUI_USD_SETTLEMENT_ASSET_GROUP_ID),
         userAnswerUse: userAnswerUseSchema,
-        answerSourceStatus: answerSourceStatusSchema,
+        toolAvailability: toolAvailabilitySchema,
         referenceAsset: settlementAssetGroupAssetSchema.extend({
           role: z.literal("measurement_reference_not_settlement_choice")
         }),
@@ -709,17 +709,17 @@ export function registerWalletReadTools(server: McpServer, deps: McpServerDeps):
           calculation: z.literal("computed_from_available_direct_deepbook_mid_price_snapshots"),
           min: z.object({
             symbol: z.string(),
-            parityPrice: z.number().positive()
+            priceInReferenceAsset: z.number().positive()
           }),
           max: z.object({
             symbol: z.string(),
-            parityPrice: z.number().positive()
+            priceInReferenceAsset: z.number().positive()
           }),
           mean: z.object({
-            parityPrice: z.number().positive()
+            priceInReferenceAsset: z.number().positive()
           }),
           median: z.object({
-            parityPrice: z.number().positive()
+            priceInReferenceAsset: z.number().positive()
           })
         }),
         responseSummary: settlementAssetGroupParityResponseSummarySchema,
@@ -730,7 +730,7 @@ export function registerWalletReadTools(server: McpServer, deps: McpServerDeps):
     async ({ denomination, referenceAssetSymbol }) => {
       try {
         return okToolResult(
-          withAnswerSourceStatus(
+          withToolAvailability(
             await deps.readService.summarizeSettlementAssetGroupParity({
               denomination,
               referenceAssetSymbol,
@@ -764,7 +764,7 @@ export function registerWalletReadTools(server: McpServer, deps: McpServerDeps):
         account: z.string(),
         fetchedAt: fetchedAtSchema,
         userAnswerUse: userAnswerUseSchema,
-        answerSourceStatus: answerSourceStatusSchema,
+        toolAvailability: toolAvailabilitySchema,
         intent: z.object({
           intentKind: z.enum(["cover_payment_like_amount", "summarize_settlement_asset_group_balance"]),
           denomination: settlementAssetGroupAliasSchema,
@@ -814,7 +814,7 @@ export function registerWalletReadTools(server: McpServer, deps: McpServerDeps):
       }
       try {
         return okToolResult(
-          withAnswerSourceStatus(
+          withToolAvailability(
             await deps.readService.previewIntentEvidence({
               account: target.account,
               intentKind,

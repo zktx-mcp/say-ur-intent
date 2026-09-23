@@ -99,7 +99,6 @@ It repeats the row digest, status, and sender metadata.
 It carries account-scoped fields such as:
 
 - `accountBalanceChangeEvidence`;
-- `accountBalanceChangeAbsenceProven`;
 - `accountBalanceChangeInferencePolicy`;
 - `accountBalanceChanges`;
 - `accountCoinFlows`;
@@ -109,11 +108,11 @@ It also includes transaction-level `transactionContext` for calls, events, objec
 
 Live scan and live-summary `transactionContext` intentionally omits transaction-wide balance-change aggregates. This prevents repeated ownerless raw balance-change facts from being mistaken for a requested wallet's balance movement.
 
-A row-level `requestedAccountEffect` has `scope: "requested_account"` plus `role`, `balanceChangeEvidence`, `accountBalanceChangeAbsenceProven`, `accountBalanceChangeInferencePolicy`, `coinFlows`, and `limitations` fields for that transaction.
+A row-level `requestedAccountEffect` has `scope: "requested_account"` plus `role`, `balanceChangeEvidence`, `accountBalanceChangeInferencePolicy`, `coinFlows`, and `limitations` fields for that transaction.
 
 `incomplete_account_balance_changes` and `account_balance_changes_unavailable` are not zero-balance evidence.
 
-Only `accountBalanceChangeAbsenceProven: true` or `no_account_balance_changes_returned` with complete evidence means the returned details prove no requested-account balance changes in that row.
+Only `no_account_balance_changes_returned` with complete details supports saying no requested-account balance change was returned in that row.
 
 `accountBalanceChangeInferencePolicy: "do_not_infer_from_transaction_context"` means transaction-level context, visible recipient patterns, current wallet balances, compact counts, or aggregate analysis must not be used to infer the requested account's amount.
 

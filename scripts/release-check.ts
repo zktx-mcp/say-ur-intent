@@ -19,16 +19,11 @@ const requiredFiles = [
   "README.md",
   "LICENSE",
   "dist/runtime/start.js",
+  "dist/mcp-app/account.html",
+  "dist/mcp-app/receipt.html",
+  "dist/mcp-app/chart.html",
   "dist/review-app/connect.js",
   "dist/review-app/connect.css",
-  "dist/review-app/account.js",
-  "dist/review-app/account.css",
-  "dist/review-app/receipt.js",
-  "dist/review-app/receipt.css",
-  "dist/review-app/homepage.js",
-  "dist/review-app/homepage.css",
-  "dist/review-app/notFound.js",
-  "dist/review-app/notFound.css",
   "dist/review-app/ui.css",
   "dist/review-app/favicon.svg",
   "dist/review-app/brand-light.svg",
@@ -111,18 +106,6 @@ function assertLocalFiles(): void {
   }
   if (!existsSync("dist/review-app/connect.css")) {
     throw new Error("dist/review-app/connect.css is required before publishing.");
-  }
-  if (!existsSync("dist/review-app/account.js")) {
-    throw new Error("dist/review-app/account.js is required before publishing.");
-  }
-  if (!existsSync("dist/review-app/account.css")) {
-    throw new Error("dist/review-app/account.css is required before publishing.");
-  }
-  if (!existsSync("dist/review-app/receipt.js")) {
-    throw new Error("dist/review-app/receipt.js is required before publishing.");
-  }
-  if (!existsSync("dist/review-app/receipt.css")) {
-    throw new Error("dist/review-app/receipt.css is required before publishing.");
   }
 
   const startJs = readFileSync("dist/runtime/start.js", "utf8");

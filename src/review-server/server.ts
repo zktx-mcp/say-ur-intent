@@ -1,3 +1,4 @@
+import type { PublicChainReceiptResult } from "../core/action/suiChainReceiptReader.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
@@ -21,28 +22,17 @@ import {
 import { SessionStoreError, type SessionStore } from "../core/session/sessionStore.js";
 import { getExecutionPollingStatus } from "../core/session/status.js";
 import {
-  DeepbookOfficialIndexerSource,
-  type DeepbookOfficialIndexerSourceClient
-} from "../core/read/deepbookOfficialIndexerSource.js";
-import {
   walletIdentityResultInputSchema,
   walletIdentityPollingHint,
   type WalletIdentitySession
 } from "../core/session/walletIdentity.js";
 import { parseSuiAddress } from "../core/suiAddress.js";
-import type { PublicChainReceiptResult } from "../core/action/suiChainReceiptReader.js";
 import type { Logger } from "../runtime/logger.js";
 import { validateHostOrigin } from "./middleware/hostOrigin.js";
 import { readReviewToken } from "./middleware/reviewToken.js";
 import { defaultReviewAssetsDir, serveReviewAsset } from "./assets.js";
-import { createDeepbookUsdcChartApi } from "./deepbookUsdcChartApi.js";
 import {
-  accountHtml,
   connectHtml,
-  deepbookUsdcChartHtml,
-  homeHtml,
-  notFoundHtml,
-  receiptHtml,
   reviewHtml,
   settingsHtml
 } from "./html.js";
@@ -56,14 +46,10 @@ type ReviewHttpServerOptions = {
   logger: Logger;
   reviewAssetsDir?: string;
   activityStore?: ActivityStore | undefined;
-  readService?: { summarizeAccountInventory(input: { account?: string }): Promise<unknown> } | undefined;
   localSettings?: LocalSettingsService | undefined;
   localData?: LocalDataService | undefined;
-  deepbookOfficialIndexerSource?: DeepbookOfficialIndexerSourceClient | undefined;
   chainReceiptVerifier?: ChainReceiptVerifier | undefined;
-  publicChainReceiptReader?:
-    | ((input: { digest: string; now: Date }) => Promise<PublicChainReceiptResult>)
-    | undefined;
+  publicChainReceiptReader?: ((input: { digest: string; now: Date }) => Promise<PublicChainReceiptResult>) | undefined;
   reviewComputationDeps?: ReviewComputationDeps | undefined;
   serverInfo?: {
     name: string;
@@ -78,13 +64,10 @@ type StartedReviewServer = {
   close(): Promise<void>;
 };
 
-export function createReviewHttpServer(options: ReviewHttpServerOptions) {
-  const deepbookUsdcChartApi = createDeepbookUsdcChartApi({
-    source: options.deepbookOfficialIndexerSource ?? new DeepbookOfficialIndexerSource()
-  });
-  const server = createServer(async (request, response) => {
+export function createReviewRequestHandler(options: ReviewHttpServerOptions) {
+  return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     try {
-      await routeRequest(request, response, options, deepbookUsdcChartApi);
+      await routeRequest(request, response, options);
     } catch (error) {
       if (error instanceof HttpError) {
         sendJson(response, error.status, { error: error.code });
@@ -95,7 +78,12 @@ export function createReviewHttpServer(options: ReviewHttpServerOptions) {
       });
       sendJson(response, 500, { error: "internal_error" });
     }
-  });
+  };
+}
+
+export function createReviewHttpServer(options: ReviewHttpServerOptions) {
+  const handler = createReviewRequestHandler(options);
+  const server = createServer((request, response) => { void handler(request, response); });
 
   return {
     start(port: number): Promise<StartedReviewServer> {
@@ -149,8 +137,7 @@ async function requireReviewSessionToken(
 async function routeRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  options: ReviewHttpServerOptions,
-  deepbookUsdcChartApi: ReturnType<typeof createDeepbookUsdcChartApi>
+  options: ReviewHttpServerOptions
 ): Promise<void> {
   // Structural guard: every request to this server passes the Host/Origin
   // policy once, so a new route cannot accidentally skip it.
@@ -171,20 +158,6 @@ async function routeRequest(
     return;
   }
 
-  // Loopback identity probe used by a newer instance to confirm this port is
-  // held by our own review server before taking it over. It exposes only the
-  // service name, role, version, and pid — no addresses, tokens, or session
-  // data — and is reachable only on the loopback host this server binds.
-  if (request.method === "GET" && url.pathname === "/__identity") {
-    sendJson(response, 200, {
-      service: options.serverInfo?.name ?? "say-ur-intent",
-      role: "review-server",
-      version: options.serverInfo?.version,
-      pid: process.pid
-    });
-    return;
-  }
-
   const reviewMatch = /^\/review\/([^/]+)$/.exec(url.pathname);
   const apiReviewMatch = /^\/api\/review\/([^/]+)$/.exec(url.pathname);
   const apiReviewOpenedMatch = /^\/api\/review\/([^/]+)\/opened$/.exec(url.pathname);
@@ -192,13 +165,9 @@ async function routeRequest(
   const apiReviewResultMatch = /^\/api\/review\/([^/]+)\/result$/.exec(url.pathname);
   const apiResultMatch = /^\/api\/result\/([^/]+)$/.exec(url.pathname);
   const connectMatch = /^\/connect\/([^/]+)$/.exec(url.pathname);
-  const accountMatch = /^\/account$/.exec(url.pathname);
-  const receiptMatch = /^\/receipt$/.exec(url.pathname);
+  const apiReceiptMatch = /^\/api\/receipt$/.exec(url.pathname);
   const apiReviewHandoffMatch = /^\/api\/review\/([^/]+)\/handoff$/.exec(url.pathname);
   const apiReviewHandoffCancelMatch = /^\/api\/review\/([^/]+)\/handoff\/cancel$/.exec(url.pathname);
-  const apiAccountAssetsMatch = /^\/api\/account\/assets$/.exec(url.pathname);
-  const apiAccountActiveAccountMatch = /^\/api\/account\/active-account$/.exec(url.pathname);
-  const apiReceiptMatch = /^\/api\/receipt$/.exec(url.pathname);
   const apiWalletOpenedMatch = /^\/api\/wallet\/([^/]+)\/opened$/.exec(url.pathname);
   const apiWalletConnectingMatch = /^\/api\/wallet\/([^/]+)\/connecting$/.exec(url.pathname);
   const apiWalletResultMatch = /^\/api\/wallet\/([^/]+)\/result$/.exec(url.pathname);
@@ -213,9 +182,6 @@ async function routeRequest(
   const apiSettingsLocalDataPreviewMatch = /^\/api\/settings\/([^/]+)\/local-data\/import\/preview$/.exec(url.pathname);
   const apiSettingsLocalDataImportMatch = /^\/api\/settings\/([^/]+)\/local-data\/import$/.exec(url.pathname);
   const apiSettingsLocalDataResetMatch = /^\/api\/settings\/([^/]+)\/local-data\/reset$/.exec(url.pathname);
-  const deepbookUsdcChartMatch = /^\/charts\/deepbook-usdc$/.exec(url.pathname);
-  const apiDeepbookUsdcChartPoolsMatch = /^\/api\/charts\/deepbook-usdc\/pools$/.exec(url.pathname);
-  const apiDeepbookUsdcChartCandlesMatch = /^\/api\/charts\/deepbook-usdc\/candles$/.exec(url.pathname);
   const reviewAssetMatch = /^\/review-assets\/(.+)$/.exec(url.pathname);
 
   if (request.method === "GET" && reviewMatch?.[1]) {
@@ -236,21 +202,6 @@ async function routeRequest(
     return;
   }
 
-  if (request.method === "GET" && receiptMatch) {
-    sendHtml(response, receiptHtml(), {
-      "content-security-policy": [
-        "default-src 'none'",
-        "base-uri 'none'",
-        "connect-src 'self'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data:",
-        "form-action 'none'"
-      ].join("; ")
-    });
-    return;
-  }
-
   if (request.method === "GET" && connectMatch?.[1]) {
     sendHtml(response, connectHtml(connectMatch[1]), {
       "content-security-policy": [
@@ -263,41 +214,6 @@ async function routeRequest(
         // Inline styles are allowed for mermaid's SVG styling; scripts stay 'self'-only.
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data:",
-        "form-action 'none'"
-      ].join("; ")
-    });
-    return;
-  }
-
-  if (request.method === "GET" && url.pathname === "/") {
-    sendHtml(response, homeHtml(), {
-      "content-security-policy": [
-        "default-src 'none'",
-        "base-uri 'none'",
-        "connect-src 'self'",
-        "script-src 'self'",
-        "style-src 'self'",
-        "img-src 'self' data:",
-        "form-action 'none'"
-      ].join("; ")
-    });
-    return;
-  }
-
-  if (request.method === "GET" && accountMatch) {
-    sendHtml(response, accountHtml(), {
-      "content-security-policy": [
-        "default-src 'none'",
-        "base-uri 'none'",
-        // connect-src stays 'self' (the page reads the public account APIs and
-        // binds no wallet, so it never talks to the Sui fullnode). img-src allows
-        // external https so owned NFT images load directly from their host: the
-        // page has no secrets and script-src stays 'self', so an external image can
-        // neither execute nor exfiltrate — only the host learns the image was viewed.
-        "connect-src 'self'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: https:",
         "form-action 'none'"
       ].join("; ")
     });
@@ -349,35 +265,8 @@ async function routeRequest(
     return;
   }
 
-  if (request.method === "GET" && apiAccountAssetsMatch) {
-    const address = parseSuiAddress(url.searchParams.get("address") ?? "");
-    if (!address) {
-      sendJson(response, 400, { error: "address_invalid" });
-      return;
-    }
-    if (!options.readService) {
-      sendJson(response, 503, { error: "account_data_unavailable" });
-      return;
-    }
-    try {
-      const summary = await options.readService.summarizeAccountInventory({ account: address });
-      sendJson(response, 200, summary as Record<string, unknown>);
-    } catch {
-      sendJson(response, 502, { error: "wallet_read_failed" });
-    }
-    return;
-  }
-
-  if (request.method === "GET" && apiAccountActiveAccountMatch) {
-    // Public loopback read of the local active account address so the Account
-    // page can default to the connected wallet (FRONTEND_POLICY: the user can see
-    // the active account). It returns only the address, never a token, session, or
-    // signing authority, and is null when no account is bound.
-    const account = options.activityStore ? await options.activityStore.getActiveAccount() : undefined;
-    sendJson(response, 200, { address: account?.address ?? null });
-    return;
-  }
-
+  // The Review result still consumes this read endpoint. It shares the same
+  // receipt reader as the internal card and grants no wallet authority.
   if (request.method === "GET" && apiReceiptMatch) {
     if (!options.publicChainReceiptReader) {
       sendJson(response, 503, { error: "receipt_data_unavailable" });
@@ -415,35 +304,8 @@ async function routeRequest(
     return;
   }
 
-  if (request.method === "GET" && deepbookUsdcChartMatch) {
-    sendHtml(response, deepbookUsdcChartHtml(), {
-      "content-security-policy": [
-        "default-src 'none'",
-        "base-uri 'none'",
-        "connect-src 'self'",
-        "script-src 'self'",
-        "style-src 'self'",
-        "img-src 'self' data:",
-        "form-action 'none'"
-      ].join("; ")
-    });
-    return;
-  }
-
   if (request.method === "GET" && reviewAssetMatch?.[1]) {
     await serveReviewAsset(response, options.reviewAssetsDir ?? defaultReviewAssetsDir(), reviewAssetMatch[1]);
-    return;
-  }
-
-  if (request.method === "GET" && apiDeepbookUsdcChartPoolsMatch) {
-    const result = await deepbookUsdcChartApi.getPools(url.searchParams);
-    sendJson(response, result.httpStatus, result.body);
-    return;
-  }
-
-  if (request.method === "GET" && apiDeepbookUsdcChartCandlesMatch) {
-    const result = await deepbookUsdcChartApi.getCandles(url.searchParams);
-    sendJson(response, result.httpStatus, result.body);
     return;
   }
 
@@ -683,28 +545,6 @@ async function routeRequest(
       lastActivityAt: session.lastActivityAt,
       executionResult: session.executionResult
     });
-    return;
-  }
-
-  // Page navigations (Accept: text/html) get the HTML not-found page on the
-  // shared shell; API and asset requests keep the JSON error body.
-  if (request.method === "GET" && (request.headers.accept ?? "").includes("text/html")) {
-    sendHtml(
-      response,
-      notFoundHtml(),
-      {
-        "content-security-policy": [
-          "default-src 'none'",
-          "base-uri 'none'",
-          "connect-src 'self'",
-          "script-src 'self'",
-          "style-src 'self'",
-          "img-src 'self' data:",
-          "form-action 'none'"
-        ].join("; ")
-      },
-      404
-    );
     return;
   }
   sendJson(response, 404, { error: "not_found" });

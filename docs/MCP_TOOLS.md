@@ -26,7 +26,7 @@ Tool names use dot prefixes and avoid arbitrary shell, arbitrary Move calls, and
 | `read.quote_flowx_swap` | Implemented | Returns an indicative FlowX route quote for an explicit display source amount; the router-selected pool is reported as evidence and validated against the pinned registry. |
 | `read.summarize_deepbook_account_inventory` | Implemented | Summarizes active-account DeepBook BalanceManager inventory through pinned SDK simulation reads. |
 | `read.summarize_wallet_assets` | Implemented | Reads coin balances for an explicit address or the active account through Sui gRPC `client.core.listBalances`; accepts `cursor` for pagination. |
-| `read.classify_wallet_assets` | Implemented | Classifies coin balances for an explicit address or the active account by spendability and coin-balance roles; accepts `cursor` for pagination. |
+| `read.classify_wallet_assets` | Implemented | Classifies coin balances for an explicit address or the active account by balanceStatus and coin-balance roles; accepts `cursor` for pagination. |
 | `read.list_settlement_asset_groups` | Implemented | Lists supported settlement asset groups derived from pinned mainnet SDK registries. |
 | `read.summarize_settlement_asset_group_parity` | Implemented | Summarizes direct DeepBook mid-price parity across a supported settlement asset group against a declared measurement reference. |
 | `read.preview_intent_evidence` | Implemented | Builds current wallet and DeepBook evidence for a natural-language settlement intent; not transaction building or signing. |
@@ -55,9 +55,9 @@ Live read results include `fetchedAt` as an ISO 8601 UTC string. `fetchedAt` is 
 
 High-risk read, review, wallet identity, and execution-status responses include `userAnswerUse` when the response needs answer guidance.
 
-USD-denominated settlement-asset responses also include `answerSourceStatus`.
+USD-denominated settlement-asset responses also include `toolAvailability`.
 This object repeats the current package version, evidence policy version, network, implemented tool count, and required tool availability for that response.
-If `answerSourceStatus.canUseThisResponseForUserAnswer` is `false`, do not answer the user's USD-denominated question from that response.
+If `toolAvailability.requiredToolsAvailable` is `false`, do not answer the user's USD-denominated question from that response.
 
 Use these fields before relying on prose in this document:
 
@@ -70,8 +70,8 @@ Use these fields before relying on prose in this document:
 - `userAnswerUse.followUp.tool`: exact next tool when the current response is not enough.
 - `userAnswerUse.followUp.inputFields`: current-response fields to pass into the follow-up tool, when the response provides them.
 - `userAnswerUse.followUp.answerFields`: fields to use in the follow-up response.
-- `answerSourceStatus.requiredTools`: tools the current response depends on for this answer class.
-- `answerSourceStatus.canUseThisResponseForUserAnswer`: whether the current server build exposes those required tools.
+- `toolAvailability.requiredTools`: tools the current response depends on for this answer class.
+- `toolAvailability.requiredToolsAvailable`: whether the current server build exposes those required tools.
 
 `quantitySemantics`, raw evidence, source fields, and protocol facts remain in the response. `userAnswerUse` does not replace them; it tells the client which returned fields belong in the answer.
 
@@ -109,7 +109,7 @@ Supported successful responses return:
 - `pair` with the official pool name, pool id, base asset, canonical USDC quote asset, and `priceConvention: "USDC_PER_BASE"`;
 - `requested.range.interval`, `requested.range.intervalDurationMs`, and `requested.range.requestedCandleSlots`;
 - `bars`, where each returned candle has `timestampMs`, `start`, `end`, `open`, `high`, `low`, `close`, and `volume`;
-- `coverageStatus`, which can be `complete` or `no_candles_in_range`;
+- `candleAvailability`, which can be `available` or `no_candles_in_range`;
 - `source.poolList` and `source.candles`;
 - `quantitySemantics`, `responseSummary`, and `unsupportedClaims`.
 
@@ -135,15 +135,32 @@ Successful at-time responses return:
 - `match.distanceMinutes`;
 - `match.representativePrice`, whose `field` is `matchedCandle.close`;
 - `matchedCandle`, an official Indexer candle;
-- the same `pair`, `coverageStatus`, `source`, `quantitySemantics`, `responseSummary`, and `unsupportedClaims` boundaries as the range-history tool.
+- the same `pair`, `candleAvailability`, `source`, `quantitySemantics`, `responseSummary`, and `unsupportedClaims` boundaries as the range-history tool.
 
 `status: "no_price_in_search_window"` means no official Indexer candle was available inside the bounded search window. The tool does not synthesize a price, interpolate, carry forward a previous candle outside the search window, or perform an on-demand chain-history scan.
 
-A local read-only chart page is available at `/charts/deepbook-usdc`.
+Internal read cards are opened with `ui.open_account`, `ui.open_receipt`, and `ui.open_chart`. They require a client that provides MCP Apps. A client without that UI receives `ui_unavailable`; ordinary MCP read tools remain available.
 
-The chart page is not an MCP tool and does not change the MCP price-history or price-at-time contracts. It displays DeepBookV3 official Indexer USDC-denominated candles through same-origin local chart APIs under `/api/charts/deepbook-usdc/`. The page can render one selected official USDC pool as candlesticks plus volume, or two to five selected official USDC pools as separate close-price line panes. It accepts only official Indexer intervals, UTC start/end timestamps, and a candle limit. Its shortcut buttons fill those query fields; shortcut labels are not API values or source contracts.
+| Tool | Input and result |
+| --- | --- |
+| `ui.open_account` | Optional Sui address; otherwise use active read context or present an address input. Shows SuiNS, coins, Display NFTs, object groups, fetched time and truncation limits. |
+| `ui.open_receipt` | Optional transaction digest. Shows server-read execution facts, gas, balance changes, objects, inputs, events and the PTB graph. No wallet or active account is needed. |
+| `ui.open_chart` | Optional `poolName`, official Indexer interval, UTC `startTimeMs`/`endTimeMs`, and candle `limit`. Shows one selected USDC pool as candlesticks and volume. Range shortcuts fill these query fields. The initial time axis uses the saved request boundaries, with price-free whitespace at boundaries without candles; omitted boundaries use the returned data. |
 
-The chart page does not require a wallet, session token, review session, signing state, user account, direct browser access to the official Indexer, local price database, persistent price storage, background collection, auto-refresh, live-feed behavior, order entry, order book, route recommendation, best-price advice, fiat USD value, P&L, tax, cost basis, portfolio value, or a USDC/USD peg guarantee.
+The creating response contains a `cardId`, `kind`, `state`, `revision`, timestamps, original `input`, and available `data`. `inputRemainingMs` is computed by the backend; `pollAfterMs` controls sequential observation of a running read. Card `ready` permits a read selection, not signing or payment readiness. An initial supplied input uses the same admission path as a form submission. DB states are `ready`, `running`, and `closed`, with terminal reasons `completed`, `expired`, `failed`, or `server_restarted`.
+
+When Chart pool choices cannot be prepared, the backend creates a `closed`/`failed` card with a readable error. No selection is admitted and no candles are requested. Reading that card again returns the stored failure; retrying the source requires an explicit request for a new card. A database access or write failure is a tool error, not a successfully stored failure card.
+
+`ui.read_card` and `ui.submit_card` are app-only operations. Permission travels in UI metadata and is absent from model content and public saved resources. Input submission carries card ID, permission, expected revision and typed input. There is no first-view ownership or open/close operation. Recreated frames and chat returns read the same DB record. Identical duplicate input returns the stored request; conflicting input returns `card_conflict` and the authenticated current snapshot in error details. Invalid input returns `invalid_card_input` without consuming a valid selection. Invalid permission exposes neither current state nor private display data.
+
+Receipt model results retain input kinds/indices/object references and identify input values and PTB as UI-only details. The typed `say-ur-intent/receipt-display` metadata binds display data to the same card ID, transaction digest and revision. It carries individual on-chain Pure input values and the graph derived from those inputs; never a serialized transaction, signature or wallet credential. Public saved resources contain only the model projection. A missing UI detail payload means unavailable display data, not that a transaction had no inputs.
+
+Backend expiry ends unsubmitted input. A server restart invalidates unfinished cards; stored completed results remain readable. Reset/import removes cards and their permissions with the data change. Completed input does not reopen, while still-valid unsubmitted input is unaffected by chat navigation. A lost submit response is resolved by reading the same card, without another source request.
+
+A frame with valid UI permission confirms the current DB state even if its initial snapshot cannot be displayed. A display error does not change the stored state, repeat a submission, or start another source query. Required expiry and running-state observations still follow the backend hints. If a state read fails, automatic observation stops and the user can explicitly read the same saved state. A completed result that cannot be displayed remains stored; reopening the same card reads that stored result rather than requesting new data.
+
+Cards provide no clipboard actions or copy buttons. Their text remains readable and selectable. Chart values remain USDC-denominated source candles, not fiat USD, peg guarantees, route advice, portfolio valuation or P&L. Cards do not fetch chain/Indexer endpoints directly or poll completed results.
+
 
 `read.quote_deepbook_action` and `read.quote_deepbook_display_amount` use the pinned DeepBook transaction builder quote functions.
 
@@ -259,7 +276,7 @@ If no verified decimals exist, `unit.status` is `unavailable` and clients must n
 
 `read.classify_wallet_assets` reuses the same explicit-address or active-account balance, unit, display, metadata cache behavior, and wallet snapshot quantity semantics as `read.summarize_wallet_assets`.
 
-It wraps each coin balance in `classification.assetClass: "coin_balance"`, `classification.spendability`, and role labels such as `gas_candidate` or `deepbook_registered`.
+It wraps each coin balance in `classification.assetClass: "coin_balance"`, `classification.balanceStatus`, and role labels such as `gas_candidate` or `deepbook_registered`.
 
 It also returns `uninspectedAssetClasses` for staked or locked assets, DeepBook BalanceManager or open orders, LP or vault positions, and NFT or object assets.
 
@@ -291,7 +308,7 @@ The response includes:
 
 - each inspected group asset;
 - direct DeepBook pool evidence when available;
-- `parityPrice` as reference asset per group asset;
+- `priceInReferenceAsset` as reference asset per group asset;
 - `responseSummary` with minimum, maximum, mean, and median;
 - `referenceAssetRole: "measurement_reference_not_settlement_choice"`.
 
@@ -311,7 +328,7 @@ For settlement-asset-only coverage, shortfall, and balance-total answers, use `r
 
 The response also exposes `userAnswerUse.answerFields` with the response-specific answer path.
 
-`responseSummary.answerCompleteness.answerCompleteFor` names the answer class. `responseSummary.answerCompleteness.requiredAnswerFields` names the fields required for that class. Do not call quote tools for the same question when `responseSummary.doNotCallQuoteToolsForThisQuestion` is `true`. If `answerSourceStatus.canUseThisResponseForUserAnswer` is also `true`, answer from `responseSummary` and do not call `read.classify_wallet_assets`, `read.summarize_wallet_assets`, or quote tools to look for other source tokens for that same coverage, balance-total, or shortfall question. If quote tools were already called, do not use quote output for the payment amount, coverage status, or shortfall.
+`responseSummary.answerCompleteness.answerCompleteFor` names the answer class. `responseSummary.answerCompleteness.requiredAnswerFields` names the fields required for that class. Do not call quote tools for the same question when `responseSummary.doNotCallQuoteToolsForThisQuestion` is `true`. If `toolAvailability.requiredToolsAvailable` is also `true`, answer from `responseSummary` and do not call `read.classify_wallet_assets`, `read.summarize_wallet_assets`, or quote tools to look for other source tokens for that same coverage, balance-total, or shortfall question. If quote tools were already called, do not use quote output for the payment amount, coverage status, or shortfall.
 
 `responseSummary` exposes:
 
@@ -465,7 +482,8 @@ These requested-account fields summarize the requested account's evidence for th
 
 - `requestedAccountEffect.role`;
 - `requestedAccountEffect.balanceChangeEvidence`;
-- `requestedAccountEffect.accountBalanceChangeAbsenceProven`;
+- `requestedAccountEffect.balanceChangeCompleteness`;
+- `requestedAccountEffect.balanceChanges`;
 - `requestedAccountEffect.accountBalanceChangeInferencePolicy`;
 - `requestedAccountEffect.coinFlows`;
 - `requestedAccountEffect.limitations`.
@@ -477,7 +495,7 @@ Incomplete balance evidence means unknown, not zero:
 - `accountBalanceChangeEvidence: "incomplete_account_balance_changes"` is not zero-balance evidence.
 - `accountBalanceChangeEvidence: "account_balance_changes_unavailable"` is not zero-balance evidence.
 - `accountBalanceChangeInferencePolicy: "do_not_infer_from_transaction_context"` means transaction-level context, compact counts, or visible recipient patterns must not be used to infer the requested account's amount.
-- Only `accountBalanceChangeAbsenceProven: true` supports saying no requested-account balance change was returned.
+- Only `no_account_balance_changes_returned` with complete details supports saying no requested-account balance change was returned.
 - `no_account_balance_changes_returned` is complete evidence only when requested-account balance-change evidence is complete.
 - If `requestedAccount.balanceChangeCompleteness` or a row-level `requestedAccountEffect.balanceChangeCompleteness` is `truncated` or `unavailable`, the account-specific balance-change evidence is incomplete.
 
@@ -513,7 +531,9 @@ Balance quantities use signed raw integer strings from returned `*Raw` fields, i
 
 There is no `details.balanceChanges[].amount` field.
 
-`requestedAccountTransactionFacts[].accountBalanceChangeAbsenceProven` is a boolean absence-proof flag, not an amount.
+`requestedAccountEffect.balanceChangeEvidence` and `balanceChangeCompleteness` describe the account-scoped rows and their completeness. The corresponding flat fields are `requestedAccountTransactionFacts[].accountBalanceChangeEvidence` and `accountBalanceChangeCompleteness`.
+
+Complete details with no rows for the requested account produce `no_account_balance_changes_returned` and `accountBalanceChangeInferencePolicy: "no_account_balance_changes_in_complete_details"`. Complete details with returned rows produce `account_balance_changes_returned`, even if a returned row has `amountRaw: "0"`. Truncated details produce `incomplete_account_balance_changes`; missing details produce `account_balance_changes_unavailable`. Neither supports a conclusion that no account balance change was returned. Use the returned raw amount rows for quantities, not the evidence or completeness labels.
 
 Gas raw values use MIST in fields such as:
 
@@ -603,6 +623,7 @@ Output fields:
 
 This tool does not run scans, start a background indexer, create a price cache, prove complete wallet history, compute held balances, calculate portfolio value, compute P&L, compute tax, compute cost basis, recommend routes, build transactions, return signing data, or provide signing readiness.
 
+
 ## Action Tools
 
 | Tool | Status | Purpose |
@@ -688,7 +709,7 @@ page offers a digest-gated byte handoff, user-controlled wallet signing, and
 signed-digest reporting. After the page reports the signed transaction digest,
 the review server re-reads Sui mainnet and records normalized chain receipt
 evidence. The local review page shows server-read chain receipt facts inline,
-and a public Receipt Analytics page reads on-chain receipt facts for any
+and a internal Receipt card reads on-chain receipt facts for any
 transaction digest; both display server-read receipt facts only, not transaction
 bytes or MCP execution authority.
 
@@ -850,7 +871,7 @@ It is not a signing readiness signal. Review-state checks are pre-signing review
 | `session.create_wallet_identity` | Implemented | Creates a local wallet identity session and wallet URL for the same machine's system browser. |
 | `session.get_wallet_identity` | Implemented | Polls a wallet identity session status; use `account.get_active_account` to confirm current active account context. |
 | `session.wait_wallet_identity` | Implemented | Waits briefly for a wallet identity session to reach a terminal status. |
-| `session.get_interaction_status` | Implemented | Reads active account context and pending in-memory wallet or review interactions. |
+| `session.get_interaction_status` | Implemented | Reads active account context and pending shared wallet or review interactions. |
 | `session.get_review_status` | Implemented | Reads internal and public review status for a `reviewSessionId`. |
 | `session.get_execution_result` | Implemented | Reads public execution polling status and any recorded result for a `reviewSessionId`. |
 | `session.wait_execution_result` | Implemented | Waits briefly for execution polling status to reach a wait-stopping status. |
@@ -896,7 +917,7 @@ polling can return `failure` with
 `failureReason: "receipt_verification_failed"`.
 
 The local review page shows server-read receipt facts inline on terminal
-sessions, and a public Receipt Analytics page reads on-chain receipt facts by
+sessions, and a internal Receipt card reads on-chain receipt facts by
 transaction digest for browser inspection of server-read receipt facts. Neither
 is a wallet action, MCP execution path, route verdict, or signing-readiness
 signal.

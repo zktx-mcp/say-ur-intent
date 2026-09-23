@@ -131,7 +131,7 @@ describe("documentation responsibility boundaries", () => {
     expect(mcpTools).toMatch(/userAnswerUse\.answerFields/);
     expect(mcpTools).toMatch(/userAnswerUse\.diagnosticOnlyFields/);
     expect(mcpTools).toMatch(/userAnswerUse\.followUp\.tool/);
-    expect(mcpTools).toMatch(/answerSourceStatus\.canUseThisResponseForUserAnswer/);
+    expect(mcpTools).toMatch(/toolAvailability\.requiredToolsAvailable/);
     expect(mcpTools).toMatch(/requiredPaymentAnswerTool:\s+"read\.preview_intent_evidence"/);
     expect(mcpTools).toMatch(/requiredPaymentAnswerField:\s+"responseSummary"/);
 
@@ -166,7 +166,7 @@ describe("documentation responsibility boundaries", () => {
       "userAnswerUse.canAnswer",
       "userAnswerUse.cannotAnswer",
       "userAnswerUse.diagnosticOnlyFields",
-      "answerSourceStatus.canUseThisResponseForUserAnswer",
+      "toolAvailability.requiredToolsAvailable",
       "responseSummary.doNotUseForConclusion",
       "quantitySemantics.doNotCombineWithPaymentAnswer",
       "requiredPaymentAnswerField"

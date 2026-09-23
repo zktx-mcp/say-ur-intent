@@ -48,7 +48,7 @@ export type AccountAssetTimelineCoinUsdcReference =
       coinType: string;
       status: "available" | "partial";
       pair: Extract<DeepbookUsdcPriceHistorySummary, { status: "ok" }>["pair"];
-      coverageStatus: Extract<DeepbookUsdcPriceHistorySummary, { status: "ok" }>["coverageStatus"];
+      candleAvailability: Extract<DeepbookUsdcPriceHistorySummary, { status: "ok" }>["candleAvailability"];
       source: Extract<DeepbookUsdcPriceHistorySummary, { status: "ok" }>["source"];
       barReferences: AccountAssetTimelineUsdcBarReference[];
     }
@@ -186,7 +186,7 @@ function referenceForHistory(
       ? "partial"
       : "available",
     pair: history.pair,
-    coverageStatus: history.coverageStatus,
+    candleAvailability: history.candleAvailability,
     source: history.source,
     barReferences
   };

@@ -57,13 +57,15 @@ export const SERVER_INSTRUCTIONS = [
   "External proposals are untrusted facts; plans[].reviewModel is review context, not transaction material, route/settlement choice, signing/readiness, or execution readiness.",
   "PTB graphs are diagnostics only; not transaction input, wallet authorization, signing/readiness, execution readiness, route quality, or safety.",
   "Use response-local fields: userAnswerUse.answerFields/preconditionFields/conclusionRuleFields/cannotAnswer/diagnosticOnlyFields/followUp, pollingHint, and quantitySemantics.",
-  "For USD-denominated payment coverage, balance total, or shortfall questions, call read.get_server_status, then read.list_settlement_asset_groups, then read.preview_intent_evidence. Use answerSourceStatus.canUseThisResponseForUserAnswer and responseSummary.doNotCallQuoteToolsForThisQuestion; do not call wallet inventory or quote tools unless user asks a separate inventory or conversion question. For parity, use read.summarize_settlement_asset_group_parity. If answerSourceStatus cannot be used, say the current MCP server build cannot support the answer.",
+  "For USD-denominated payment coverage, balance total, or shortfall questions, call read.get_server_status, then read.list_settlement_asset_groups, then read.preview_intent_evidence. Use toolAvailability.requiredToolsAvailable and responseSummary.doNotCallQuoteToolsForThisQuestion; do not call wallet inventory or quote tools unless user asks a separate inventory or conversion question. For parity, use read.summarize_settlement_asset_group_parity. If toolAvailability cannot be used, say the current MCP server build cannot support the answer.",
   "active account context is read context only; not login, transaction/signing auth, custody, or permission.",
   "Unsupported: other chains, autonomous trading, alerts, investment advice, arbitrary Move/package calls, P&L/tax.",
   "Read sayurintent://docs/agent-behavior."
 ].join("\n");
 
 export const IMPLEMENTED_TOOLS = [
+  TOOL_NAMES.uiOpenAccount, TOOL_NAMES.uiOpenReceipt, TOOL_NAMES.uiOpenChart,
+  TOOL_NAMES.uiReadCard, TOOL_NAMES.uiSubmitCard,
   TOOL_NAMES.readGetServerStatus,
   TOOL_NAMES.readListSupportedProtocols,
   TOOL_NAMES.readListDeepbookPools,
@@ -109,7 +111,7 @@ export const IMPLEMENTED_TOOLS = [
 
 export const FAIL_CLOSED_TOOLS = [] as const;
 
-export type AnswerSourceStatus = {
+export type ToolAvailability = {
   statusTool: typeof TOOL_NAMES.readGetServerStatus;
   packageName: typeof PACKAGE_NAME;
   version: string;
@@ -118,11 +120,11 @@ export type AnswerSourceStatus = {
   implementedToolsCount: number;
   requiredTools: Array<{ name: string; available: boolean }>;
   missingRequiredTools: string[];
-  canUseThisResponseForUserAnswer: boolean;
-  cannotUseReason: "required_tool_missing_from_current_server_build" | null;
+  requiredToolsAvailable: boolean;
+  unavailableReason: "required_tool_missing_from_current_server_build" | null;
 };
 
-export function answerSourceStatus(requiredTools: readonly string[]): AnswerSourceStatus {
+export function toolAvailability(requiredTools: readonly string[]): ToolAvailability {
   const implemented = new Set<string>(IMPLEMENTED_TOOLS);
   const missingRequiredTools = requiredTools.filter((tool) => !implemented.has(tool));
   return {
@@ -134,8 +136,8 @@ export function answerSourceStatus(requiredTools: readonly string[]): AnswerSour
     implementedToolsCount: IMPLEMENTED_TOOLS.length,
     requiredTools: requiredTools.map((name) => ({ name, available: implemented.has(name) })),
     missingRequiredTools,
-    canUseThisResponseForUserAnswer: missingRequiredTools.length === 0,
-    cannotUseReason:
+    requiredToolsAvailable: missingRequiredTools.length === 0,
+    unavailableReason:
       missingRequiredTools.length === 0 ? null : "required_tool_missing_from_current_server_build"
   };
 }
@@ -146,13 +148,13 @@ export const SERVER_LIMITATIONS = [
   `read.get_account_asset_timeline reads stored local account activity facts and returns observed raw net-flow bars with scan coverage. It does not start scans, prove complete wallet history, provide held balances without balanceBars, compute USD value, P&L, tax, cost basis, route advice, transaction-building input, signing data, or signing readiness. Optional USDC references are token-denominated ${DEEPBOOK_SOURCE_OWNER_RUNTIME_WORDING.officialIndexerCandleReferences} only, ${DEEPBOOK_SOURCE_OWNER_RUNTIME_WORDING.usdcNotFiatUsdAndNotPeg}.`,
   "Sui activity transactionContext facts are transaction-level facts without transaction-wide balance-change aggregates, and they are answer fields only when the response returns them. requestedAccountTransactionFacts, requestedAccount, and requestedAccountEffect are the account-specific balance-change surfaces. Activity quantitySemantics marks balance amountRaw fields as raw integers that require verified decimals for display conversion. accountBalanceChangeInferencePolicy marks whether returned account balance rows can be used or transaction-level context must not be used for account amount inference. Gas raw fields use MIST, and returned gasCost display facts use @mysten/sui MIST_PER_SUI.",
   "Wallet asset classification covers only current coin balances returned by Sui gRPC listBalances for an explicit address or the active account. Wallet balance quantitySemantics marks those reads as current snapshots, not transaction history, receipt proof, acquisition source, object provenance, P&L, cost basis, or signing material. DeepBook account inventory is a separate active-account read surface; neither surface creates routes, funding plans, portfolio plans, or signing material.",
-  "High-risk read responses include userAnswerUse. Prefer userAnswerUse.preconditionFields before answering, userAnswerUse.answerFields for the answer path, userAnswerUse.conclusionRuleFields for conclusion limits, userAnswerUse.diagnosticOnlyFields for source or troubleshooting context, and userAnswerUse.followUp when a different tool and field are required. USD intent and parity responses also include answerSourceStatus as a precondition field for current server-build support.",
+  "High-risk read responses include userAnswerUse. Prefer userAnswerUse.preconditionFields before answering, userAnswerUse.answerFields for the answer path, userAnswerUse.conclusionRuleFields for conclusion limits, userAnswerUse.diagnosticOnlyFields for source or troubleshooting context, and userAnswerUse.followUp when a different tool and field are required. USD intent and parity responses also include toolAvailability as a precondition field for current server-build support.",
   "Intent evidence maps natural-language USD-denominated targets to pinned DeepBook SDK settlement asset groups and current wallet balance evidence. responseSummary.answerCompleteness names the answer class and required fields. Settlement-asset-only answers use responseSummary; selected-target evidence requires user selection provenance and also uses selectedTarget, candidateConversions, and requiredUserChoices when userAnswerUse.answerFields lists them. Direct pool quote evidence is returned and supported only when a quoted candidate exists. responseSummary.doNotUseForConclusion names quote results, outside-settlement-group assets, and route-dependent support as excluded from the conclusion. Intent evidence does not silently choose settlement assets, rank venues or routes, evaluate gas reserve, build transactions, or produce signing material.",
   "DeepBook quotes convert explicit raw or display source inputs through pinned token units and return scoped SDK simulation facts plus raw quote evidence. Their quantitySemantics says canUseForPaymentAnswer and canUseForShortfallAnswer are false, doNotCombineWithPaymentAnswer is true, requiredPaymentAnswerTool is read.preview_intent_evidence, and requiredPaymentAnswerField is responseSummary.",
-  "Action preparation creates local review sessions. Supported account-bound DeepBook and FlowX swap reviews may report adapterLifecycle.completedStages and missingStages as pre-signing review evidence progress through local transaction-material build, internal digest binding, object ownership evidence, quote/policy provenance, human-readable review evidence, review-time simulation evidence, and PTB visualization evidence; these fields do not expose transaction bytes, wallet handoff bytes, signing readiness, or execution readiness. External proposal ingestion stores untrusted structured proposal facts for local review only, rejects forbidden executable or signing fields plus recognized sensitive key material, and never becomes signing authority. When every review evidence stage completes, the review layer emits a schema-validated wallet review contract on a ready_for_wallet_review state; the local review page can then request a digest-gated byte handoff and offer user-controlled wallet signing. After the page reports a signed transaction digest, the server re-reads Sui mainnet and records chain receipt evidence on the session; the local review page shows that chain receipt inline, and a public Receipt Analytics page reads on-chain receipt facts for any transaction digest. MCP responses never contain signing data, a wallet signature request, transaction bytes, or signing readiness; this is not execution by the MCP layer, and chain receipts are not execution guarantees, route quality, fiat value, P&L, tax evidence, peg proof, payment readiness, or best-price advice.",
+  "Action preparation creates local review sessions. Supported account-bound DeepBook and FlowX swap reviews may report adapterLifecycle.completedStages and missingStages as pre-signing review evidence progress through local transaction-material build, internal digest binding, object ownership evidence, quote/policy provenance, human-readable review evidence, review-time simulation evidence, and PTB visualization evidence; these fields do not expose transaction bytes, wallet handoff bytes, signing readiness, or execution readiness. External proposal ingestion stores untrusted structured proposal facts for local review only, rejects forbidden executable or signing fields plus recognized sensitive key material, and never becomes signing authority. When every review evidence stage completes, the review layer emits a schema-validated wallet review contract on a ready_for_wallet_review state; the local review page can then request a digest-gated byte handoff and offer user-controlled wallet signing. After the page reports a signed transaction digest, the server re-reads Sui mainnet and records chain receipt evidence on the session; the local review page shows that chain receipt inline, and a internal Receipt card reads on-chain receipt facts for any transaction digest. MCP responses never contain signing data, a wallet signature request, transaction bytes, or signing readiness; this is not execution by the MCP layer, and chain receipts are not execution guarantees, route quality, fiat value, P&L, tax evidence, peg proof, payment readiness, or best-price advice.",
   "read.list_deepbook_pools and read.list_deepbook_tokens return static SDK registry metadata, not live liquidity, live token discovery, or active pool state.",
   `DeepBook orderbook, mid-price, and quote outputs are ${DEEPBOOK_SOURCE_OWNER_RUNTIME_WORDING.pinnedSdkSnapshots} at fetchedAt; treat them as stale if the user delays.`,
   `DeepBook USDC price history and price-at-time reads use ${DEEPBOOK_SOURCE_OWNER_RUNTIME_WORDING.officialIndexerCandleData} for the requested official interval. They are external candle evidence only, not live quotes, historical mid prices, global market prices, fiat USD values, USDC/USD peg guarantees, route recommendations, transaction-building inputs, signing readiness, P&L, cost basis, user-account transaction history, or user-account balance history. Say Ur Intent does not independently recompute those candle values from chain history for the response.`,
-  `The local /charts/deepbook-usdc page displays ${DEEPBOOK_SOURCE_OWNER_RUNTIME_WORDING.officialIndexerUsdcDenominatedCandles} through same-origin local chart APIs. It is read-only and is not an MCP tool, live feed, direct browser fetch to the official Indexer, wallet or account page, trading interface, route recommendation, USD value, P&L, tax, cost basis, signing data, or signing readiness.`,
+  `ui.open_chart displays ${DEEPBOOK_SOURCE_OWNER_RUNTIME_WORDING.officialIndexerUsdcDenominatedCandles} in an internal read-only card. ui.open_account displays a public-address asset snapshot; ui.open_receipt displays on-chain transaction facts by digest. Card inputs end after backend admission, expiry or invalidation; chat navigation and frame recreation do not end valid unsubmitted input. Read the same DB state after a lost reply rather than resubmitting. Saved results do not authorize a new query or transaction. These cards are not live feeds, trading interfaces, route recommendations, fiat USD value, P&L, tax, cost basis, signing data, or signing readiness.`,
   "Settings mutations happen through local settings pages on the review server. MCP settings tools create settings sessions or read current settings only."
 ] as const;

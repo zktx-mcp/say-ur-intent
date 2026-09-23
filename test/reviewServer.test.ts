@@ -1,21 +1,15 @@
+import { SqliteActivityStore } from "../src/core/activity/sqliteActivityStore.js";
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ActionPlan } from "../src/core/action/types.js";
 import { validateSupportedAdapterLifecycle } from "../src/adapters/adapterLifecycleValidators.js";
 import { buildSupportedReviewAdapters } from "../src/adapters/reviewAdapters.js";
-import type { LocalDataEnvelope, LocalDataService } from "../src/core/activity/localDataService.js";
-import { InMemorySessionStore, type InMemorySessionStoreOptions } from "../src/core/session/sessionStore.js";
+import { InMemorySessionStore, LocalSessionStore, type InMemorySessionStoreOptions } from "../src/core/session/sessionStore.js";
 import { InMemoryLocalTransactionMaterialStore } from "../src/core/session/transactionMaterialStore.js";
 import { recordTestTransactionMaterial } from "./fixtures/transactionMaterial.js";
 import { createReviewHttpServer } from "../src/review-server/server.js";
-import {
-  probeReviewServerIdentity,
-  startOrDeferReviewServer
-} from "../src/runtime/reviewServerAcquire.js";
 import type { Logger } from "../src/runtime/logger.js";
 import { deepbookDisplayQuote } from "./fixtures/deepbookQuote.js";
 import { InMemoryActivityStore } from "./fixtures/inMemoryActivityStore.js";
@@ -26,14 +20,7 @@ import {
   chainReceiptFixture,
   otherChainReceiptDigest
 } from "./fixtures/chainReceipt.js";
-import {
-  DEEPBOOK_OFFICIAL_INDEXER_CANONICAL_USDC_COIN_TYPE,
-  DEEPBOOK_OFFICIAL_INDEXER_SOURCE_STATEMENT,
-  type DeepbookOfficialIndexerCandle,
-  type DeepbookOfficialIndexerFetchSource,
-  type DeepbookOfficialIndexerPool,
-  type DeepbookOfficialIndexerSourceClient
-} from "../src/core/read/deepbookOfficialIndexerSource.js";
+
 
 const logger: Logger = {
   info() {},
@@ -135,79 +122,15 @@ async function createDefaultLocalSettings(): Promise<InMemoryLocalSettingsServic
   return new InMemoryLocalSettingsService(repository);
 }
 
-function createLocalDataFixture(): LocalDataService {
-  const counts = {
-    accounts: 0,
-    reviewSessions: 0,
-    reviewStateSnapshots: 0,
-    reviewStatusTransitions: 0,
-    reviewExecutions: 0,
-    externalActivityScans: 0,
-    externalActivityTransactions: 0,
-    localSettings: 2
-  };
-  const envelope: LocalDataEnvelope = {
-    format: "say-ur-intent.local-data",
-    network: "mainnet",
-    exportedAt: "2026-05-11T00:00:00.000Z",
-    data: {
-      accounts: [],
-      activeAccountContext: [],
-      reviewSessions: [],
-      reviewStateSnapshots: [],
-      reviewStatusTransitions: [],
-      reviewExecutions: [],
-      externalActivityScans: [],
-      externalActivityTransactions: [],
-      localSettings: [
-        {
-          key: "suiGrpcUrl",
-          value_json: JSON.stringify(DEFAULT_SUI_GRPC_URL),
-          updated_at: "2026-05-11T00:00:00.000Z"
-        },
-        {
-          key: "suiGraphqlUrl",
-          value_json: JSON.stringify(DEFAULT_SUI_GRAPHQL_URL),
-          updated_at: "2026-05-11T00:00:00.000Z"
-        }
-      ]
-    }
-  };
-  return {
-    async getDataCounts() {
-      return counts;
-    },
-    async exportLocalData() {
-      return envelope;
-    },
-    async previewImportLocalData() {
-      return {
-        status: "valid",
-        format: "say-ur-intent.local-data",
-        network: "mainnet",
-        exportedAt: "2026-05-11T00:00:00.000Z",
-        currentCounts: counts,
-        incomingCounts: counts,
-        willReplace: true,
-        activeAccountChange: "unchanged",
-        restartRequiredAfterImport: true,
-        defaultsInjected: []
-      };
-    },
-    async importLocalDataReplace() {
-      return { status: "imported", dataCounts: counts, sessionsInvalidated: true };
-    },
-    async resetLocalData() {
-      return { status: "reset", dataCounts: counts, sessionsInvalidated: true };
-    }
-  };
-}
-
 async function createSettingsServer(options: { localSettings?: InMemoryLocalSettingsService } = {}) {
-  const activityStore = new InMemoryActivityStore();
-  const store = createSessionStore({ activityStore });
+  const directory = mkdtempSync(join(tmpdir(), "say-settings-atomic-"));
+  const activityStore = new SqliteActivityStore({ databasePath: join(directory, "state.sqlite"), validateAdapterLifecycle: validateSupportedAdapterLifecycle });
+  await activityStore.createPreferencesRepository().ensureDefaultLocalSettings({ suiGrpcUrl: DEFAULT_SUI_GRPC_URL, suiGraphqlUrl: DEFAULT_SUI_GRAPHQL_URL });
+  const store = new LocalSessionStore({ activityStore, logger, validateAdapterLifecycle: validateSupportedAdapterLifecycle, sessions: activityStore.createSessionRecordStore(), artifacts: activityStore.createPrivateReviewArtifactStore(),
+    walletIdentityStore: activityStore.createWalletIdentityRecordStore(), settingsStore: activityStore.createSettingsRecordStore() });
   const localSettings = options.localSettings ?? await createDefaultLocalSettings();
-  const localData = createLocalDataFixture();
+  const localData = activityStore.createLocalDataService({ suiGrpcUrl: DEFAULT_SUI_GRPC_URL, suiGraphqlUrl: DEFAULT_SUI_GRAPHQL_URL,
+    verifySuiGrpcUrl: async () => {}, verifySuiGraphqlUrl: async () => {} });
   const created = await store.createSettingsSession();
   const server = await createReviewHttpServer({
     host: "127.0.0.1",
@@ -218,89 +141,9 @@ async function createSettingsServer(options: { localSettings?: InMemoryLocalSett
     localData,
     serverInfo: { name: "say-ur-intent", version: "0.0.0-test", network: "mainnet" }
   }).start(0);
+  const close = server.close;
+  server.close = async () => { try { await close(); } finally { activityStore.close(); rmSync(directory, { recursive: true, force: true }); } };
   return { server, store, activityStore, localSettings, created };
-}
-
-function createChartRouteSource(): DeepbookOfficialIndexerSourceClient {
-  return {
-    async fetchPools() {
-      return {
-        source: chartRouteSourceMetadata("get_pools", "https://deepbook-indexer.mainnet.mystenlabs.com/get_pools"),
-        pools: chartRoutePools()
-      };
-    },
-    async fetchCandles(input) {
-      return {
-        source: chartRouteSourceMetadata(
-          "ohclv",
-          `https://deepbook-indexer.mainnet.mystenlabs.com/ohclv/${input.poolName}?interval=${input.interval}`,
-          input
-        ),
-        candles: chartRouteCandles()
-      };
-    }
-  };
-}
-
-function chartRouteSourceMetadata(
-  endpoint: DeepbookOfficialIndexerFetchSource["endpoint"],
-  url: string,
-  input: Partial<{
-    poolName: string;
-    interval: "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w";
-    limit: number | undefined;
-    startTimeMs: number | undefined;
-    endTimeMs: number | undefined;
-  }> = {}
-): DeepbookOfficialIndexerFetchSource {
-  return {
-    baseUrl: "https://deepbook-indexer.mainnet.mystenlabs.com",
-    endpoint,
-    url,
-    fetchedAt: "2026-06-27T00:00:00.000Z",
-    sourceStatement: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_STATEMENT,
-    ...input
-  };
-}
-
-function chartRoutePools(): DeepbookOfficialIndexerPool[] {
-  return [
-    {
-      pool_id: `0x${"1".repeat(64)}`,
-      pool_name: "SUI_USDC",
-      base_asset_id: "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
-      base_asset_symbol: "SUI",
-      base_asset_decimals: 9,
-      quote_asset_id: DEEPBOOK_OFFICIAL_INDEXER_CANONICAL_USDC_COIN_TYPE,
-      quote_asset_symbol: "USDC",
-      quote_asset_decimals: 6
-    },
-    {
-      pool_id: `0x${"2".repeat(64)}`,
-      pool_name: "NS_SUI",
-      base_asset_id: `0x${"3".repeat(64)}::ns::NS`,
-      base_asset_symbol: "NS",
-      base_asset_decimals: 6,
-      quote_asset_id: "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
-      quote_asset_symbol: "SUI",
-      quote_asset_decimals: 9
-    }
-  ];
-}
-
-function chartRouteCandles(): DeepbookOfficialIndexerCandle[] {
-  return [
-    {
-      timestampMs: 1_782_541_800_000,
-      start: "2026-06-27T06:30:00.000Z",
-      end: "2026-06-27T06:45:00.000Z",
-      open: "0.71174",
-      high: "0.71427",
-      low: "0.71158",
-      close: "0.71404",
-      volume: "59357.2"
-    }
-  ];
 }
 
 describe("review HTTP server", () => {
@@ -686,36 +529,6 @@ describe("review HTTP server", () => {
     }
   });
 
-  it("serves the public receipt analytics page shell without a token", async () => {
-    const store = createSessionStore();
-    const server = await createReviewHttpServer({
-      host: "127.0.0.1",
-      store,
-      logger
-    }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      const queryToken = await fetch(`${base}/receipt?token=secret`);
-      expect(queryToken.status).toBe(400);
-      expect(await queryToken.json()).toEqual({ error: "token_query_not_supported" });
-
-      const response = await fetch(`${base}/receipt`);
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-security-policy")).toContain("connect-src 'self'");
-      expect(response.headers.get("content-security-policy")).toContain("script-src 'self'");
-      const html = await response.text();
-      expect(html).toContain("/review-assets/receipt.js");
-      expect(html).toContain("/review-assets/receipt.css");
-      expect(html).toContain('id="receipt-app"');
-      expect(html).not.toContain("x-say-ur-intent-token");
-      expect(html).not.toContain("data-review-session-id");
-      expect(html).not.toContain("data-wallet-session-id");
-    } finally {
-      await server.close();
-    }
-  });
-
   it("removes the per-session analysis and review wallet-identity routes", async () => {
     const store = createSessionStore();
     const { session, token } = await store.createReviewSession([plan]);
@@ -866,44 +679,6 @@ describe("review HTTP server", () => {
     }
   });
 
-  it("serves the token-free DeepBook USDC chart shell with same-origin CSP", async () => {
-    const store = createSessionStore();
-    const server = await createReviewHttpServer({
-      host: "127.0.0.1",
-      store,
-      logger,
-      deepbookOfficialIndexerSource: createChartRouteSource()
-    }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      const queryToken = await fetch(`${base}/charts/deepbook-usdc?token=secret`);
-      expect(queryToken.status).toBe(400);
-      expect(await queryToken.json()).toMatchObject({ error: "token_query_not_supported" });
-
-      const shell = await fetch(`${base}/charts/deepbook-usdc`, {
-        headers: { origin: base }
-      });
-      expect(shell.status).toBe(200);
-      const csp = shell.headers.get("content-security-policy") ?? "";
-      expect(csp).toContain("default-src 'none'");
-      expect(csp).toContain("connect-src 'self'");
-      expect(csp).toContain("script-src 'self'");
-      expect(csp).toContain("style-src 'self'");
-      expect(csp).not.toContain("unsafe-inline");
-      expect(csp).not.toContain("deepbook-indexer.mainnet.mystenlabs.com");
-      const html = await shell.text();
-      expect(html).toContain("id=\"deepbook-usdc-chart-app\"");
-      expect(html).toContain("/review-assets/deepbookUsdcChart.js");
-      expect(html).toContain("/review-assets/deepbookUsdcChart.css");
-      expect(html).not.toContain("data-review-session-id");
-      expect(html).not.toContain("data-wallet-session-id");
-      expect(html).not.toContain("token");
-    } finally {
-      await server.close();
-    }
-  });
-
   it("serves local settings status and no longer exposes a settings wallet-identity endpoint", async () => {
     const { server, created } = await createSettingsServer();
     try {
@@ -935,80 +710,6 @@ describe("review HTTP server", () => {
         body: "{}"
       });
       expect(wallet.status).toBe(404);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("serves token-free DeepBook USDC chart APIs without wallet review or signing state", async () => {
-    const store = createSessionStore();
-    const server = await createReviewHttpServer({
-      host: "127.0.0.1",
-      store,
-      logger,
-      deepbookOfficialIndexerSource: createChartRouteSource()
-    }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      const badOrigin = await fetch(`${base}/api/charts/deepbook-usdc/pools`, {
-        headers: { origin: "http://evil.example" }
-      });
-      expect(badOrigin.status).toBe(403);
-
-      const pools = await fetch(`${base}/api/charts/deepbook-usdc/pools`, {
-        headers: { origin: base }
-      });
-      expect(pools.status).toBe(200);
-      const poolsText = await pools.text();
-      const poolsJson = JSON.parse(poolsText) as {
-        status: string;
-        poolCount: number;
-        pools: Array<{ poolName: string }>;
-        quantitySemantics: { usdcIsFiatUsd: boolean; chainRecomputedBySayUrIntent: boolean };
-      };
-      expect(poolsJson).toMatchObject({
-        status: "ok",
-        poolCount: 1,
-        pools: [{ poolName: "SUI_USDC" }],
-        quantitySemantics: {
-          usdcIsFiatUsd: false,
-          chainRecomputedBySayUrIntent: false
-        }
-      });
-      expect(poolsText).not.toContain("reviewSessionId");
-      expect(poolsText).not.toContain("walletSessionId");
-      expect(poolsText).not.toContain("activeAccount");
-      expect(poolsText).not.toContain("x-say-ur-intent-token");
-
-      const candles = await fetch(`${base}/api/charts/deepbook-usdc/candles?poolName=SUI_USDC&interval=15m&limit=1`, {
-        headers: { origin: base }
-      });
-      expect(candles.status).toBe(200);
-      const candlesText = await candles.text();
-      const candlesJson = JSON.parse(candlesText) as {
-        status: string;
-        query: { poolName: string; interval: string; limit: number };
-        candleCount: number;
-        candles: Array<{ close: string }>;
-      };
-      expect(candlesJson).toMatchObject({
-        status: "ok",
-        query: { poolName: "SUI_USDC", interval: "15m", limit: 1 },
-        candleCount: 1,
-        candles: [{ close: "0.71404" }]
-      });
-      expect(candlesText).not.toContain("reviewSessionId");
-      expect(candlesText).not.toContain("walletSessionId");
-      expect(candlesText).not.toContain("activeAccount");
-      expect(candlesText).not.toContain("transactionBytes");
-
-      const overLimit = await fetch(`${base}/api/charts/deepbook-usdc/candles?poolName=SUI_USDC&limit=10001`);
-      expect(overLimit.status).toBe(400);
-      await expect(overLimit.json()).resolves.toMatchObject({
-        status: "over_limit",
-        reason: "limit_exceeds_chart_cap"
-      });
     } finally {
       await server.close();
     }
@@ -1199,138 +900,14 @@ describe("review HTTP server", () => {
     }
   });
 
-  it("serves the public account page and asset endpoint without a token", async () => {
-    const store = createSessionStore();
-    const validAddress = `0x${"0".repeat(63)}2`;
-    const server = await createReviewHttpServer({
-      host: "127.0.0.1",
-      store,
-      logger,
-      readService: {
-        summarizeAccountInventory: async ({ account }: { account?: string }) => ({
-          account,
-          fetchedAt: "2026-06-28T00:00:00.000Z",
-          balances: []
-        })
-      }
-    }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-
-      // Public page: opens with no token and references its own bundle. It binds
-      // no wallet and reads only same-origin APIs, so its CSP keeps connect-src to
-      // 'self' and does not allow the Sui fullnode origin.
-      const page = await fetch(`${base}/account`);
-      expect(page.status).toBe(200);
-      const html = await page.text();
-      expect(html).toContain("/review-assets/account.js");
-      expect(html).toContain("/review-assets/account.css");
-      expect(html).toContain('id="account-app"');
-      const accountCsp = page.headers.get("content-security-policy") ?? "";
-      expect(accountCsp).toContain("connect-src 'self'");
-      expect(accountCsp).not.toContain("https://fullnode.mainnet.sui.io");
-
-      // A token in the URL is rejected on the public page and endpoint.
-      const pageToken = await fetch(`${base}/account?token=secret`);
-      expect(pageToken.status).toBe(400);
-      const apiToken = await fetch(`${base}/api/account/assets?address=${validAddress}&token=secret`);
-      expect(apiToken.status).toBe(400);
-
-      // Missing or malformed address → 400; no token is involved.
-      const missing = await fetch(`${base}/api/account/assets`);
-      expect(missing.status).toBe(400);
-      const malformed = await fetch(`${base}/api/account/assets?address=not-an-address`);
-      expect(malformed.status).toBe(400);
-
-      // A valid address returns the public summary with no token.
-      const ok = await fetch(`${base}/api/account/assets?address=${validAddress}`);
-      expect(ok.status).toBe(200);
-      expect(await ok.json()).toMatchObject({ balances: [] });
-
-      // A header token grants no privilege on the public endpoint: it is neither
-      // required nor rejected, so the read behaves the same as without it.
-      const withHeaderToken = await fetch(`${base}/api/account/assets?address=${validAddress}`, {
-        headers: { "x-say-ur-intent-token": "any-token" }
-      });
-      expect(withHeaderToken.status).toBe(200);
-
-      // The active-account default endpoint is public. This server has no activity
-      // store, so it reports no bound account, and a URL token is rejected like the
-      // other public endpoints.
-      const activeNone = await fetch(`${base}/api/account/active-account`);
-      expect(activeNone.status).toBe(200);
-      expect(await activeNone.json()).toEqual({ address: null });
-      const activeToken = await fetch(`${base}/api/account/active-account?token=secret`);
-      expect(activeToken.status).toBe(400);
-
-      // The old analysis page and its API endpoints are gone with no alias.
-      const oldRoute = await fetch(`${base}/analysis/anything`);
-      expect(oldRoute.status).toBe(404);
-      const oldAssets = await fetch(`${base}/api/analysis/anything/assets`);
-      expect(oldAssets.status).toBe(404);
-      const oldActivity = await fetch(`${base}/api/analysis/anything/review-activity`);
-      expect(oldActivity.status).toBe(404);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("defaults the account active-account endpoint to the bound account", async () => {
-    const store = createSessionStore();
-    const activityStore = new InMemoryActivityStore();
-    const boundAddress = `0x${"0".repeat(63)}3`;
-    await activityStore.setActiveAccount(boundAddress, "wallet_identity", new Date("2026-06-28T00:00:00.000Z"));
-    const server = await createReviewHttpServer({ host: "127.0.0.1", store, logger, activityStore }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      const active = await fetch(`${base}/api/account/active-account`);
-      expect(active.status).toBe(200);
-      expect(await active.json()).toEqual({ address: boundAddress });
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("returns 502 when the public asset read fails upstream", async () => {
-    const store = createSessionStore();
-    const validAddress = `0x${"0".repeat(63)}2`;
-    const server = await createReviewHttpServer({
-      host: "127.0.0.1",
-      store,
-      logger,
-      readService: {
-        summarizeAccountInventory: async () => {
-          throw new Error("upstream read failed");
-        }
-      }
-    }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      const failed = await fetch(`${base}/api/account/assets?address=${validAddress}`);
-      expect(failed.status).toBe(502);
-      expect(await failed.json()).toMatchObject({ error: "wallet_read_failed" });
-    } finally {
-      await server.close();
-    }
-  });
-
   it("serves built review assets and rejects traversal paths", async () => {
     const assetsDir = mkdtempSync(join(tmpdir(), "say-ur-intent-assets-"));
     writeFileSync(join(assetsDir, "review.js"), "export const review = true;\n", "utf8");
     writeFileSync(join(assetsDir, "review.css"), ".review-shell { color: #15201b; }\n", "utf8");
-    writeFileSync(join(assetsDir, "receipt.js"), "export const receipt = true;\n", "utf8");
-    writeFileSync(join(assetsDir, "receipt.css"), ".receipt-shell { color: #15201b; }\n", "utf8");
     writeFileSync(join(assetsDir, "connect.js"), "export const wallet = true;\n", "utf8");
     writeFileSync(join(assetsDir, "connect.css"), ".wallet-shell { color: #15201b; }\n", "utf8");
-    writeFileSync(join(assetsDir, "account.js"), "export const account = true;\n", "utf8");
-    writeFileSync(join(assetsDir, "account.css"), ".account-shell { color: #15201b; }\n", "utf8");
     writeFileSync(join(assetsDir, "settings.js"), "export const settings = true;\n", "utf8");
     writeFileSync(join(assetsDir, "settings.css"), ".settings-shell { color: #15201b; }\n", "utf8");
-    writeFileSync(join(assetsDir, "deepbookUsdcChart.js"), "export const deepbookUsdcChart = true;\n", "utf8");
-    writeFileSync(join(assetsDir, "deepbookUsdcChart.css"), ".chart-shell { color: #17211d; }\n", "utf8");
     const store = createSessionStore();
     const server = await createReviewHttpServer({
       host: "127.0.0.1",
@@ -1361,30 +938,10 @@ describe("review HTTP server", () => {
       expect(reviewCss.headers.get("content-type")).toBe("text/css; charset=utf-8");
       expect(await reviewCss.text()).toContain(".review-shell");
 
-      const receiptAsset = await fetch(`${base}/review-assets/receipt.js`);
-      expect(receiptAsset.status).toBe(200);
-      expect(receiptAsset.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
-      expect(await receiptAsset.text()).toContain("receipt = true");
-
-      const receiptCss = await fetch(`${base}/review-assets/receipt.css`);
-      expect(receiptCss.status).toBe(200);
-      expect(receiptCss.headers.get("content-type")).toBe("text/css; charset=utf-8");
-      expect(await receiptCss.text()).toContain(".receipt-shell");
-
       const settingsAsset = await fetch(`${base}/review-assets/settings.js`);
       expect(settingsAsset.status).toBe(200);
       expect(settingsAsset.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
       expect(await settingsAsset.text()).toContain("settings = true");
-
-      const chartAsset = await fetch(`${base}/review-assets/deepbookUsdcChart.js`);
-      expect(chartAsset.status).toBe(200);
-      expect(chartAsset.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
-      expect(await chartAsset.text()).toContain("deepbookUsdcChart = true");
-
-      const chartCss = await fetch(`${base}/review-assets/deepbookUsdcChart.css`);
-      expect(chartCss.status).toBe(200);
-      expect(chartCss.headers.get("content-type")).toBe("text/css; charset=utf-8");
-      expect(await chartCss.text()).toContain(".chart-shell");
 
       const missing = await fetch(`${base}/review-assets/missing.js`);
       expect(missing.status).toBe(404);
@@ -1525,7 +1082,7 @@ describe("review HTTP server", () => {
     }
   });
 
-  it("serves public receipt facts by digest without a token", async () => {
+  it("serves public receipt facts for the retained Review result without granting token authority", async () => {
     const store = createSessionStore();
     const readerDigests: string[] = [];
     const server = await createReviewHttpServer({
@@ -1637,24 +1194,6 @@ describe("review HTTP server", () => {
       expect(await withHeaderToken.json()).toEqual(json);
 
       expect(readerDigests).toEqual(["bad", "missing", "down", "ok", "ok"]);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("returns 503 for receipt reads when no public receipt reader is configured", async () => {
-    const store = createSessionStore();
-    const server = await createReviewHttpServer({
-      host: "127.0.0.1",
-      store,
-      logger
-    }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      const response = await fetch(`${base}/api/receipt?digest=anything`);
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ error: "receipt_data_unavailable" });
     } finally {
       await server.close();
     }
@@ -2295,118 +1834,6 @@ describe("review HTTP server", () => {
   });
 });
 
-describe("review server port takeover", () => {
-  it("serves a loopback identity endpoint with no token and no session data", async () => {
-    const store = createSessionStore();
-    const server = await createReviewHttpServer({
-      host: "127.0.0.1",
-      store,
-      logger,
-      serverInfo: { name: "say-ur-intent", version: "9.9.9-test", network: "mainnet" }
-    }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      const response = await fetch(`${base}/__identity`);
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as {
-        service: string;
-        role: string;
-        version: string;
-        pid: number;
-      };
-      expect(body.service).toBe("say-ur-intent");
-      expect(body.role).toBe("review-server");
-      expect(body.version).toBe("9.9.9-test");
-      expect(body.pid).toBe(process.pid);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("identifies our own running server through the probe", async () => {
-    const store = createSessionStore();
-    const server = await createReviewHttpServer({
-      host: "127.0.0.1",
-      store,
-      logger,
-      serverInfo: { name: "say-ur-intent", version: "0.0.0-test", network: "mainnet" }
-    }).start(0);
-
-    try {
-      const identity = await probeReviewServerIdentity(server.port);
-      expect(identity?.service).toBe("say-ur-intent");
-      expect(identity?.role).toBe("review-server");
-      expect(identity?.pid).toBe(process.pid);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("defers to a healthy peer review server already holding the fixed port", async () => {
-    const store = createSessionStore();
-    const serverInfo = { name: "say-ur-intent" as const, version: "0.0.0-test", network: "mainnet" as const };
-    const peer = await createReviewHttpServer({ host: "127.0.0.1", store, logger, serverInfo }).start(0);
-    const port = peer.port;
-
-    const factory = createReviewHttpServer({ host: "127.0.0.1", store, logger, serverInfo });
-    let releaseDelay: (() => void) | undefined;
-    const lifecycle = await startOrDeferReviewServer((bindPort) => factory.start(bindPort), port, {
-      probeIdentity: (probePort) => probeReviewServerIdentity(probePort),
-      // Park the watch loop so it never retries during the test (no real timer leaks).
-      delay: () => new Promise<void>((resolve) => {
-        releaseDelay = resolve;
-      }),
-      // Pretend a different process so the live peer is "ours but not us".
-      currentPid: process.pid + 1,
-      serviceName: "say-ur-intent",
-      logger
-    });
-
-    try {
-      // A healthy peer owns the port, so we defer instead of taking it over.
-      expect(lifecycle.deferred).toBe(true);
-      // The peer is untouched and still serving the shared origin.
-      const identity = await probeReviewServerIdentity(port);
-      expect(identity?.service).toBe("say-ur-intent");
-    } finally {
-      await lifecycle.close();
-      releaseDelay?.();
-      await peer.close();
-    }
-  });
-
-  it("errors instead of touching a port held by a non-say-ur-intent server", async () => {
-    const foreign = createServer((_request, response) => {
-      response.statusCode = 200;
-      response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ service: "some-other-dev-server" }));
-    });
-    await new Promise<void>((resolve) => foreign.listen(0, "127.0.0.1", resolve));
-    const port = (foreign.address() as AddressInfo).port;
-
-    const store = createSessionStore();
-    const serverInfo = { name: "say-ur-intent" as const, version: "0.0.0-test", network: "mainnet" as const };
-    const factory = createReviewHttpServer({ host: "127.0.0.1", store, logger, serverInfo });
-
-    try {
-      await expect(
-        startOrDeferReviewServer((bindPort) => factory.start(bindPort), port, {
-          probeIdentity: (probePort) => probeReviewServerIdentity(probePort),
-          delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-          currentPid: process.pid + 1,
-          serviceName: "say-ur-intent",
-          logger
-        })
-      ).rejects.toThrow(/not a separate say-ur-intent review server/);
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        foreign.close((error) => (error ? reject(error) : resolve()))
-      );
-    }
-  });
-});
-
 describe("review page content security policy", () => {
   it("allows browser-side signed-transaction submission to the Sui fullnode", async () => {
     const store = createSessionStore();
@@ -2433,51 +1860,6 @@ describe("review page content security policy", () => {
 });
 
 describe("page security rules across all pages", () => {
-  const publicPaths = ["/account", "/receipt", "/charts/deepbook-usdc"];
-
-  // Every public page now renders its nav through the shared shell, so the server
-  // HTML is a mount plus the shared stylesheet, not a server-rendered nav.
-  const shellPaths: Array<{ path: string; mount: string }> = [
-    { path: "/account", mount: 'id="account-app"' },
-    { path: "/receipt", mount: 'id="receipt-app"' },
-    { path: "/charts/deepbook-usdc", mount: 'id="deepbook-usdc-chart-app"' }
-  ];
-
-  it("public pages serve without a token, reject a query token, and never link to a token page", async () => {
-    const store = createSessionStore();
-    const server = await createReviewHttpServer({ host: "127.0.0.1", store, logger }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      for (const path of publicPaths) {
-        const ok = await fetch(`${base}${path}`);
-        expect(ok.status, `${path} without a token`).toBe(200);
-        const html = await ok.text();
-
-        // A public page never links to a token page route (/connect/:id,
-        // /review/:id, /settings/:id). The trailing slash keeps this from
-        // matching the /review-assets/ stylesheet and script paths.
-        for (const tokenPrefix of ['href="/connect/', 'href="/review/', 'href="/settings/']) {
-          expect(html, `${path} must not link ${tokenPrefix}`).not.toContain(tokenPrefix);
-        }
-
-        const withToken = await fetch(`${base}${path}?token=secret`);
-        expect(withToken.status, `${path} with a query token`).toBe(400);
-        expect(await withToken.json()).toEqual({ error: "token_query_not_supported" });
-      }
-
-      // Shell-rendered public pages: the server HTML is the mount plus the shared
-      // stylesheet, with no server-rendered nav.
-      for (const { path, mount } of shellPaths) {
-        const html = await (await fetch(`${base}${path}`)).text();
-        expect(html, `${path} mount`).toContain(mount);
-        expect(html, `${path} links ui.css`).toContain('href="/review-assets/ui.css"');
-        expect(html, `${path} nav is shell-rendered`).not.toContain('class="public-nav"');
-      }
-    } finally {
-      await server.close();
-    }
-  });
 
   it("token pages serve no cross-page navigation", async () => {
     const store = createSessionStore();
@@ -2507,59 +1889,14 @@ describe("page security rules across all pages", () => {
     }
   });
 
-  it("serves the homepage at / on the shared shell", async () => {
+  it("rejects query tokens before routing, including retired paths", async () => {
     const store = createSessionStore();
     const server = await createReviewHttpServer({ host: "127.0.0.1", store, logger }).start(0);
 
     try {
       const base = `http://${server.host}:${server.port}`;
-      const res = await fetch(`${base}/`);
-      expect(res.status).toBe(200);
-      expect(res.headers.get("content-type") ?? "").toContain("text/html");
-      const html = await res.text();
-      expect(html).toContain('id="home-app"');
-      expect(html).toContain('href="/review-assets/ui.css"');
-      expect(html).toContain('href="/review-assets/favicon.svg"');
-      // The homepage is public and never links a token page route.
-      for (const tokenPrefix of ['href="/connect/', 'href="/review/', 'href="/settings/']) {
-        expect(html, `homepage must not link ${tokenPrefix}`).not.toContain(tokenPrefix);
-      }
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("returns the HTML not-found page for unknown page requests and JSON for unknown APIs", async () => {
-    const store = createSessionStore();
-    const server = await createReviewHttpServer({ host: "127.0.0.1", store, logger }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      // A page navigation (Accept: text/html) gets the HTML not-found page.
-      const page = await fetch(`${base}/no-such-page`, { headers: { accept: "text/html" } });
-      expect(page.status).toBe(404);
-      expect(page.headers.get("content-type") ?? "").toContain("text/html");
-      expect(await page.text()).toContain('id="not-found-app"');
-
-      // An unknown API path keeps the JSON error body.
-      const api = await fetch(`${base}/api/no-such-endpoint`, { headers: { accept: "application/json" } });
-      expect(api.status).toBe(404);
-      expect(api.headers.get("content-type") ?? "").toContain("application/json");
-      expect(await api.json()).toEqual({ error: "not_found" });
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("every public read endpoint rejects a query token uniformly", async () => {
-    const store = createSessionStore();
-    const server = await createReviewHttpServer({ host: "127.0.0.1", store, logger }).start(0);
-
-    try {
-      const base = `http://${server.host}:${server.port}`;
-      // A single global guard rejects a query token before any read, so every
-      // public read endpoint — account, receipt, and the chart pools/candles
-      // APIs alike — answers identically and none can accept a token in the URL.
+      // The global guard runs before route lookup. Retired paths must not
+      // bypass the prohibition on tokens in query parameters.
       const publicReadEndpoints = [
         `/api/account/assets?address=${walletAccount}&token=secret`,
         `/api/receipt?digest=anything&token=secret`,
@@ -2574,5 +1911,20 @@ describe("page security rules across all pages", () => {
     } finally {
       await server.close();
     }
+  });
+});
+
+
+describe("retired read-page routes", () => {
+  it("returns JSON not-found for replaced pages, read APIs and the unsigned identity probe", async () => {
+    const server = await createReviewHttpServer({ host: "127.0.0.1", store: createSessionStore(), logger }).start(0);
+    try {
+      for (const path of ["/", "/account", "/receipt", "/charts/deepbook-usdc", "/api/account/assets", "/api/account/active-account", "/api/charts/deepbook-usdc/pools", "/api/charts/deepbook-usdc/candles", "/__identity", "/no-such-page"]) {
+        const result = await fetch("http://127.0.0.1:" + server.port + path, { headers: { accept: "text/html" } });
+        expect(result.status, path).toBe(404);
+        expect(result.headers.get("content-type"), path).toContain("application/json");
+        expect(await result.json(), path).toEqual({ error: "not_found" });
+      }
+    } finally { await server.close(); }
   });
 });

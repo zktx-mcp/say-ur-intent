@@ -9,7 +9,7 @@ import type {
 import type { SuiChainReceiptEffectsStatus, SuiChainReceiptPackageCall } from "../../src/core/action/suiChainReceiptEvidence.js";
 import { asRecord } from "./parse.js";
 
-// Pure, DOM-free validation of the /api/receipt response against the shared
+// Pure, DOM-free validation of the shared receipt reader response against the shared
 // server SOT types. Kept out of receipt.ts so the fail-closed behaviour is unit
 // tested directly (vitest runs in a node environment), not only asserted by a
 // source grep.

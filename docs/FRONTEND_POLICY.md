@@ -1,17 +1,8 @@
 # Frontend Policy
 
-Say Ur Intent frontend pages are local review and wallet-context surfaces. They
-exist to show server-validated facts, capture explicit wallet gestures, and
-keep AI reasoning separate from wallet authority.
+Say Ur Intent presents Account, Receipt and Chart as internal MCP Apps cards. Connect, Review and Settings use local session-token pages. Every surface displays server-returned facts and keeps AI reasoning separate from wallet authority.
 
-The current release ships the Connect page, the public Account page, the local
-settings page, a review page that can display server-computed review state, the
-public Receipt Analytics page, and the DeepBook USDC chart page. The review server may build local unsigned
-DeepBook or FlowX swap transaction material during account-bound review, but the
-frontend does not receive transaction bytes outside the digest-gated handoff.
-The review page offers a sign action only on a
-`ready_for_wallet_review` state whose wallet account matches the reviewed
-account; it never builds transactions in the frontend.
+The review server may build local unsigned DeepBook or FlowX swap transaction material during account-bound review. The review page receives bytes only through the digest-gated handoff and offers signing only for a matching account on `ready_for_wallet_review`. Read cards never receive transaction bytes or signatures.
 
 ## Role
 
@@ -44,9 +35,7 @@ The frontend must not compute quote truth, readiness, blocked status, safety, or
 final execution truth. In the current release, it may render state, connect a
 wallet, ask the server to refresh, revoke wallet identity when that action
 exists, and report the signed digest or local failure event that starts
-server-owned receipt handling. The public Receipt Analytics page must render
-only the server-read receipt facts from the receipt endpoint and must not call
-Sui RPC, dapp-kit, or wallet APIs.
+server-owned receipt handling. The Receipt card renders only server-read receipt facts and does not call Sui RPC, dapp-kit, or wallet APIs.
 
 ## Wallet Identity
 
@@ -62,7 +51,7 @@ When a wallet exposes multiple accounts, Say Ur Intent captures the account retu
 
 ## Review Surface
 
-Each action review is a separate ceremony. The review screen prioritizes asset flow over protocol internals.
+The review page displays server-computed review state. Each action review is a separate ceremony. The review screen prioritizes asset flow over protocol internals.
 
 Required primary facts:
 
@@ -126,8 +115,7 @@ If the server returns a `PtbVisualizationArtifact`, the frontend may render only
 Mermaid flowchart text plus diagnostics. The panel must show the generated time,
 source, diagnostics, and unsupported-use boundary when those fields are present.
 The Mermaid graph may show a registered Move Registry package name in place of a
-registered package address, with a control to switch back to raw addresses and a
-copyable Mermaid source that keeps raw addresses; that name is a package identity
+registered package address, with a control to switch back to raw addresses; that name is a package identity
 label, not a safety, trust, route-quality, or signing-readiness signal, and any
 package that is not registered keeps its raw address.
 It must not store or render executable transaction material, wallet signature
@@ -170,7 +158,7 @@ whose only action is cancel. Other states render:
 - recorded execution result: show the receipt card (status, digest, failure
   reason, and server-read chain receipt facts when present) with no review or
   sign actions; the session is finished. The receipt card shows the server-read
-  chain receipt facts inline; the public Receipt Analytics page can also read
+  chain receipt facts inline; the Receipt card can also read
   on-chain receipt facts by transaction digest.
 - `expired`: show expiration and a concrete restart path. The default restart path is to return to the AI client and request a new wallet identity or review session.
 
@@ -178,32 +166,21 @@ External proposal review sessions are non-signable. Their primary action is to
 inspect the review facts and return to the AI client with any remaining user
 choices.
 
-## Receipt Analytics Page
+## Internal Read Cards
 
-The review page shows the server-read chain receipt facts inline on a recorded
-execution result. There is no separate per-session analysis page.
+The Account card shows SuiNS, coin balances, Display NFTs, other owned objects, fetched time and enumeration limits for an explicit or active read address. The Receipt card shows server-read facts for one transaction digest, including gas, balance changes, objects, inputs, events and PTB visualization. The Chart card shows one selected DeepBook USDC pool with official intervals, UTC range and candle limits. Its initial time axis uses the saved request boundaries; omitted boundaries use available candle times, and a request without either boundary fits the returned candles. Boundary whitespace carries no price or volume. Empty results show the requested range and an explicit no-candles message. These are read-only views; they create no wallet connection, review approval, trading authority, P&L or fiat valuation.
 
-The public Receipt Analytics page is served from `/receipt` and reads on-chain
-receipt facts for any transaction digest through `GET /api/receipt?digest=`. It
-is separate from the Connect page at `/connect/:id`, which binds the active
-account, and the public Account page at `/account`, which reads public
-on-chain asset balances for an address. It takes no session token; a `?token`
-query is rejected.
+All read cards use one SQLite-backed input lifecycle and one View lifecycle. The View inserts a result node before invoking its mount callback. Size-dependent renderers wait for positive layout dimensions, ignore hidden zero-size layouts, and release observers and drawing resources on disposal. Chart resizing preserves the current viewport rather than reapplying the initial query range. Initialization reads the same card record. Chat navigation, frame recreation and teardown do not close input or cancel work. A valid unsubmitted selection remains available; admission or backend expiry ends that original input. A read may finish after its View closes. Completed results are static, remain stored until local data replacement/reset, and do not repeat the source query. A different selection after admission needs a new card.
 
-The page is read-only. It renders only the server-read receipt facts (execution
-status, sender, balance changes, object changes, and Move calls) returned by the
-receipt endpoint. It shows no review evidence, labeled session facts, signing
-data, or wallet state.
+Static presentation may read the same saved result, missing details, or the state of an admitted operation when needed. Such reads do not restore controls or start a new business operation. Polling is sequential, uses the server-provided interval, and stops on completion, view closure or read error. Keep an already displayed result when a later read fails.
 
-It must not import dapp-kit, Sui clients, wallet connection code, transaction
-builders, or signing controls. It must not call chain RPC from the browser,
-recompute digest/sender/effects consistency, or present the page as approval. It
-is not wallet readiness, not signing readiness, and not a new verification
-authority. Receipt truth is owned by the server receipt reader.
+The view uses MCP Apps host-mediated tool/resource calls. It does not fetch local HTTP endpoints, Sui RPC or the Indexer directly. App-only permissions travel in UI metadata and never appear in ordinary model content or saved resources. The backend checks permission, card, server expiry and expected revision and admits the selection atomically in SQLite. Identical duplicates return the stored request; conflicting input returns an authenticated current snapshot and an error. Lost replies require a same-card state read, never automatic resubmission.
 
-The `Audit record` card remains a compact audit and copy surface on the review
-page — always visible, with its record sections behind nested disclosures. It
-must not grow into a second full analysis view.
+The View timer uses backend-computed remaining input time and asks for current state at expiry; it does not write an expiry or close reason. Teardown only disposes local observers, timers and rendering resources. Missing UI permission or a failed current-state read keeps input disabled without inventing a terminal state. Preserve previously displayed facts and expose recovery through a saved-state read. Server restart invalidates unfinished input/work without replaying it and preserves completed DB results.
+
+Receipt input values and their PTB graph use a typed UI-only metadata channel bound to card ID, transaction digest and revision. Model text, structured content and public saved resources omit those display details. Missing private details must be shown as unavailable, not as an absence of transaction inputs. Rendering uses the validated receipt. NFT image loading remains the permitted direct external-display exception; business queries still go through the backend.
+
+Internal cards provide no clipboard actions, copy buttons, or clipboard fallback controls. Preserve readable facts, ordinary text selection, PTB name/address display controls and graph pan/zoom. NFT images retain no-referrer behavior and a failed-image placeholder. Theme follows the host. Card view cleanup ends timers, subscriptions and rendering observers without cancelling an already admitted server operation.
 
 ## Actions
 
@@ -300,21 +277,7 @@ mark for the active theme.
 
 ## Navigation
 
-The public pages share one navigation menu: Account (`/account`), Receipt
-Analytics (`/receipt`), and the DeepBook USDC chart (`/charts/deepbook-usdc`).
-The menu links only to public pages and never to a token page. It is
-server-rendered outside the page's `main` element, so the page script, which owns
-`main`, never removes it. Pages migrated onto the shared shell instead render this
-navigation through the shell and clear only their own main region, so the shell's
-header and navigation persist across the page's re-renders. The public homepage at
-`/` and the HTML not-found page are public pages on the shared shell; an unmatched
-page request returns the not-found page, while API and asset requests keep their
-JSON error body.
-
-Token pages — Connect, Review & Execution, and Settings — have no navigation to
-other pages. Each is opened only through its agent-issued token URL, so every
-outcome is shown on the page itself with a path back to the AI client. A token
-page never links to another page, and a public page never links to a token page.
+Read cards open from purpose-specific MCP tools. They contain their own result and error states and do not link to removed Account, Receipt, Chart, home or HTML not-found pages. Connect, Review and Settings pages have no cross-page navigation or linked brand exit.
 
 ## Security
 
@@ -345,11 +308,9 @@ The frontend must not add:
 
 The exclusions above target automatic, background-indexed, or
 recommendation-style surfaces. User-requested local record views are allowed
-only inside their narrow surfaces: the public Account page shows a wallet
+only inside their narrow surfaces: the Account card shows a wallet
 asset snapshot at a fetched timestamp for an address from public on-chain reads,
-and the public Receipt Analytics page shows server-read on-chain receipt facts
-for one transaction digest. Summaries of
-locally stored review and activity records are available only through the MCP
-read tools, not a browser page. These views
+and the Receipt card shows server-read on-chain receipt facts
+for one transaction digest. Summaries of locally stored review and activity records are available through the MCP read tools. These views
 must not add P&L, valuation, performance, tax claims, or route ranking. They
 must not add background indexing.

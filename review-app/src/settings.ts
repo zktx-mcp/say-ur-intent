@@ -43,7 +43,6 @@ type ImportPreview = {
   willReplace: true;
   activeAccountChange: "unchanged" | "set" | "cleared";
   restartRequiredAfterImport: true;
-  defaultsInjected: Array<"suiGraphqlUrl">;
 };
 
 const MAX_IMPORT_FILE_BYTES = 16 * 1024 * 1024;
@@ -57,7 +56,7 @@ const rootElement = root;
 const settingsSessionId = rootElement.dataset.settingsSessionId ?? "";
 const token = readPageToken();
 // Token page: the shared shell in token mode (no navigation, brand not a link).
-const shell = renderShell(rootElement, "token");
+const shell = renderShell(rootElement);
 const main = shell.main;
 let statusPayload: StatusPayload | undefined;
 let importPayload: unknown | undefined;
@@ -233,13 +232,11 @@ function renderLocalDataPanel(): HTMLElement {
   panel.append(file);
 
   if (importPreview) {
-    const defaultInjectionText = importPreview.defaultsInjected.length > 0
-      ? ` Missing settings filled with defaults: ${importPreview.defaultsInjected.join(", ")}.`
-      : "";
+
     panel.append(
       feedback(
         "ok",
-        `Import preview ready. Incoming accounts: ${importPreview.incomingCounts.accounts}. Active account change: ${importPreview.activeAccountChange}.${defaultInjectionText} Endpoint verification runs before replacement. This import replaces current local data.`
+        `Import preview ready. Incoming accounts: ${importPreview.incomingCounts.accounts}. Active account change: ${importPreview.activeAccountChange}. Endpoint verification runs before replacement. This import replaces current local data.`
       )
     );
     panel.append(endRow(button("Import and replace local data", () => void importLocalData(), "danger")));

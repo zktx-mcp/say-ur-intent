@@ -166,21 +166,29 @@ describe("source policy", () => {
     expect(source).not.toContain("execution_result_unavailable");
   });
 
-  it("keeps the public receipt analytics page display-only and server-fact owned", () => {
-    const pageSource = readFileSync(join(process.cwd(), "review-app/src/receipt.ts"), "utf8");
+  it("keeps the internal receipt card display-only and server-fact owned", () => {
+    const pageSource = readFileSync(join(process.cwd(), "src/mcp-ui/view/receipt.ts"), "utf8");
 
     // Reads public on-chain facts through the server endpoint only.
-    expect(pageSource).toContain("/api/receipt?digest=");
+    const service = readFileSync(join(process.cwd(), "src/mcp-ui/readCards.ts"), "utf8");
+    expect(service).toContain("options.publicChainReceiptReader");
+    expect(service).toContain("receiptInputSchema.parse(input)");
     // Fail closed against shape drift: types the response with the shared
     // server SOT type and validates it before rendering.
-    expect(pageSource).toContain("PublicChainReceipt");
-    expect(pageSource).toContain("parseReceipt");
+    const displaySource = readFileSync(join(process.cwd(), "src/mcp-ui/view/receiptData.ts"), "utf8");
+    expect(pageSource).toContain("receiptForCard(snapshot, display)");
+    expect(displaySource).toContain("parseReceipt(result?.receipt)");
+    expect(displaySource).toContain("display.transactionDigest !== receipt.txDigest");
+    expect(displaySource).toContain("display.cardId !== snapshot.cardId");
+    expect(displaySource).toContain("display.revision !== snapshot.revision");
+    for (const source of [pageSource, displaySource]) {
     // No wallet, no Sui client, no signing or execution from this page.
-    expect(pageSource).not.toMatch(/@mysten\/sui|dappKit|createLocalDAppKit|suiMainnetClient|executeTransactionBlock/i);
-    expect(pageSource).not.toMatch(/all matched|safe to sign|ready to sign/i);
+    expect(source).not.toMatch(/@mysten\/sui|dappKit|createLocalDAppKit|suiMainnetClient|executeTransactionBlock/i);
+    expect(source).not.toMatch(/all matched|safe to sign|ready to sign/i);
     // Public page: never carries a session token or review/session evidence.
-    expect(pageSource).not.toMatch(/x-say-ur-intent-token|readPageToken|tokenHeaders/);
-    expect(pageSource).not.toMatch(/reviewedRequest|labeledSessionFacts|walletReviewAdapterContract|reviewState/);
+    expect(source).not.toMatch(/x-say-ur-intent-token|readPageToken|tokenHeaders/);
+    expect(source).not.toMatch(/reviewedRequest|labeledSessionFacts|walletReviewAdapterContract|reviewState/);
+    }
   });
 
   it("wires transaction signing and the byte handoff only on the Review & Execution page", () => {
@@ -229,7 +237,7 @@ describe("source policy", () => {
     expect(publicAndRuntimeSurfaceNormalized).not.toMatch(/Execution result transitions are owned by the local review-server browser flow/i);
   });
 
-  it("documents the public receipt analytics surface and the removed per-session analysis page", () => {
+  it("documents the internal receipt card without reviving the removed analysis page", () => {
     const rawSurface = [
       "AGENTS.md",
       "README.md",
@@ -242,11 +250,11 @@ describe("source policy", () => {
     // as "review execution\nanalysis page" cannot slip past these guards.
     const publicAndRuntimeSurface = rawSurface.replace(/\s+/g, " ");
 
-    // The review page shows the chain receipt inline; a public Receipt Analytics
-    // page reads on-chain receipt facts by transaction digest.
-    expect(publicAndRuntimeSurface).toMatch(/public [Rr]eceipt [Aa]nalytics page/);
+    // The review page shows the chain receipt inline; the internal Receipt card
+    // reads on-chain receipt facts by transaction digest.
+    expect(publicAndRuntimeSurface).toMatch(/internal Receipt card/);
     expect(publicAndRuntimeSurface).toMatch(/receipt facts (for|by)[\s\S]{0,80}digest/i);
-    expect(publicAndRuntimeSurface).toMatch(/public Account page/i);
+    expect(publicAndRuntimeSurface).toMatch(/Account card/i);
     // The per-session review-execution-analysis page and its route were removed.
     expect(publicAndRuntimeSurface).not.toMatch(/review execution analysis page/i);
     expect(publicAndRuntimeSurface).not.toMatch(/\/review\/[^\s)]*\/analysis/);
@@ -289,7 +297,7 @@ describe("source policy", () => {
 
     expect(source).toMatch(/answer playbook/i);
     expect(source).toMatch(/review URL can be created.*proposal and local review evidence/is);
-    expect(source).toMatch(/does not provide a sign action, signing data, MCP-visible transaction bytes, or signing readiness/is);
+    expect(source).toMatch(/Ordinary MCP responses do not provide a sign action, signing data, transaction bytes, or signing readiness/is);
     expect(source).toMatch(/Unsupported/i);
     expect(source).not.toMatch(/[\uAC00-\uD7A3]/u);
     expect(source).not.toMatch(/safe to sign/i);
@@ -374,8 +382,8 @@ describe("source policy", () => {
     expect(source).toMatch(/read\.list_settlement_asset_groups/);
     expect(source).toMatch(/read\.preview_intent_evidence/);
     expect(source).toMatch(/read\.summarize_settlement_asset_group_parity/);
-    expect(source).toMatch(/answerSourceStatus/);
-    expect(source).toMatch(/canUseThisResponseForUserAnswer/);
+    expect(source).toMatch(/toolAvailability/);
+    expect(source).toMatch(/requiredToolsAvailable/);
     expect(source).toMatch(/current MCP server build cannot support the answer/);
     expect(source).toMatch(/responseSummary\.doNotCallQuoteToolsForThisQuestion/);
     expect(source).toMatch(/do not call wallet inventory or quote tools/i);
@@ -899,42 +907,21 @@ describe("source policy", () => {
     );
   });
 
-  it("documents the DeepBook USDC candle chart page as local read-only display", () => {
-    const docs = [
-      "docs/AGENT_BEHAVIOR.md",
-      "docs/MCP_TOOLS.md",
-      "docs/UTILITY_INDEX.md",
-      "src/mcp/serverInfo.ts"
-    ].map((file) => readFileSync(join(process.cwd(), file), "utf8")).join("\n");
-    const source = [
-      "review-app/src/deepbookUsdcChart.ts",
-      "src/review-server/deepbookUsdcChartApi.ts",
-      "src/review-server/server.ts",
-      "src/review-server/html.ts"
-    ].map((file) => readFileSync(join(process.cwd(), file), "utf8")).join("\n");
-
-    expect(docs).toMatch(/\/charts\/deepbook-usdc/);
-    expect(docs).toMatch(/local read-only (chart page|browser page)/i);
-    expect(docs).toMatch(/same-origin local chart APIs|same-origin chart APIs/i);
-    expect(docs).toMatch(/DeepBookV3 official Indexer USDC-denominated candles/i);
-    expect(docs).toMatch(/not an MCP tool/i);
-    expect(docs).toMatch(/not[\s\S]{0,160}(live feed|live quote|auto-refresh)/i);
-    expect(docs).toMatch(/not[\s\S]{0,160}(wallet|session token|review session|signing)/i);
-    expect(docs).toMatch(/not[\s\S]{0,160}(route recommendation|best-price|trading interface)/i);
-    expect(docs).toMatch(/not[\s\S]{0,160}(fiat USD|USD value|P&L|tax|cost basis|USDC\/USD peg guarantee)/i);
+  it("keeps the internal chart display tied to official candles without trading authority", () => {
+    const docs = ["docs/AGENT_BEHAVIOR.md", "docs/MCP_TOOLS.md", "src/mcp/serverInfo.ts"]
+      .map((file) => readFileSync(join(process.cwd(), file), "utf8")).join("\n");
+    const renderer = readFileSync(join(process.cwd(), "src/mcp-ui/view/chart.ts"), "utf8");
+    const service = readFileSync(join(process.cwd(), "src/core/read/deepbookUsdcChartService.ts"), "utf8");
+    expect(docs).toContain("ui.open_chart");
+    expect(docs).toMatch(/internal read-only card/i);
     expect(docs).toContain(DEEPBOOK_SOURCE_OWNER_RUNTIME_WORDING.usdcNotFiatUsdAndNotPeg);
-    expect(docs).not.toMatch(
-      /\/charts\/deepbook-usdc[\s\S]{0,240}(is|as|provides?|supports?|enables?)\s+(a\s+)?(live price|live feed|auto-refresh|trading interface|order entry|P&L page|portfolio value)/i
-    );
-    expect(docs).not.toMatch(
-      /shortcut labels? (are|become) (API values?|source contracts?|product period models?)/i
-    );
-    expect(docs).not.toMatch(/React rewrite|direct browser access to the official Indexer is allowed/i);
-    expect(source).toMatch(/\/api\/charts\/deepbook-usdc\/pools/);
-    expect(source).toMatch(/\/api\/charts\/deepbook-usdc\/candles/);
-    expect(source).toMatch(/connect-src 'self'/);
-    expect(source).not.toMatch(/deepbook-indexer\.mainnet\.mystenlabs\.com[\s\S]{0,160}fetch\(/);
-    expect(source).not.toMatch(/setInterval|autoRefresh|localStorage|sessionStorage|indexedDB/);
+    expect(docs).toMatch(/not[\s\S]{0,160}(live feed|live quote|auto-refresh)/i);
+    expect(docs).toMatch(/not[\s\S]{0,160}(route recommendation|route advice|trading interface)/i);
+    expect(docs).toMatch(/not[\s\S]{0,160}(fiat USD|P&L|tax|cost basis)/i);
+    expect(docs).not.toMatch(/shortcut labels? (are|become) (API values?|source contracts?)/i);
+    expect(renderer).not.toMatch(/fetch\(|setInterval|autoRefresh|localStorage|sessionStorage|indexedDB|SuiGrpcClient|dappKit/);
+    expect(service).toContain("source.fetchCandles");
+    expect(service).toContain("deepbookUsdcPriceHistoryQuantitySemantics");
   });
 
   it("keeps account asset timeline bounded to stored net-flow evidence", () => {
@@ -999,7 +986,7 @@ describe("source policy", () => {
       join(process.cwd(), "src/adapters/deepbook/deepbookReviewEvidence.ts"),
       "utf8"
     );
-    const runtimeSource = readFileSync(join(process.cwd(), "src/runtime/start.ts"), "utf8");
+    const runtimeSource = readFileSync(join(process.cwd(), "src/runtime/application.ts"), "utf8");
     const responseGuidanceSource = readFileSync(
       join(process.cwd(), "src/mcp/responseGuidance.ts"),
       "utf8"
@@ -1442,7 +1429,7 @@ describe("source policy", () => {
       "docs/MCP_TOOLS.md"
     ].map((file) => readFileSync(join(process.cwd(), file), "utf8")).join("\n");
     const sessionStoreSource = readFileSync(join(process.cwd(), "src/core/session/sessionStore.ts"), "utf8");
-    const runtimeStartSource = readFileSync(join(process.cwd(), "src/runtime/start.ts"), "utf8");
+    const runtimeStartSource = readFileSync(join(process.cwd(), "src/runtime/application.ts"), "utf8");
     const smokeSource = readFileSync(join(process.cwd(), "src/runtime/smokeMainnetRead.ts"), "utf8");
     const constructorScanFiles = [
       ...sourceFilePathsUnder("src"),
@@ -1496,7 +1483,7 @@ describe("source policy", () => {
     ]);
     expect(localDataValidationSource).toMatch(/parseLocalDataEnvelope/);
     expect(localDataValidationSource).toMatch(/validateAdapterLifecycle:\s*AdapterLifecycleValidator/);
-    expect(localDataValidationSource).toMatch(/validatePayloadSemantics\(normalized\.data,\s*options\.validateAdapterLifecycle\)/);
+    expect(localDataValidationSource).toMatch(/validatePayloadSemantics\(parsed\.data\.data,\s*options\.validateAdapterLifecycle\)/);
     expect(localDataValidationSource).toMatch(/validateReviewStateJsonColumn\(row\.state_json,\s*"state_json",\s*validateAdapterLifecycle\)/);
     expect(localDataValidationSource).toMatch(/parseLifecycleValidatedReviewState\(parsed as ReviewState,\s*validateAdapterLifecycle\)/);
     expect(localDataValidationSource).not.toMatch(/reviewState(?:Schema|ShapeSchema|OutputShapeSchema|StructuralInvariantSchema|OutputSchema)/);
@@ -1856,8 +1843,8 @@ describe("source policy", () => {
     expect(source).toMatch(/function_scan/);
     expect(source).toMatch(/scan kind[\s\S]{0,120}provenance/i);
     expect(localDbArchitecture).toMatch(/external_activity_scans\.kind[\s\S]{0,160}`function_scan`[\s\S]{0,160}recorded kind/i);
-    expect(mcpSetup).toMatch(/Backups[\s\S]{0,160}`function_scan`[\s\S]{0,160}current runtime/i);
-    expect(mcpSetup).toMatch(/Unsupported scan-kind values[\s\S]{0,160}rejected/i);
+    expect(mcpSetup).toMatch(/Current-format backups can contain `function_scan` provenance/i);
+    expect(mcpSetup).toMatch(/Unsupported formats and scan-kind values are rejected/i);
     expect(source).toMatch(/does not accept[\s\S]{0,120}`kind`[\s\S]{0,120}`function`[\s\S]{0,120}function-history filters/i);
     expect(source).toMatch(/Provider retention and rate-limit behavior[\s\S]{0,160}not Say Ur Intent guarantees/i);
     expect(source).toMatch(/requestedAccountTransactionFacts/);
@@ -1879,14 +1866,22 @@ describe("source policy", () => {
     expect(source).toMatch(/requestedAccountEffect\.scope[\s\S]{0,80}requested_account/i);
     expect(source).toMatch(/requestedAccountEffect\.limitations/);
     expect(source).toMatch(/accountBalanceChangeEvidence/);
-    expect(source).toMatch(/accountBalanceChangeAbsenceProven/);
     expect(source).toMatch(/accountBalanceChangeInferencePolicy/);
     expect(source).toMatch(/do_not_infer_from_transaction_context/);
     expect(source).toMatch(/visible recipient patterns/);
     expect(source).toMatch(/incomplete_account_balance_changes/);
     expect(source).toMatch(/account_balance_changes_unavailable/);
     expect(source).toMatch(/not zero-balance evidence/i);
-    expect(source).toMatch(/Only `accountBalanceChangeAbsenceProven: true` supports saying no requested-account balance change was returned/i);
+    // Each resource is read independently. A correct sentence in one resource
+    // must not hide a removed field or a missing completeness rule in another.
+    for (const file of ["docs/MCP_TOOLS.md", "docs/AGENT_BEHAVIOR.md"]) {
+      const guidance = readFileSync(join(process.cwd(), file), "utf8");
+      expect(guidance, file).not.toContain("accountBalanceChangeAbsenceProven");
+      expect(guidance, file).toMatch(/Only `no_account_balance_changes_returned` with complete details supports saying no requested-account balance change was returned/i);
+      expect(guidance, file).toMatch(/incomplete_account_balance_changes[^\n]*not zero-balance evidence/i);
+      expect(guidance, file).toMatch(/account_balance_changes_unavailable[^\n]*not zero-balance evidence/i);
+      expect(guidance, file).toMatch(/do_not_infer_from_transaction_context[^\n]*(must not|do not)[^\n]*infer/i);
+    }
     expect(source).toMatch(/no_account_balance_changes_returned[\s\S]{0,160}complete evidence/i);
     expect(source).toMatch(/analysis\.coinFlows[\s\S]{0,120}transaction\/page aggregate[\s\S]{0,120}not wallet-specific evidence/i);
     expect(source).toMatch(/raw integer facts scoped to the requested account/i);
@@ -1924,10 +1919,16 @@ describe("source policy", () => {
     expect(source).not.toMatch(/cost basis[\s\S]{0,120}(profit would be|profit is|calculate profit)/i);
     const boundedHistoryTerms =
       /background index|complete wallet history|P&L|raw GraphQL payload|non-known party address|signing readiness|transaction building|route recommendation|protocol support|position inventory|supported-protocol list/i;
-    const negativeContext = /\bnot\b|do not|does not|must not|out of scope|unsupported/i;
+    const negativeContext = /\bnot\b|do not|does not|must not|\bcreate no\b|out of scope|unsupported/i;
+    let listIntroduction = "";
     for (const line of source.split("\n")) {
+      if (line.trim() === "") continue;
+      const listItem = /^\s*[-*]\s/.test(line);
+      // Markdown list items inherit their introductory sentence's negation.
+      // A new non-list paragraph ends that context.
+      if (!listItem) listIntroduction = /:\s*$/.test(line) ? line : "";
       if (boundedHistoryTerms.test(line)) {
-        expect(line).toMatch(negativeContext);
+        expect(listItem ? `${listIntroduction}\n${line}` : line).toMatch(negativeContext);
       }
     }
   });

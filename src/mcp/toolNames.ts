@@ -1,4 +1,9 @@
 export const TOOL_NAMES = {
+  uiOpenAccount: "ui.open_account",
+  uiOpenReceipt: "ui.open_receipt",
+  uiOpenChart: "ui.open_chart",
+  uiReadCard: "ui.read_card",
+  uiSubmitCard: "ui.submit_card",
   readGetServerStatus: "read.get_server_status",
   readListSupportedProtocols: "read.list_supported_protocols",
   readListDeepbookPools: "read.list_deepbook_pools",

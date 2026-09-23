@@ -144,7 +144,9 @@
     "lastReload": "Last local reload",
     "boundaryUsdc": "USDC is a token-denominated reference asset, not fiat USD and not a USDC/USD peg guarantee.",
     "boundaryScope": "Official DeepBookV3 Indexer candles only — not a live quote, route recommendation, P&L, tax, cost-basis, or signing tool.",
-    "source": "Source: the local server reading the DeepBookV3 official Indexer. Rendered with TradingView Lightweight Charts.",
+    "source": "Source: the local server reading the DeepBookV3 official Indexer.",
+    "renderedWith": "Rendered with",
+    "library": "TradingView Lightweight Charts",
     "loadingPools": "Loading official DeepBook USDC pools from the local server.",
     "errorPools": "The local server could not load official DeepBook USDC pools."
   },

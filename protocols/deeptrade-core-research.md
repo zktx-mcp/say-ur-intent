@@ -183,7 +183,7 @@ Any review or activity analysis must separate:
 - DeepBook fee.
 
 Oracle security notes in the source material distinguish Pyth DEEP/USD, Pyth
-SUI/USD, and DeepBook reference pool pricing. Freshness and confidence
+SUI/USD, and DeepBook reference pool pricing. Freshness and confidence interval
 requirements were documented in the source material, but must be rechecked
 before implementation.
 
@@ -328,7 +328,7 @@ Before any DeepTrade implementation or automatic classifier:
 - Separate DEEP fee type, input coin fee type, and whitelisted pool paths.
 - Separate user-provided DEEP, reserve-provided DEEP, SUI coverage fee, protocol
   fee, DeepBook fee, and output-coin swap fee as distinct raw amounts.
-- Verify oracle/Pyth price freshness, confidence, feed identifiers, and
+- Verify oracle/Pyth price freshness, confidence interval, feed identifiers, and
   reference pool price source before presenting any fee or reserve coverage
   analysis.
 - Identify whether an order can create unsettled fee state and whether

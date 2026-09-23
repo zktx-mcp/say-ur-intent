@@ -9,20 +9,20 @@ import {
   type DeepbookOfficialIndexerFetchSource,
   type DeepbookOfficialIndexerInterval,
   type DeepbookOfficialIndexerSourceClient
-} from "../core/read/deepbookOfficialIndexerSource.js";
+} from "./deepbookOfficialIndexerSource.js";
 import {
   deepbookUsdcPriceHistoryPairFromOfficialPool,
   deepbookUsdcPriceHistoryQuantitySemantics,
   deepbookUsdcPriceHistoryResponseSummary
-} from "../core/read/deepbookReadHelpers.js";
-import { curateUsdcChartPools } from "../core/read/deepbookRegistry.js";
+} from "./deepbookReadHelpers.js";
+import { curateUsdcChartPools } from "./deepbookRegistry.js";
 import {
   DEEPBOOK_USDC_PRICE_HISTORY_UNSUPPORTED_CLAIMS,
   type DeepbookUsdcPriceHistoryPair,
   type DeepbookUsdcPriceHistoryQuantitySemantics,
   type DeepbookUsdcPriceHistoryResponseSummary,
   type DeepbookUsdcPriceHistoryUnsupportedClaim
-} from "../core/read/readServiceTypes.js";
+} from "./readServiceTypes.js";
 
 export const DEEPBOOK_USDC_CHART_DEFAULT_LIMIT = 500;
 export const DEEPBOOK_USDC_CHART_MAX_CANDLES = 10_000;
@@ -31,17 +31,15 @@ export const DEEPBOOK_USDC_CHART_CANDLE_CACHE_SIZE = 256;
 
 const ALLOWED_CANDLE_QUERY_FIELDS = new Set(["poolName", "interval", "startTimeMs", "endTimeMs", "limit"]);
 
-export type DeepbookUsdcChartApiOptions = {
+export type DeepbookUsdcChartServiceOptions = {
   source?: DeepbookOfficialIndexerSourceClient | undefined;
   now?: (() => Date) | undefined;
   cacheTtlMs?: number | undefined;
   maxCandleCacheEntries?: number | undefined;
+  assertCurrent?: (() => void) | undefined;
 };
 
-export type DeepbookUsdcChartApiRouteResult = {
-  httpStatus: number;
-  body: DeepbookUsdcChartPoolsResponse | DeepbookUsdcChartCandlesResponse;
-};
+export type DeepbookUsdcChartResult = DeepbookUsdcChartPoolsResponse | DeepbookUsdcChartCandlesResponse;
 
 export type DeepbookUsdcChartCommonFields = {
   responseSummary: DeepbookUsdcPriceHistoryResponseSummary;
@@ -62,6 +60,8 @@ export type DeepbookUsdcChartPoolsResponse =
       pools: DeepbookUsdcPriceHistoryPair[];
       intervals: typeof DEEPBOOK_OFFICIAL_INDEXER_INTERVALS;
       defaultInterval: typeof DEFAULT_DEEPBOOK_OFFICIAL_INDEXER_INTERVAL;
+      defaultLimit: number;
+      maxCandles: number;
       source: DeepbookOfficialIndexerFetchSource;
     } & DeepbookUsdcChartCommonFields)
   | ({
@@ -139,7 +139,7 @@ type CacheEntry<T> = {
   value: T;
 };
 
-export function createDeepbookUsdcChartApi(options: DeepbookUsdcChartApiOptions = {}) {
+export function createDeepbookUsdcChartService(options: DeepbookUsdcChartServiceOptions = {}) {
   const source = options.source ?? new DeepbookOfficialIndexerSource();
   const now = options.now ?? (() => new Date());
   const cacheTtlMs = options.cacheTtlMs ?? DEEPBOOK_USDC_CHART_CACHE_TTL_MS;
@@ -147,72 +147,74 @@ export function createDeepbookUsdcChartApi(options: DeepbookUsdcChartApiOptions 
   let poolCache: CacheEntry<Awaited<ReturnType<DeepbookOfficialIndexerSourceClient["fetchPools"]>>> | undefined;
   const candleCache = new Map<string, CacheEntry<Awaited<ReturnType<DeepbookOfficialIndexerSourceClient["fetchCandles"]>>>>();
 
-  async function getPools(searchParams: URLSearchParams = new URLSearchParams()): Promise<DeepbookUsdcChartApiRouteResult> {
+  async function getPools(searchParams: URLSearchParams = new URLSearchParams()): Promise<DeepbookUsdcChartResult> {
     const unsupportedField = firstUnsupportedField(searchParams, new Set());
     if (unsupportedField) {
-      return routeResult(400, {
+      return {
         status: "unsupported_input",
         reason: "unsupported_query_field",
         field: unsupportedField,
         ...chartCommonFields()
-      });
+      };
     }
 
     let poolResult: Awaited<ReturnType<DeepbookOfficialIndexerSourceClient["fetchPools"]>>;
     try {
       poolResult = await fetchPoolsCached();
     } catch (error) {
-      return routeResult(502, {
+      return {
         status: "source_unavailable",
         reason: chartSourceUnavailableReason(error),
         ...chartCommonFields()
-      });
+      };
     }
     // Curate to the hand-picked allowlist of meaningful pairs (SUI/USDC, DEEP/USDC,
     // …), in display order; the indexer's dead/dust pools never appear.
     const pools = curateUsdcChartPools(
       selectDeepbookOfficialIndexerCanonicalUsdcPools(poolResult.pools).map(deepbookUsdcPriceHistoryPairFromOfficialPool)
     );
-    return routeResult(200, {
+    return {
       status: "ok",
       poolCount: pools.length,
       pools,
       intervals: DEEPBOOK_OFFICIAL_INDEXER_INTERVALS,
       defaultInterval: DEFAULT_DEEPBOOK_OFFICIAL_INDEXER_INTERVAL,
+      defaultLimit: DEEPBOOK_USDC_CHART_DEFAULT_LIMIT,
+      maxCandles: DEEPBOOK_USDC_CHART_MAX_CANDLES,
       source: poolResult.source,
       ...chartCommonFields()
-    });
+    };
   }
 
-  async function getCandles(searchParams: URLSearchParams): Promise<DeepbookUsdcChartApiRouteResult> {
+  async function getCandles(searchParams: URLSearchParams): Promise<DeepbookUsdcChartResult> {
     const parsed = parseCandlesQuery(searchParams);
     if (parsed.status !== "ok") {
-      return routeResult(parsed.httpStatus, parsed.body);
+      return parsed.body;
     }
 
     let poolResult: Awaited<ReturnType<DeepbookOfficialIndexerSourceClient["fetchPools"]>>;
     try {
       poolResult = await fetchPoolsCached();
     } catch (error) {
-      return routeResult(502, {
+      return {
         status: "source_unavailable",
         reason: chartSourceUnavailableReason(error),
         query: parsed.query,
         ...chartCommonFields()
-      });
+      };
     }
 
     const pools = selectDeepbookOfficialIndexerCanonicalUsdcPools(poolResult.pools);
     const pool = pools.find((candidate) => candidate.pool_name === parsed.query.poolName);
     if (pool === undefined) {
-      return routeResult(400, {
+      return {
         status: "unsupported_pool",
         reason: "pool_not_in_official_usdc_pools",
         query: parsed.query,
         availablePoolNames: pools.map((candidate) => candidate.pool_name),
         source: poolResult.source,
         ...chartCommonFields()
-      });
+      };
     }
 
     const pair = deepbookUsdcPriceHistoryPairFromOfficialPool(pool);
@@ -220,18 +222,18 @@ export function createDeepbookUsdcChartApi(options: DeepbookUsdcChartApiOptions 
     try {
       candleResult = await fetchCandlesCached(parsed.query);
     } catch (error) {
-      return routeResult(502, {
+      return {
         status: "source_unavailable",
         reason: chartSourceUnavailableReason(error),
         query: parsed.query,
         pair,
         source: poolResult.source,
         ...chartCommonFields()
-      });
+      };
     }
 
     if (candleResult.candles.length === 0) {
-      return routeResult(200, {
+      return {
         status: "empty_result",
         query: parsed.query,
         pair,
@@ -239,10 +241,10 @@ export function createDeepbookUsdcChartApi(options: DeepbookUsdcChartApiOptions 
         candles: [],
         source: candleResult.source,
         ...chartCommonFields()
-      });
+      };
     }
 
-    return routeResult(200, {
+    return {
       status: "ok",
       query: parsed.query,
       pair,
@@ -250,7 +252,7 @@ export function createDeepbookUsdcChartApi(options: DeepbookUsdcChartApiOptions 
       candles: candleResult.candles,
       source: candleResult.source,
       ...chartCommonFields()
-    });
+    };
   }
 
   async function fetchPoolsCached(): Promise<Awaited<ReturnType<DeepbookOfficialIndexerSourceClient["fetchPools"]>>> {
@@ -259,6 +261,7 @@ export function createDeepbookUsdcChartApi(options: DeepbookUsdcChartApiOptions 
       return poolCache.value;
     }
     const value = await source.fetchPools();
+    options.assertCurrent?.();
     poolCache = { expiresAtMs: currentTime + cacheTtlMs, value };
     return value;
   }
@@ -271,10 +274,12 @@ export function createDeepbookUsdcChartApi(options: DeepbookUsdcChartApiOptions 
     const cached = candleCache.get(key);
     if (cached !== undefined && cached.expiresAtMs > currentTime) {
       candleCache.delete(key);
-      candleCache.set(key, cached);
+      options.assertCurrent?.();
+    candleCache.set(key, cached);
       return cached.value;
     }
     const value = await source.fetchCandles(query);
+    options.assertCurrent?.();
     candleCache.set(key, { expiresAtMs: currentTime + cacheTtlMs, value });
     while (candleCache.size > maxCandleCacheEntries) {
       const oldestKey = candleCache.keys().next().value as string | undefined;
@@ -286,19 +291,18 @@ export function createDeepbookUsdcChartApi(options: DeepbookUsdcChartApiOptions 
     return value;
   }
 
-  return { getPools, getCandles };
+  return { getPools, getCandles, clearCache: () => { poolCache = undefined; candleCache.clear(); } };
 }
 
 function parseCandlesQuery(searchParams: URLSearchParams):
   | { status: "ok"; query: DeepbookUsdcChartCandlesQuery }
   | {
       status: "error";
-      httpStatus: number;
       body: DeepbookUsdcChartCandlesResponse;
     } {
   const unsupportedField = firstUnsupportedField(searchParams, ALLOWED_CANDLE_QUERY_FIELDS);
   if (unsupportedField) {
-    return chartQueryError(400, {
+    return chartQueryError({
       status: "unsupported_input",
       reason: "unsupported_query_field",
       field: unsupportedField,
@@ -307,7 +311,7 @@ function parseCandlesQuery(searchParams: URLSearchParams):
   }
   const duplicateField = firstDuplicateField(searchParams);
   if (duplicateField) {
-    return chartQueryError(400, {
+    return chartQueryError({
       status: "unsupported_input",
       reason: "duplicate_query_field",
       field: duplicateField,
@@ -317,7 +321,7 @@ function parseCandlesQuery(searchParams: URLSearchParams):
 
   const poolName = searchParams.get("poolName");
   if (poolName === null || poolName.trim() === "") {
-    return chartQueryError(400, {
+    return chartQueryError({
       status: "unsupported_input",
       reason: "missing_pool_name",
       field: "poolName",
@@ -331,7 +335,7 @@ function parseCandlesQuery(searchParams: URLSearchParams):
     interval = parseDeepbookOfficialIndexerInterval(intervalText);
   } catch (error) {
     if (error instanceof DeepbookOfficialIndexerSourceError) {
-      return chartQueryError(400, {
+      return chartQueryError({
         status: "unsupported_input",
         reason: "unsupported_interval",
         field: "interval",
@@ -343,18 +347,18 @@ function parseCandlesQuery(searchParams: URLSearchParams):
 
   const startTimeMs = parseOptionalTimestamp(searchParams.get("startTimeMs"), "startTimeMs");
   if (startTimeMs.status === "error") {
-    return chartQueryError(400, startTimeMs.body);
+    return chartQueryError(startTimeMs.body);
   }
   const endTimeMs = parseOptionalTimestamp(searchParams.get("endTimeMs"), "endTimeMs");
   if (endTimeMs.status === "error") {
-    return chartQueryError(400, endTimeMs.body);
+    return chartQueryError(endTimeMs.body);
   }
   if (
     startTimeMs.value !== undefined &&
     endTimeMs.value !== undefined &&
     startTimeMs.value >= endTimeMs.value
   ) {
-    return chartQueryError(400, {
+    return chartQueryError({
       status: "unsupported_input",
       reason: "invalid_timestamp_window",
       query: { poolName, interval, startTimeMs: startTimeMs.value, endTimeMs: endTimeMs.value },
@@ -364,7 +368,7 @@ function parseCandlesQuery(searchParams: URLSearchParams):
 
   const limit = parseLimit(searchParams.get("limit"));
   if (limit.status === "error") {
-    return chartQueryError(limit.httpStatus, limit.body);
+    return chartQueryError(limit.body);
   }
 
   return {
@@ -416,14 +420,13 @@ function parseOptionalTimestamp(
 
 function parseLimit(value: string | null):
   | { status: "ok"; value: number }
-  | { status: "error"; httpStatus: number; body: DeepbookUsdcChartCandlesResponse } {
+  | { status: "error"; body: DeepbookUsdcChartCandlesResponse } {
   if (value === null || value === "") {
     return { status: "ok", value: DEEPBOOK_USDC_CHART_DEFAULT_LIMIT };
   }
   if (!/^[1-9][0-9]*$/.test(value)) {
     return {
       status: "error",
-      httpStatus: 400,
       body: {
         status: "unsupported_input",
         reason: "invalid_limit",
@@ -436,7 +439,6 @@ function parseLimit(value: string | null):
   if (!Number.isSafeInteger(parsed)) {
     return {
       status: "error",
-      httpStatus: 400,
       body: {
         status: "unsupported_input",
         reason: "invalid_limit",
@@ -448,7 +450,6 @@ function parseLimit(value: string | null):
   if (parsed > DEEPBOOK_USDC_CHART_MAX_CANDLES) {
     return {
       status: "error",
-      httpStatus: 400,
       body: {
         status: "over_limit",
         reason: "limit_exceeds_chart_cap",
@@ -506,16 +507,8 @@ function chartCommonFields(): DeepbookUsdcChartCommonFields {
   };
 }
 
-function routeResult(
-  httpStatus: number,
-  body: DeepbookUsdcChartPoolsResponse | DeepbookUsdcChartCandlesResponse
-): DeepbookUsdcChartApiRouteResult {
-  return { httpStatus, body };
-}
-
 function chartQueryError(
-  httpStatus: number,
   body: DeepbookUsdcChartCandlesResponse
-): { status: "error"; httpStatus: number; body: DeepbookUsdcChartCandlesResponse } {
-  return { status: "error", httpStatus, body };
+): { status: "error"; body: DeepbookUsdcChartCandlesResponse } {
+  return { status: "error", body };
 }

@@ -129,7 +129,7 @@ describe("Sui DeFi activity classifier", () => {
       classifierVersion: SUI_DEFI_ACTIVITY_CLASSIFIER_VERSION,
       protocolId: "deeptrade-core",
       primaryAction: "order",
-      confidence: "direct_move_call",
+      matchBasis: "direct_move_call",
       relatedProtocols: [
         {
           protocolId: "deepbook-v3",
@@ -156,7 +156,7 @@ describe("Sui DeFi activity classifier", () => {
     expect(matches[0]).toMatchObject({
       protocolId: "deepbook-v3",
       primaryAction: "swap",
-      confidence: "direct_move_call"
+      matchBasis: "direct_move_call"
     });
     expect(matches[0]?.limitations).toContain("deepbook_package_conflict_open");
   });
@@ -175,7 +175,7 @@ describe("Sui DeFi activity classifier", () => {
     expect(matches).toHaveLength(1);
     expect(matches[0]).toMatchObject({
       protocolId: "cetus-clmm",
-      confidence: "shared_object",
+      matchBasis: "shared_object",
       primaryAction: "unknown",
       evidence: [
         {
@@ -251,7 +251,7 @@ describe("Sui DeFi activity classifier", () => {
     expect(mvrSuilendMatches[0]).toMatchObject({
       protocolId: "suilend-lending",
       primaryAction: "lending",
-      confidence: "direct_move_call",
+      matchBasis: "direct_move_call",
       evidence: [
         expect.objectContaining({
           kind: "moveCall",
@@ -287,7 +287,7 @@ describe("Sui DeFi activity classifier", () => {
     }));
     expect(objectTypeMatches[0]).toMatchObject({
       protocolId: "suilend-lending",
-      confidence: "object_type",
+      matchBasis: "object_type",
       primaryAction: "unknown"
     });
   });
@@ -313,7 +313,7 @@ describe("Sui DeFi activity classifier", () => {
 
     expect(matches[0]).toMatchObject({
       protocolId: "aftermath-afsui",
-      confidence: "event_type",
+      matchBasis: "event_type",
       primaryAction: "unknown"
     });
     expect(matches[0]?.evidence).toEqual(expect.arrayContaining([

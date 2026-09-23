@@ -347,6 +347,7 @@ export type ReviewSession = LocalSessionBase & {
 };
 
 export type ToolErrorKind =
+  | "ui_unavailable"
   | "input_invalid"
   | "registry_miss"
   | "unsupported_action"

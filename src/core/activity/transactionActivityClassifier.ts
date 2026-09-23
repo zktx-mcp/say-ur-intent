@@ -10,11 +10,11 @@ import {
   type ProtocolRule
 } from "./transactionActivityProtocolRules.js";
 
-export const SUI_DEFI_ACTIVITY_CLASSIFIER_VERSION = "sui_defi_activity_v0_3" as const;
+export const SUI_DEFI_ACTIVITY_CLASSIFIER_VERSION = "sui_defi_activity_v0_4" as const;
 
 const protocolActivityPrimaryActionSchema = z.enum(protocolActivityPrimaryActions);
 
-const protocolActivityConfidenceSchema = z.enum([
+const protocolMatchBasisSchema = z.enum([
   "direct_move_call",
   "event_type",
   "object_type",
@@ -37,7 +37,7 @@ export const protocolActivityClassifierMatchSchema = z.object({
   displayName: z.string(),
   activityCategory: z.string(),
   primaryAction: protocolActivityPrimaryActionSchema,
-  confidence: protocolActivityConfidenceSchema,
+  matchBasis: protocolMatchBasisSchema,
   evidence: z.array(z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("moveCall"),
@@ -79,7 +79,7 @@ export const protocolActivityClassifierMatchSchema = z.object({
 }).strict();
 
 export type ProtocolActivityClassifierMatch = z.infer<typeof protocolActivityClassifierMatchSchema>;
-type ProtocolActivityConfidence = z.infer<typeof protocolActivityConfidenceSchema>;
+type ProtocolMatchBasis = z.infer<typeof protocolMatchBasisSchema>;
 type ProtocolActivityEvidence = ProtocolActivityClassifierMatch["evidence"][number];
 type PackageEvidenceFields = {
   packageSource: string;
@@ -91,7 +91,7 @@ export function classifySuiDeFiActivity(
 ): ProtocolActivityClassifierMatch[] {
   const matches = SUI_DEFI_ACTIVITY_PROTOCOL_RULES.flatMap((rule) => matchProtocol(rule, details));
   const deepTradeDirect = matches.some((match) =>
-    match.protocolId === "deeptrade-core" && match.confidence === "direct_move_call"
+    match.protocolId === "deeptrade-core" && match.matchBasis === "direct_move_call"
   );
   const deepBookMatch = matches.find((match) => match.protocolId === "deepbook-v3");
 
@@ -114,7 +114,7 @@ export function classifySuiDeFiActivity(
     });
 
   return resolved.sort((a, b) => {
-    const priority = confidenceRank(a.confidence) - confidenceRank(b.confidence);
+    const priority = matchBasisPriority(a.matchBasis) - matchBasisPriority(b.matchBasis);
     if (priority !== 0) {
       return priority;
     }
@@ -128,7 +128,7 @@ function matchProtocol(
 ): ProtocolActivityClassifierMatch[] {
   const evidence: ProtocolActivityEvidence[] = [];
   const limitationSet = new Set<string>();
-  let confidence: ProtocolActivityConfidence | undefined;
+  let matchBasis: ProtocolMatchBasis | undefined;
   let primaryAction: ProtocolActivityPrimaryAction = "unknown";
 
   for (const call of details.moveCalls) {
@@ -145,7 +145,7 @@ function matchProtocol(
       function: call.function,
       commandIndex: call.commandIndex
     });
-    confidence = strongestConfidence(confidence, "direct_move_call");
+    matchBasis = selectPreferredMatchBasis(matchBasis, "direct_move_call");
     primaryAction = strongestPrimaryAction(primaryAction, rule.actionForMoveCall?.(call) ?? "unknown");
     if (packageRule.limitation !== undefined) {
       limitationSet.add(packageRule.limitation);
@@ -168,7 +168,7 @@ function matchProtocol(
         eventType: event.eventType,
         ...(event.sequenceNumber === undefined ? {} : { sequenceNumber: event.sequenceNumber })
       });
-      confidence = strongestConfidence(confidence, "event_type");
+      matchBasis = selectPreferredMatchBasis(matchBasis, "event_type");
     }
   }
 
@@ -189,7 +189,7 @@ function matchProtocol(
           ...packageEvidenceFields(packageRule),
           type
         });
-        confidence = strongestConfidence(confidence, "object_type");
+        matchBasis = selectPreferredMatchBasis(matchBasis, "object_type");
       }
     }
 
@@ -201,19 +201,19 @@ function matchProtocol(
         objectId: change.objectId,
         label: sharedObjectLabel
       });
-      confidence = strongestConfidence(confidence, "shared_object");
+      matchBasis = selectPreferredMatchBasis(matchBasis, "shared_object");
     }
   }
 
-  if (evidence.length === 0 || confidence === undefined) {
+  if (evidence.length === 0 || matchBasis === undefined) {
     return [];
   }
 
   addTruncationLimitations(details, limitationSet);
-  if (confidence === "shared_object") {
+  if (matchBasis === "shared_object") {
     limitationSet.add("shared_object_match_does_not_prove_wallet_position");
   }
-  if (confidence === "event_type" || confidence === "object_type") {
+  if (matchBasis === "event_type" || matchBasis === "object_type") {
     limitationSet.add("no_direct_move_call_match");
   }
   limitationSet.add("transaction_activity_label_only");
@@ -225,7 +225,7 @@ function matchProtocol(
     displayName: rule.displayName,
     activityCategory: rule.activityCategory,
     primaryAction,
-    confidence,
+    matchBasis,
     evidence: uniqueEvidence(evidence),
     relatedProtocols: [],
     limitations: [...limitationSet].sort(compareAscii)
@@ -247,17 +247,17 @@ function addTruncationLimitations(
   }
 }
 
-function strongestConfidence(
-  current: ProtocolActivityConfidence | undefined,
-  candidate: ProtocolActivityConfidence
-): ProtocolActivityConfidence {
-  return current === undefined || confidenceRank(candidate) < confidenceRank(current)
+function selectPreferredMatchBasis(
+  current: ProtocolMatchBasis | undefined,
+  candidate: ProtocolMatchBasis
+): ProtocolMatchBasis {
+  return current === undefined || matchBasisPriority(candidate) < matchBasisPriority(current)
     ? candidate
     : current;
 }
 
-function confidenceRank(confidence: ProtocolActivityConfidence): number {
-  switch (confidence) {
+function matchBasisPriority(matchBasis: ProtocolMatchBasis): number {
+  switch (matchBasis) {
     case "direct_move_call":
       return 0;
     case "event_type":

@@ -11,6 +11,7 @@ export class ActivityStoreError extends Error {
 export type SqliteActivityStoreOptions = {
   databasePath: string;
   validateAdapterLifecycle: AdapterLifecycleValidator;
+  guardDatabase?: ((database: SqliteDatabase) => SqliteDatabase) | undefined;
 };
 
 export type SqliteDatabase = Database.Database;

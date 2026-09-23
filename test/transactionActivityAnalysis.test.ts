@@ -44,7 +44,7 @@ function protocolMatch(protocolId: string, displayName = protocolId) {
     displayName,
     activityCategory: "swap_or_order",
     primaryAction: "swap" as const,
-    confidence: "direct_move_call" as const,
+    matchBasis: "direct_move_call" as const,
     evidence: [
       {
         kind: "moveCall" as const,

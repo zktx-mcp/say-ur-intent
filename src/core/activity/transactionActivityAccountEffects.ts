@@ -98,7 +98,6 @@ export function requestedAccountEffectsForTransaction(
       role: sentByAccount ? "sender" : "affected_only",
       sentByAccount,
       balanceChangeEvidence: "account_balance_changes_unavailable",
-      accountBalanceChangeAbsenceProven: false,
       accountBalanceChangeInferencePolicy: "do_not_infer_from_transaction_context",
       balanceChangeCompleteness: "unavailable",
       balanceChanges: [],
@@ -117,7 +116,6 @@ export function requestedAccountEffectsForTransaction(
     }));
   const balanceChangeCompleteness = transaction.details.truncation.balanceChanges ? "truncated" : "complete";
   const balanceChangeEvidence = balanceChangeEvidenceFor(balanceChangeCompleteness, balanceChanges);
-  const accountBalanceChangeAbsenceProven = balanceChangeCompleteness === "complete" && balanceChanges.length === 0;
 
   return {
     account,
@@ -125,10 +123,8 @@ export function requestedAccountEffectsForTransaction(
     role: sentByAccount ? "sender" : "affected_only",
     sentByAccount,
     balanceChangeEvidence,
-    accountBalanceChangeAbsenceProven,
     accountBalanceChangeInferencePolicy: accountBalanceChangeInferencePolicyFor(
-      balanceChangeEvidence,
-      accountBalanceChangeAbsenceProven
+      balanceChangeEvidence
     ),
     balanceChangeCompleteness,
     balanceChanges,
@@ -138,14 +134,13 @@ export function requestedAccountEffectsForTransaction(
 }
 
 function accountBalanceChangeInferencePolicyFor(
-  evidence: SuiAccountBalanceChangeEvidence,
-  absenceProven: boolean
+  evidence: SuiAccountBalanceChangeEvidence
 ): SuiAccountBalanceChangeInferencePolicy {
   if (evidence === "account_balance_changes_returned") {
     return "use_returned_account_balance_changes";
   }
-  if (evidence === "no_account_balance_changes_returned" && absenceProven) {
-    return "account_absence_proven_by_complete_details";
+  if (evidence === "no_account_balance_changes_returned") {
+    return "no_account_balance_changes_in_complete_details";
   }
   return "do_not_infer_from_transaction_context";
 }

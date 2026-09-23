@@ -371,7 +371,6 @@ export type RequestedAccountTransactionFactOutput = Pick<
   accountRole: SuiTransactionAccountEffects["role"];
   sentByAccount: boolean;
   accountBalanceChangeEvidence: SuiTransactionAccountEffects["balanceChangeEvidence"];
-  accountBalanceChangeAbsenceProven: SuiTransactionAccountEffects["accountBalanceChangeAbsenceProven"];
   accountBalanceChangeInferencePolicy: SuiTransactionAccountEffects["accountBalanceChangeInferencePolicy"];
   accountBalanceChangeCompleteness: SuiTransactionAccountEffects["balanceChangeCompleteness"];
   accountBalanceChanges: SuiTransactionAccountEffects["balanceChanges"];
@@ -445,7 +444,6 @@ export function requestedAccountTransactionFactOutput(
     accountRole: transaction.accountEffects.role,
     sentByAccount: transaction.accountEffects.sentByAccount,
     accountBalanceChangeEvidence: transaction.accountEffects.balanceChangeEvidence,
-    accountBalanceChangeAbsenceProven: transaction.accountEffects.accountBalanceChangeAbsenceProven,
     accountBalanceChangeInferencePolicy: transaction.accountEffects.accountBalanceChangeInferencePolicy,
     accountBalanceChangeCompleteness: transaction.accountEffects.balanceChangeCompleteness,
     accountBalanceChanges: transaction.accountEffects.balanceChanges,

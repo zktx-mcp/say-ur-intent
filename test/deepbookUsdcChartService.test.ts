@@ -11,12 +11,12 @@ import {
 } from "../src/core/read/deepbookOfficialIndexerSource.js";
 import { DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE } from "../src/core/read/deepbookSourceOwners.js";
 import {
-  createDeepbookUsdcChartApi,
-  type DeepbookUsdcChartApiRouteResult,
+  createDeepbookUsdcChartService,
+  type DeepbookUsdcChartResult,
   type DeepbookUsdcChartPoolsResponse,
   DEEPBOOK_USDC_CHART_DEFAULT_LIMIT,
   DEEPBOOK_USDC_CHART_MAX_CANDLES
-} from "../src/review-server/deepbookUsdcChartApi.js";
+} from "../src/core/read/deepbookUsdcChartService.js";
 
 const fetchedAt = "2026-06-27T00:00:00.000Z";
 const baseUrl = "https://deepbook-indexer.mainnet.mystenlabs.com";
@@ -26,14 +26,12 @@ const nonUsdcPoolId = `0x${"3".repeat(64)}`;
 const suiCoinType = "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
 const deepCoinType = `0x${"4".repeat(64)}::deep::DEEP`;
 
-describe("DeepBook USDC chart API helper", () => {
+describe("DeepBook USDC chart service", () => {
   it("lists official USDC-quoted pools with source metadata and disclaimers", async () => {
-    const api = createDeepbookUsdcChartApi({ source: fakeSource(), now: () => new Date(fetchedAt) });
+    const api = createDeepbookUsdcChartService({ source: fakeSource(), now: () => new Date(fetchedAt) });
 
     const result = await api.getPools();
-
-    expect(result.httpStatus).toBe(200);
-    expect(result.body).toMatchObject({
+    expect(result).toMatchObject({
       status: "ok",
       poolCount: 2,
       responseSummary: {
@@ -51,10 +49,10 @@ describe("DeepBook USDC chart API helper", () => {
         url: `${baseUrl}/get_pools`
       }
     });
-    if (result.body.status !== "ok") {
+    if (result.status !== "ok") {
       throw new Error("expected pools ok");
     }
-    const body = result.body as Extract<DeepbookUsdcChartPoolsResponse, { status: "ok" }>;
+    const body = result as Extract<DeepbookUsdcChartPoolsResponse, { status: "ok" }>;
     expect(body.pools.map((pool) => pool.poolName)).toEqual(["SUI_USDC", "DEEP_USDC"]);
     expect(body.pools[0]).toMatchObject({
       poolName: "SUI_USDC",
@@ -70,9 +68,9 @@ describe("DeepBook USDC chart API helper", () => {
   });
 
   it("rejects query fields on the pool listing API", async () => {
-    const api = createDeepbookUsdcChartApi({ source: fakeSource() });
+    const api = createDeepbookUsdcChartService({ source: fakeSource() });
 
-    await expectStatus(api.getPools(new URLSearchParams("poolName=SUI_USDC")), 400, {
+    await expectStatus(api.getPools(new URLSearchParams("poolName=SUI_USDC")), {
       status: "unsupported_input",
       reason: "unsupported_query_field",
       field: "poolName"
@@ -81,14 +79,12 @@ describe("DeepBook USDC chart API helper", () => {
 
   it("returns latest candles with default interval and limit", async () => {
     const calls: DeepbookOfficialIndexerCandlesInput[] = [];
-    const api = createDeepbookUsdcChartApi({
+    const api = createDeepbookUsdcChartService({
       source: fakeSource({ onFetchCandles: (input) => calls.push(input) })
     });
 
     const result = await api.getCandles(new URLSearchParams("poolName=SUI_USDC"));
-
-    expect(result.httpStatus).toBe(200);
-    expect(result.body).toMatchObject({
+    expect(result).toMatchObject({
       status: "ok",
       query: {
         poolName: "SUI_USDC",
@@ -112,15 +108,14 @@ describe("DeepBook USDC chart API helper", () => {
 
   it("passes a timestamp window through to the official source", async () => {
     const calls: DeepbookOfficialIndexerCandlesInput[] = [];
-    const api = createDeepbookUsdcChartApi({
+    const api = createDeepbookUsdcChartService({
       source: fakeSource({ onFetchCandles: (input) => calls.push(input) })
     });
 
     const result = await api.getCandles(new URLSearchParams(
       "poolName=SUI_USDC&interval=1h&startTimeMs=1782541800000&endTimeMs=1782545400000&limit=3"
     ));
-
-    expect(result.httpStatus).toBe(200);
+    expect(result.status).toBe("ok");
     expect(calls).toEqual([
       {
         poolName: "SUI_USDC",
@@ -133,38 +128,37 @@ describe("DeepBook USDC chart API helper", () => {
   });
 
   it("rejects unsupported query fields intervals timestamp windows and over-limit requests", async () => {
-    const api = createDeepbookUsdcChartApi({ source: fakeSource() });
+    const api = createDeepbookUsdcChartService({ source: fakeSource() });
 
-    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&shortcut=Latest%20500")), 400, {
+    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&shortcut=Latest%20500")), {
       status: "unsupported_input",
       reason: "unsupported_query_field",
       field: "shortcut"
     });
-    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&poolName=DEEP_USDC")), 400, {
+    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&poolName=DEEP_USDC")), {
       status: "unsupported_input",
       reason: "duplicate_query_field",
       field: "poolName"
     });
-    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&interval=not-an-interval")), 400, {
+    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&interval=not-an-interval")), {
       status: "unsupported_input",
       reason: "unsupported_interval",
       field: "interval"
     });
     await expectStatus(
       api.getCandles(new URLSearchParams("poolName=SUI_USDC&startTimeMs=200&endTimeMs=100")),
-      400,
       {
         status: "unsupported_input",
         reason: "invalid_timestamp_window"
       }
     );
-    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&limit=10001")), 400, {
+    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&limit=10001")), {
       status: "over_limit",
       reason: "limit_exceeds_chart_cap",
       maxCandles: DEEPBOOK_USDC_CHART_MAX_CANDLES,
       requestedLimit: 10_001
     });
-    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&limit=0")), 400, {
+    await expectStatus(api.getCandles(new URLSearchParams("poolName=SUI_USDC&limit=0")), {
       status: "unsupported_input",
       reason: "invalid_limit",
       field: "limit"
@@ -173,14 +167,12 @@ describe("DeepBook USDC chart API helper", () => {
 
   it("returns unsupported pool responses without fetching candles", async () => {
     let candleFetches = 0;
-    const api = createDeepbookUsdcChartApi({
+    const api = createDeepbookUsdcChartService({
       source: fakeSource({ onFetchCandles: () => { candleFetches += 1; } })
     });
 
     const result = await api.getCandles(new URLSearchParams("poolName=NS_SUI"));
-
-    expect(result.httpStatus).toBe(400);
-    expect(result.body).toMatchObject({
+    expect(result).toMatchObject({
       status: "unsupported_pool",
       reason: "pool_not_in_official_usdc_pools",
       availablePoolNames: ["SUI_USDC", "DEEP_USDC"]
@@ -189,12 +181,10 @@ describe("DeepBook USDC chart API helper", () => {
   });
 
   it("returns empty-result responses without synthesizing candles", async () => {
-    const api = createDeepbookUsdcChartApi({ source: fakeSource({ candles: [] }) });
+    const api = createDeepbookUsdcChartService({ source: fakeSource({ candles: [] }) });
 
     const result = await api.getCandles(new URLSearchParams("poolName=SUI_USDC"));
-
-    expect(result.httpStatus).toBe(200);
-    expect(result.body).toMatchObject({
+    expect(result).toMatchObject({
       status: "empty_result",
       candleCount: 0,
       candles: []
@@ -202,22 +192,22 @@ describe("DeepBook USDC chart API helper", () => {
   });
 
   it("maps source errors to visible source-unavailable responses", async () => {
-    const poolFailure = createDeepbookUsdcChartApi({
+    const poolFailure = createDeepbookUsdcChartService({
       source: fakeSource({
         fetchPoolsError: new DeepbookOfficialIndexerSourceError("invalid_payload", "bad pools")
       })
     });
-    await expectStatus(await poolFailure.getPools(), 502, {
+    await expectStatus(await poolFailure.getPools(), {
       status: "source_unavailable",
       reason: "official_indexer_invalid_payload"
     });
 
-    const candleFailure = createDeepbookUsdcChartApi({
+    const candleFailure = createDeepbookUsdcChartService({
       source: fakeSource({
         fetchCandlesError: new DeepbookOfficialIndexerSourceError("source_timeout", "slow candles")
       })
     });
-    await expectStatus(candleFailure.getCandles(new URLSearchParams("poolName=SUI_USDC")), 502, {
+    await expectStatus(candleFailure.getCandles(new URLSearchParams("poolName=SUI_USDC")), {
       status: "source_unavailable",
       reason: "source_timeout",
       query: {
@@ -232,7 +222,7 @@ describe("DeepBook USDC chart API helper", () => {
     let current = new Date("2026-06-27T00:00:00.000Z");
     let poolFetches = 0;
     let candleFetches = 0;
-    const api = createDeepbookUsdcChartApi({
+    const api = createDeepbookUsdcChartService({
       source: fakeSource({
         onFetchPools: () => { poolFetches += 1; },
         onFetchCandles: () => { candleFetches += 1; }
@@ -257,13 +247,11 @@ describe("DeepBook USDC chart API helper", () => {
 });
 
 async function expectStatus(
-  resultOrPromise: Promise<DeepbookUsdcChartApiRouteResult> | DeepbookUsdcChartApiRouteResult,
-  httpStatus: number,
+  resultOrPromise: Promise<DeepbookUsdcChartResult> | DeepbookUsdcChartResult,
   body: Record<string, unknown>
 ) {
   const result = await resultOrPromise;
-  expect(result.httpStatus).toBe(httpStatus);
-  expect(result.body).toMatchObject(body);
+  expect(result).toMatchObject(body);
 }
 
 function fakeSource(options: {

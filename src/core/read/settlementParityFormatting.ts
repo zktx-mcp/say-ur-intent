@@ -43,25 +43,25 @@ export function settlementAssetGroupParityStatistics(
   samples: Extract<SettlementAssetGroupParityAsset, { status: "reference_asset" | "measured" }>[],
   unavailableAssetCount: number
 ): SettlementAssetGroupParitySummary["statistics"] {
-  const sorted = [...samples].sort((left, right) => left.parityPrice - right.parityPrice);
+  const sorted = [...samples].sort((left, right) => left.priceInReferenceAsset - right.priceInReferenceAsset);
   const min = sorted[0]!;
   const max = sorted[sorted.length - 1]!;
   const middle = Math.floor(sorted.length / 2);
   const median =
     sorted.length % 2 === 1
-      ? sorted[middle]!.parityPrice
-      : (sorted[middle - 1]!.parityPrice + sorted[middle]!.parityPrice) / 2;
-  const mean = samples.reduce((sum, sample) => sum + sample.parityPrice, 0) / samples.length;
+      ? sorted[middle]!.priceInReferenceAsset
+      : (sorted[middle - 1]!.priceInReferenceAsset + sorted[middle]!.priceInReferenceAsset) / 2;
+  const mean = samples.reduce((sum, sample) => sum + sample.priceInReferenceAsset, 0) / samples.length;
   return {
     status: "available",
     sampleCount: samples.length,
     unavailableAssetCount,
     parityDirection: "reference_asset_per_group_asset",
     calculation: "computed_from_available_direct_deepbook_mid_price_snapshots",
-    min: { symbol: min.symbol, parityPrice: roundDerivedParityPrice(min.parityPrice) },
-    max: { symbol: max.symbol, parityPrice: roundDerivedParityPrice(max.parityPrice) },
-    mean: { parityPrice: roundDerivedParityPrice(mean) },
-    median: { parityPrice: roundDerivedParityPrice(median) }
+    min: { symbol: min.symbol, priceInReferenceAsset: roundPriceInReferenceAsset(min.priceInReferenceAsset) },
+    max: { symbol: max.symbol, priceInReferenceAsset: roundPriceInReferenceAsset(max.priceInReferenceAsset) },
+    mean: { priceInReferenceAsset: roundPriceInReferenceAsset(mean) },
+    median: { priceInReferenceAsset: roundPriceInReferenceAsset(median) }
   };
 }
 
@@ -95,6 +95,6 @@ export function settlementAssetGroupParityResponseSummary(input: {
   };
 }
 
-export function roundDerivedParityPrice(price: number): number {
+export function roundPriceInReferenceAsset(price: number): number {
   return Number(price.toFixed(9));
 }

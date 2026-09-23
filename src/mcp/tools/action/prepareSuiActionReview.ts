@@ -21,7 +21,7 @@ import { activityStoreToolError, sessionStoreToolError } from "../../toolErrors.
 import { TOOL_NAMES } from "../../toolNames.js";
 import { userAnswerUseSchema } from "../read/commonSchemas.js";
 
-export function registerActionTools(server: McpServer, deps: McpServerDeps): void {
+export function registerActionTools(server: McpServer, deps: Pick<McpServerDeps, "sessions" | "activityStore" | "reviewBaseUrl" | "logger">): void {
   server.registerTool(
     TOOL_NAMES.actionPrepareSuiActionReview,
     {

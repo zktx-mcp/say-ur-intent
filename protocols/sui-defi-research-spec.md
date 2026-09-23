@@ -389,7 +389,7 @@ Protocol labels derived from transaction activity must use the versioned
 `protocols/sui-defi-activity-classifier-spec.md` and
 `src/core/activity/transactionActivityClassifier.ts`. Do not duplicate that
 TypeScript shape here; it already defines the current `classifierVersion`,
-`primaryAction`, `confidence`, package evidence fields such as `packageSource`
+`primaryAction`, `matchBasis`, package evidence fields such as `packageSource`
 and `mvrName`, `relatedProtocols`, and `limitations`.
 
 Rules:

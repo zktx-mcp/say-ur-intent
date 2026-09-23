@@ -1,3 +1,5 @@
+import { registerReadCards } from "../mcp-ui/tools.js";
+import type { CardStore } from "../core/session/cardSessionStore.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { SuiReadService } from "../core/read/readService.js";
@@ -18,6 +20,7 @@ import { registerSettingsTools } from "./tools/settings/index.js";
 import { registerSessionTools } from "./tools/session/index.js";
 
 export type McpServerDeps = {
+  cards?: { store: CardStore } | undefined;
   promptSurfaces?: readonly AdapterPromptSurface[];
   sessions: SessionStore;
   activityStore: ActivityStore;
@@ -42,6 +45,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   });
 
   registerMcpResources(server);
+  registerReadCards(server, deps);
   registerMcpPrompts(server, deps.promptSurfaces ?? []);
   registerAccountTools(server, deps);
   registerReadTools(server, deps);

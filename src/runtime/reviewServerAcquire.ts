@@ -1,16 +1,7 @@
 import type { Logger } from "./logger.js";
 
-// The review server is a single-origin singleton per machine: the loopback origin
-// (scheme://127.0.0.1:port) stays constant so the browser wallet autoconnect can
-// silently restore the signer. All live session state lives in the shared local
-// database, so whichever single process owns the fixed port serves every client.
-// When the port is already held by a healthy peer of our own review server, a new
-// instance therefore DEFERS (runs no local HTTP server, relying on the peer) instead
-// of taking the port over — no process is ever signalled. A deferring instance
-// watches the port and takes the origin over only if the owner exits (failover). A
-// port held by anything that is not a separate instance of our review server is never
-// touched, and is never silently reassigned.
-
+// One stdio process owns the shared loopback server. Peers authenticate the
+// listener and use its APIs; only a successful bind permits opening SQLite.
 export type StartedReviewServerLike = {
   host: "127.0.0.1";
   port: number;
@@ -40,6 +31,7 @@ export type StartOrDeferReviewServerDeps = {
   currentPid: number;
   serviceName: string;
   logger: Pick<Logger, "info" | "warn">;
+  onFailure?: ((error: Error) => void) | undefined;
   // How often a deferring instance retries binding to detect that the owner exited.
   reacquireIntervalMs?: number;
 };
@@ -94,7 +86,7 @@ export async function startOrDeferReviewServer<T extends StartedReviewServerLike
   if (!holder || holder.service !== deps.serviceName || holder.pid === deps.currentPid) {
     throw new Error(
       `Review server port ${port} is already in use by a process that is not a separate ${deps.serviceName} review server. ` +
-        `Set SAY_UR_INTENT_REVIEW_PORT to a free port. The port is not reassigned automatically so the wallet autoconnect origin stays stable.`
+        `Use the same current runtime and data directory for every client, or choose a different SAY_UR_INTENT_REVIEW_PORT. The listener is not replaced automatically.`
     );
   }
 
@@ -125,7 +117,9 @@ export async function startOrDeferReviewServer<T extends StartedReviewServerLike
       deps.logger.info("acquired review port after the previous owner exited", { port });
     }
   })();
-  watch.catch(() => undefined);
+  watch.catch((error: unknown) => {
+    if (!stopped) deps.onFailure?.(error instanceof Error ? error : new Error("Shared server acquisition failed."));
+  });
 
   return {
     deferred: true,
@@ -138,45 +132,4 @@ export async function startOrDeferReviewServer<T extends StartedReviewServerLike
       }
     }
   };
-}
-
-/**
- * Ask whatever is listening on the loopback review port to identify itself. Only our
- * own review server answers `/__identity`; any other process either returns something
- * else or does not answer, and we report it as "not ours" so the caller never defers
- * to it.
- */
-export async function probeReviewServerIdentity(
-  port: number,
-  host = "127.0.0.1",
-  timeoutMs = 1000
-): Promise<ReviewServerIdentity | null> {
-  try {
-    const response = await fetch(`http://${host}:${port}/__identity`, {
-      method: "GET",
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-    if (!response.ok) {
-      return null;
-    }
-    const body: unknown = await response.json();
-    if (
-      typeof body === "object" &&
-      body !== null &&
-      typeof (body as { service?: unknown }).service === "string" &&
-      typeof (body as { role?: unknown }).role === "string" &&
-      typeof (body as { pid?: unknown }).pid === "number"
-    ) {
-      const typed = body as { service: string; role: string; pid: number; version?: unknown };
-      return {
-        service: typed.service,
-        role: typed.role,
-        pid: typed.pid,
-        ...(typeof typed.version === "string" ? { version: typed.version } : {})
-      };
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }

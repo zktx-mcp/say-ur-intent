@@ -322,7 +322,7 @@ describe("shared SQLite state hardening baseline", () => {
     });
   });
 
-  it("migrates existing live review sessions to the hardened write contract", () => {
+  it("refuses legacy live review sessions without rewriting them", () => {
     const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-live-session-migration-"));
     const dbPath = join(dir, "say-ur-intent.sqlite");
     const db = new Database(dbPath);
@@ -371,22 +371,11 @@ describe("shared SQLite state hardening baseline", () => {
         .run(session.id, JSON.stringify({ transactionMaterial: { materialId: "material_1" } }));
       db.pragma("user_version = 5");
 
-      initializeDatabase(db);
-
-      const migrated = db.prepare(`SELECT revision, write_contract_version FROM live_review_sessions WHERE id = ?`)
-        .get(session.id) as { revision: number; write_contract_version: string };
-      expect(migrated).toEqual({
-        revision: 0,
-        write_contract_version: "shared_sqlite_review_session_v1"
-      });
-      expect(
-        (db.prepare(`SELECT COUNT(*) AS count FROM live_private_review_artifacts WHERE review_session_id = ?`)
-          .get(session.id) as { count: number }).count
-      ).toBe(1);
-      expect(db.pragma("user_version", { simple: true })).toBe(6);
-      expect(() => {
-        db.prepare(`UPDATE live_review_sessions SET status = 'refresh_required' WHERE id = ?`).run(session.id);
-      }).toThrow("hardened write contract");
+      expect(() => initializeDatabase(db)).toThrow("format does not match");
+      expect(db.pragma("user_version", { simple: true })).toBe(5);
+      expect(db.prepare("SELECT plans_json FROM live_review_sessions WHERE id = ?").get(session.id))
+        .toEqual({ plans_json: JSON.stringify(session.plans) });
+      expect((db.prepare("SELECT COUNT(*) AS count FROM live_private_review_artifacts").get() as { count: number }).count).toBe(1);
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });

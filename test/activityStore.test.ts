@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -17,10 +17,6 @@ import {
   resolveActivityDatabasePath,
   SqliteActivityStore
 } from "../src/core/activity/sqliteActivityStore.js";
-import {
-  configureDatabase,
-  initializeDatabase
-} from "../src/core/activity/sqliteActivityStoreSchema.js";
 import { DB_USER_VERSION } from "../src/core/activity/schemaVersion.js";
 import { SuiEndpointError } from "../src/core/suiEndpoint.js";
 import { InMemorySessionStore } from "../src/core/session/sessionStore.js";
@@ -134,7 +130,7 @@ function externalActivityScansCreateSql(db: Database.Database): string {
 
 function createLegacyExternalActivityTables(
   db: Database.Database,
-  options: { userVersion: 2 | 3; invalidScanReference?: boolean } = { userVersion: 3 }
+  options: { userVersion: number; invalidScanReference?: boolean } = { userVersion: 3 }
 ): void {
   db.exec(`
     PRAGMA foreign_keys=OFF;
@@ -444,150 +440,22 @@ describe("SqliteActivityStore", () => {
       db.close();
     }
     try {
-      expect(() => newTestSqliteActivityStore(dbPath)).toThrow("newer than this runtime supports");
+      expect(() => newTestSqliteActivityStore(dbPath)).toThrow("format does not match");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("migrates version 2 external activity tables to include transaction detail JSON", () => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-activity-v2-migration-test-"));
-    const dbPath = join(dir, "say-ur-intent.sqlite");
-    const db = new Database(dbPath);
+  it.each([0, 2, 3, 6, 7, DB_USER_VERSION, 999])("rejects an incompatible existing format %i without changing its bytes", (version) => {
+    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-format-refusal-"));
+    const path = join(dir, "say-ur-intent.sqlite");
+    const db = new Database(path);
+    try { createLegacyExternalActivityTables(db, { userVersion: version }); } finally { db.close(); }
+    const before = readFileSync(path);
     try {
-      db.exec(`
-        CREATE TABLE external_activity_transactions (
-          account_id INTEGER NOT NULL,
-          digest TEXT NOT NULL,
-          relationship TEXT NOT NULL,
-          checkpoint TEXT,
-          timestamp TEXT,
-          status TEXT NOT NULL,
-          known_sender_account_id INTEGER,
-          first_scan_id TEXT NOT NULL,
-          last_scan_id TEXT NOT NULL,
-          first_fetched_at TEXT NOT NULL,
-          last_fetched_at TEXT NOT NULL,
-          PRIMARY KEY (account_id, digest, relationship)
-        );
-        PRAGMA user_version = 2;
-      `);
-    } finally {
-      db.close();
-    }
-    try {
-      const store = newTestSqliteActivityStore(dbPath);
-      store.close();
-      const migrated = new Database(dbPath);
-      try {
-        const columns = migrated.prepare("PRAGMA table_info(external_activity_transactions)").all() as Array<{ name: string }>;
-        expect(columns.map((column) => column.name)).toContain("detail_json");
-        expect(externalActivityScansCreateSql(migrated)).toContain("'function_scan'");
-        expect(migrated.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: DB_USER_VERSION });
-      } finally {
-        migrated.close();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("migrates legacy external activity scan kind checks without breaking transaction references", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-activity-v3-scan-kind-migration-test-"));
-    const dbPath = join(dir, "say-ur-intent.sqlite");
-    const db = new Database(dbPath);
-    try {
-      createLegacyExternalActivityTables(db, { userVersion: 3 });
-    } finally {
-      db.close();
-    }
-
-    let store: SqliteActivityStore | undefined;
-    try {
-      store = newTestSqliteActivityStore(dbPath);
-      await store.recordExternalActivityScan({
-        scanId: "scan_function",
-        kind: "function_scan",
-        account: walletAccount,
-        relationship: "sent",
-        limit: 5,
-        endpointHost: "graphql.mainnet.sui.io",
-        chainIdentifier: "mainnet-chain",
-        fetchedAt: "2026-05-11T00:01:00.000Z",
-        hasMore: false,
-        windowComplete: true,
-        transactions: []
-      });
-      store.close();
-      store = undefined;
-
-      const migrated = new Database(dbPath);
-      try {
-        expect(migrated.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: DB_USER_VERSION });
-        expect(migrated.prepare("PRAGMA foreign_keys").get()).toMatchObject({ foreign_keys: 1 });
-        expect(externalActivityScansCreateSql(migrated)).toContain("'function_scan'");
-        expect(migrated.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-        expect(
-          migrated.prepare("SELECT kind FROM external_activity_scans WHERE scan_id = ?").get("scan_legacy")
-        ).toEqual({ kind: "account_scan" });
-        expect(
-          migrated.prepare("SELECT kind FROM external_activity_scans WHERE scan_id = ?").get("scan_function")
-        ).toEqual({ kind: "function_scan" });
-        expect(
-          migrated.prepare("SELECT first_scan_id, last_scan_id FROM external_activity_transactions WHERE digest = ?")
-            .get("5".repeat(44))
-        ).toEqual({ first_scan_id: "scan_legacy", last_scan_id: "scan_legacy" });
-      } finally {
-        migrated.close();
-      }
-    } finally {
-      store?.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("runs v2 to current external activity migrations in order", () => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-activity-v2-scan-kind-migration-test-"));
-    const dbPath = join(dir, "say-ur-intent.sqlite");
-    const db = new Database(dbPath);
-    try {
-      createLegacyExternalActivityTables(db, { userVersion: 2 });
-    } finally {
-      db.close();
-    }
-
-    try {
-      const store = newTestSqliteActivityStore(dbPath);
-      store.close();
-      const migrated = new Database(dbPath);
-      try {
-        const columns = migrated.prepare("PRAGMA table_info(external_activity_transactions)").all() as Array<{ name: string }>;
-        expect(columns.map((column) => column.name)).toContain("detail_json");
-        expect(externalActivityScansCreateSql(migrated)).toContain("'function_scan'");
-        expect(migrated.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: DB_USER_VERSION });
-        expect(migrated.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-      } finally {
-        migrated.close();
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("rolls back scan-kind migration failures before updating the user version", () => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-activity-v3-fk-failure-test-"));
-    const dbPath = join(dir, "say-ur-intent.sqlite");
-    const db = new Database(dbPath);
-    try {
-      createLegacyExternalActivityTables(db, { userVersion: 3, invalidScanReference: true });
-      configureDatabase(db);
-      expect(() => initializeDatabase(db)).toThrow("foreign key check");
-      expect(db.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 3 });
-      expect(externalActivityScansCreateSql(db)).not.toContain("'function_scan'");
-    } finally {
-      db.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
+      expect(() => newTestSqliteActivityStore(path)).toThrow("format does not match");
+      expect(readFileSync(path)).toEqual(before);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it("stores local settings defaults without overwriting custom values", async () => {
@@ -1595,7 +1463,7 @@ describe("SqliteActivityStore", () => {
     });
   });
 
-  it("imports previous local data backups by defaulting new GraphQL activity fields", async () => {
+  it("rejects old or incomplete backups without filling fields or replacing current settings", async () => {
     await withTempDb(async (source) => {
       await source.createPreferencesRepository().ensureDefaultLocalSettings({
         suiGrpcUrl: "https://fullnode.mainnet.sui.io:443",
@@ -1620,17 +1488,14 @@ describe("SqliteActivityStore", () => {
           suiGraphqlUrl: "https://example.sui.provider/graphql"
         });
         const targetLocalData = target.createLocalDataService(localDataOptions());
-        await expect(targetLocalData.previewImportLocalData(legacyBackup)).resolves.toMatchObject({
-          incomingCounts: {
-            externalActivityScans: 0,
-            externalActivityTransactions: 0,
-            localSettings: 2
-          },
-          defaultsInjected: ["suiGraphqlUrl"]
-        });
-        await targetLocalData.importLocalDataReplace(legacyBackup);
+        const oldFormat: Record<string, unknown> = { ...exported };
+        delete oldFormat.schemaVersion;
+        for (const backup of [legacyBackup, oldFormat]) {
+          await expect(targetLocalData.previewImportLocalData(backup)).rejects.toMatchObject({ kind: "input_invalid" });
+          await expect(targetLocalData.importLocalDataReplace(backup)).rejects.toMatchObject({ kind: "input_invalid" });
+        }
         await expect(target.createPreferencesRepository().getSuiGraphqlUrl()).resolves.toMatchObject({
-          value: "https://graphql.mainnet.sui.io/graphql"
+          value: "https://example.sui.provider/graphql"
         });
       });
     });

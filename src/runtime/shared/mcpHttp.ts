@@ -1,0 +1,67 @@
+import { CARD_TOOLS } from "../../mcp-ui/contracts.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { randomUUID } from "node:crypto";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isJSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { MAX_JSON_BODY_BYTES, sendJson } from "../../review-server/http.js";
+
+export function createInternalMcpHandler(createServer: () => McpServer) {
+  const sessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
+  const connections = new Set<McpServer>();
+  return {
+    async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+      // This product has no unsolicited server requests. POST returns JSON, and
+      // clients do not create a reconnecting SSE channel or replay requests.
+      if (request.method === "GET") { response.setHeader("Allow", "POST, DELETE"); sendJson(response, 405, { error: "method_not_allowed" }); return; }
+      const sessionId = request.headers["mcp-session-id"];
+      if (sessionId !== undefined && typeof sessionId !== "string") { sendJson(response, 400, { error: "invalid_session" }); return; }
+      if (sessionId !== undefined) {
+        const session = sessions.get(sessionId);
+        if (!session) { sendJson(response, 404, { error: "mcp_session_unavailable" }); return; }
+        await session.transport.handleRequest(request, response);
+        return;
+      }
+      if (request.method !== "POST") { sendJson(response, 400, { error: "mcp_initialize_required" }); return; }
+      const server = createServer();
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: randomUUID,
+        enableJsonResponse: true,
+        onsessioninitialized: (id) => { sessions.set(id, { server, transport }); },
+        onsessionclosed: (id) => { sessions.delete(id); connections.delete(server); }
+      });
+      connections.add(server);
+      try {
+        const connection: Transport = {
+          start: () => transport.start(),
+          send: (message, options) => transport.send(message, options),
+          close: () => transport.close()
+        };
+        transport.onmessage = (message, extra) => {
+          // Preserve ordinary stdio MCP input contracts. The existing HTTP/UI
+          // body limit applies to card calls, including their JSON-RPC envelope.
+          if (isJSONRPCRequest(message) && message.method === "tools/call" &&
+              Object.values(CARD_TOOLS).some((name) => name === message.params?.name) &&
+              Buffer.byteLength(JSON.stringify(message)) > MAX_JSON_BODY_BYTES) {
+            void transport.send({ jsonrpc: "2.0", id: message.id, error: { code: -32600, message: "Card request exceeds the JSON body limit." } });
+            return;
+          }
+          connection.onmessage?.(message, extra);
+        };
+        transport.onerror = (error) => connection.onerror?.(error);
+        transport.onclose = () => connection.onclose?.();
+        await server.connect(connection);
+        await transport.handleRequest(request, response);
+        if (transport.sessionId === undefined) { connections.delete(server); await server.close(); }
+      } catch (error) {
+        if (transport.sessionId !== undefined) sessions.delete(transport.sessionId);
+        connections.delete(server); await server.close(); throw error;
+      }
+    },
+    async close(): Promise<void> {
+      await Promise.all([...connections].map((server) => server.close()));
+      connections.clear(); sessions.clear();
+    }
+  };
+}

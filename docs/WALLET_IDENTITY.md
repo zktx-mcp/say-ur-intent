@@ -145,9 +145,9 @@ The wallet page must say address capture only. It must not show transaction revi
 
 The wallet identity capture UI is hosted on the Connect page served at
 `/connect/:id`. The page binds the connected address as the active account and
-does nothing else. The public Account page reads wallet asset balances for any
-address from public on-chain data through `GET /api/account/assets?address=`
-(no token). The local review funnel is private local data and is available only
+does nothing else. The internal Account card reads wallet asset balances for any
+address from public on-chain data through `ui.open_account`
+(no wallet connection required). The local review funnel is private local data and is available only
 through the MCP read tools (`read.summarize_review_funnel`,
 `read.list_review_activity`); it has no browser page. State-changing wallet APIs
 are unchanged:

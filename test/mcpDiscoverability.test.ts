@@ -34,7 +34,7 @@ import type { ChainReceiptVerifier } from "../src/core/session/chainReceiptFinal
 import { MCP_RESOURCES } from "../src/mcp/resources.js";
 import { createMcpServer } from "../src/mcp/server.js";
 import {
-  answerSourceStatus,
+  toolAvailability,
   EVIDENCE_POLICY,
   IMPLEMENTED_TOOLS,
   PACKAGE_NAME,
@@ -464,7 +464,7 @@ describe("MCP discoverability", () => {
       );
       expect(client.getInstructions()).toContain("server re-reads Sui mainnet and records chain receipt evidence");
       expect(client.getInstructions()).toContain("Chain receipts are not execution guarantees");
-      expect(client.getInstructions()).toContain("answerSourceStatus.canUseThisResponseForUserAnswer");
+      expect(client.getInstructions()).toContain("toolAvailability.requiredToolsAvailable");
       expect(client.getInstructions()).toContain("userAnswerUse.answerFields");
       expect(client.getInstructions()).toContain("active account context");
       expect(client.getInstructions()).toContain("sayurintent://docs/agent-behavior");
@@ -474,14 +474,14 @@ describe("MCP discoverability", () => {
   });
 
   it("marks response-local answer source status unusable when a required tool is missing", () => {
-    expect(answerSourceStatus([TOOL_NAMES.readGetServerStatus, "missing.tool"])).toMatchObject({
+    expect(toolAvailability([TOOL_NAMES.readGetServerStatus, "missing.tool"])).toMatchObject({
       requiredTools: expect.arrayContaining([
         { name: TOOL_NAMES.readGetServerStatus, available: true },
         { name: "missing.tool", available: false }
       ]),
       missingRequiredTools: ["missing.tool"],
-      canUseThisResponseForUserAnswer: false,
-      cannotUseReason: "required_tool_missing_from_current_server_build"
+      requiredToolsAvailable: false,
+      unavailableReason: "required_tool_missing_from_current_server_build"
     });
   });
 
@@ -498,7 +498,10 @@ describe("MCP discoverability", () => {
         "sayurintent://docs/readme",
         "sayurintent://docs/wallet-identity",
         "sayurintent://protocols/deepbook-margin",
-        "sayurintent://protocols/deepbook-v3"
+        "sayurintent://protocols/deepbook-v3",
+        "ui://say-ur-intent/account.html",
+        "ui://say-ur-intent/chart.html",
+        "ui://say-ur-intent/receipt.html"
       ]);
 
       for (const expectedResource of MCP_RESOURCES) {
@@ -1082,10 +1085,10 @@ describe("MCP discoverability", () => {
             canAnswer: expect.arrayContaining(["settlement_asset_group_internal_parity_statistics"]),
             cannotAnswer: expect.arrayContaining(["settlement_token_selection", "payment_coverage_or_shortfall"]),
             answerFields: expect.arrayContaining(["responseSummary"]),
-            preconditionFields: expect.arrayContaining(["answerSourceStatus"]),
-            diagnosticOnlyFields: expect.not.arrayContaining(["answerSourceStatus"])
+            preconditionFields: expect.arrayContaining(["toolAvailability"]),
+            diagnosticOnlyFields: expect.not.arrayContaining(["toolAvailability"])
           },
-          answerSourceStatus: {
+          toolAvailability: {
             statusTool: TOOL_NAMES.readGetServerStatus,
             packageName: PACKAGE_NAME,
             version: SERVER_VERSION,
@@ -1098,8 +1101,8 @@ describe("MCP discoverability", () => {
               { name: TOOL_NAMES.readSummarizeSettlementAssetGroupParity, available: true }
             ]),
             missingRequiredTools: [],
-            canUseThisResponseForUserAnswer: true,
-            cannotUseReason: null
+            requiredToolsAvailable: true,
+            unavailableReason: null
           },
           quantitySemantics: {
             kind: "settlement_asset_group_parity_snapshot",
@@ -1111,7 +1114,7 @@ describe("MCP discoverability", () => {
             expect.objectContaining({
               symbol: "USDC",
               status: "reference_asset",
-              parityPrice: 1
+              priceInReferenceAsset: 1
             })
           ]),
           statistics: {
@@ -1124,10 +1127,10 @@ describe("MCP discoverability", () => {
             questionKind: "settlement_asset_group_parity",
             conclusionKind: "parity_statistics_available",
             referenceAssetRole: "measurement_reference_not_settlement_choice",
-            min: expect.objectContaining({ parityPrice: expect.any(Number) }),
-            max: expect.objectContaining({ parityPrice: expect.any(Number) }),
-            mean: expect.objectContaining({ parityPrice: expect.any(Number) }),
-            median: expect.objectContaining({ parityPrice: expect.any(Number) })
+            min: expect.objectContaining({ priceInReferenceAsset: expect.any(Number) }),
+            max: expect.objectContaining({ priceInReferenceAsset: expect.any(Number) }),
+            mean: expect.objectContaining({ priceInReferenceAsset: expect.any(Number) }),
+            median: expect.objectContaining({ priceInReferenceAsset: expect.any(Number) })
           },
           unsupportedClaims: expect.arrayContaining(["settlement_token_selection", "fiat_usd_cash_out"])
         }
@@ -1192,10 +1195,10 @@ describe("MCP discoverability", () => {
               "responseSummary.doNotUseForConclusion",
               "responseSummary.excludedFromConclusion"
             ]),
-            preconditionFields: expect.arrayContaining(["answerSourceStatus"]),
-            diagnosticOnlyFields: expect.not.arrayContaining(["answerSourceStatus"])
+            preconditionFields: expect.arrayContaining(["toolAvailability"]),
+            diagnosticOnlyFields: expect.not.arrayContaining(["toolAvailability"])
           },
-          answerSourceStatus: {
+          toolAvailability: {
             statusTool: TOOL_NAMES.readGetServerStatus,
             packageName: PACKAGE_NAME,
             version: SERVER_VERSION,
@@ -1208,8 +1211,8 @@ describe("MCP discoverability", () => {
               { name: TOOL_NAMES.readPreviewIntentEvidence, available: true }
             ]),
             missingRequiredTools: [],
-            canUseThisResponseForUserAnswer: true,
-            cannotUseReason: null
+            requiredToolsAvailable: true,
+            unavailableReason: null
           },
           quantitySemantics: {
             kind: "sui_intent_evidence_report",
@@ -1641,7 +1644,7 @@ describe("MCP discoverability", () => {
             },
             priceConvention: "USDC_PER_BASE"
           },
-          coverageStatus: "complete",
+          candleAvailability: "available",
           barCount: 2,
           source: {
             kind: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.kind,
@@ -2129,7 +2132,6 @@ describe("MCP discoverability", () => {
               role: "sender",
               sentByAccount: true,
               balanceChangeEvidence: "account_balance_changes_returned",
-              accountBalanceChangeAbsenceProven: false,
               accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
               balanceChangeCompleteness: "complete",
               balanceChanges: [
@@ -2156,7 +2158,7 @@ describe("MCP discoverability", () => {
                 expect.objectContaining({
                   protocolId: "cetus-clmm",
                   primaryAction: "swap",
-                  confidence: "direct_move_call"
+                  matchBasis: "direct_move_call"
                 })
               ]
             },
@@ -2236,7 +2238,6 @@ describe("MCP discoverability", () => {
               accountRole: "sender",
               sentByAccount: true,
               accountBalanceChangeEvidence: "account_balance_changes_returned",
-              accountBalanceChangeAbsenceProven: false,
               accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
               accountBalanceChangeCompleteness: "complete",
               accountBalanceChanges: [
@@ -2262,7 +2263,6 @@ describe("MCP discoverability", () => {
                 role: "sender",
                 sentByAccount: true,
                 balanceChangeEvidence: "account_balance_changes_returned",
-                accountBalanceChangeAbsenceProven: false,
                 accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
                 balanceChangeCompleteness: "complete",
                 balanceChanges: [
@@ -2300,7 +2300,6 @@ describe("MCP discoverability", () => {
                 role: "sender",
                 sentByAccount: true,
                 balanceChangeEvidence: "account_balance_changes_returned",
-                accountBalanceChangeAbsenceProven: false,
                 accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
                 balanceChangeCompleteness: "complete",
                 balanceChanges: [
@@ -2322,7 +2321,7 @@ describe("MCP discoverability", () => {
                   expect.objectContaining({
                     protocolId: "cetus-clmm",
                     primaryAction: "swap",
-                    confidence: "direct_move_call"
+                    matchBasis: "direct_move_call"
                   })
                 ]
               })
@@ -2383,7 +2382,6 @@ describe("MCP discoverability", () => {
             expect.objectContaining({
               digest: "5".repeat(44),
               accountBalanceChangeEvidence: "account_balance_changes_returned",
-              accountBalanceChangeAbsenceProven: false,
               accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
               accountBalanceChangeCompleteness: "complete",
               accountBalanceChanges: [
@@ -2401,7 +2399,6 @@ describe("MCP discoverability", () => {
                 scope: "requested_account",
                 role: "sender",
                 balanceChangeEvidence: "account_balance_changes_returned",
-                accountBalanceChangeAbsenceProven: false,
                 accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
                 coinFlows: [{ coinType: "0x2::sui::SUI", increaseRaw: "0", decreaseRaw: "1000", netRaw: "-1000" }]
               }),
@@ -2455,7 +2452,6 @@ describe("MCP discoverability", () => {
                 role: "sender",
                 sentByAccount: true,
                 balanceChangeEvidence: "account_balance_changes_returned",
-                accountBalanceChangeAbsenceProven: false,
                 accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
                 balanceChangeCompleteness: "complete",
                 balanceChanges: [
@@ -2524,14 +2520,12 @@ describe("MCP discoverability", () => {
             expect.objectContaining({
               digest: "5".repeat(44),
               accountBalanceChangeEvidence: "account_balance_changes_returned",
-              accountBalanceChangeAbsenceProven: false,
               accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
               requestedAccountEffect: expect.objectContaining({
                 scope: "requested_account",
                 role: "sender",
                 sentByAccount: true,
                 balanceChangeEvidence: "account_balance_changes_returned",
-                accountBalanceChangeAbsenceProven: false,
                 accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes"
               }),
               transactionContext: expect.objectContaining({
@@ -2603,14 +2597,12 @@ describe("MCP discoverability", () => {
             expect.objectContaining({
               digest: "5".repeat(44),
               accountBalanceChangeEvidence: "account_balance_changes_returned",
-              accountBalanceChangeAbsenceProven: false,
               accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes",
               requestedAccountEffect: expect.objectContaining({
                 scope: "requested_account",
                 role: "sender",
                 sentByAccount: true,
                 balanceChangeEvidence: "account_balance_changes_returned",
-                accountBalanceChangeAbsenceProven: false,
                 accountBalanceChangeInferencePolicy: "use_returned_account_balance_changes"
               }),
               transactionContext: expect.objectContaining({
@@ -2697,7 +2689,7 @@ describe("MCP discoverability", () => {
                   expect.objectContaining({
                     protocolId: "cetus-clmm",
                     primaryAction: "swap",
-                    confidence: "direct_move_call"
+                    matchBasis: "direct_move_call"
                   })
                 ]
               }),

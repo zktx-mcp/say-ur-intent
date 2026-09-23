@@ -1,3 +1,4 @@
+import { DB_USER_VERSION } from "./schemaVersion.js";
 export const LOCAL_DATA_EXPORT_FORMAT = "say-ur-intent.local-data" as const;
 export const LOCAL_DATA_NETWORK = "mainnet" as const;
 
@@ -13,6 +14,7 @@ export type LocalDataCounts = {
 };
 
 export type LocalDataEnvelope = {
+  schemaVersion: typeof DB_USER_VERSION;
   format: typeof LOCAL_DATA_EXPORT_FORMAT;
   network: typeof LOCAL_DATA_NETWORK;
   exportedAt: string;
@@ -154,7 +156,6 @@ export type LocalDataImportPreview = {
   willReplace: true;
   activeAccountChange: "unchanged" | "set" | "cleared";
   restartRequiredAfterImport: boolean;
-  defaultsInjected: Array<"suiGraphqlUrl">;
 };
 
 export type LocalDataMutationResult = {
@@ -184,6 +185,7 @@ export interface LocalDataService {
 type EndpointImportValidator = (url: string) => Promise<void> | void;
 
 export type SqliteLocalDataServiceOptions = {
+  onDataReplaced?: (() => void) | undefined;
   suiGrpcUrl: string;
   suiGraphqlUrl: string;
   verifySuiGrpcUrl: EndpointImportValidator;
