@@ -6,102 +6,36 @@ export function interactionStatusUserAnswerUse(): UserAnswerUse {
   return {
     canAnswer: [
       "current_active_account_read_context",
-      "pending_local_wallet_identity_interactions",
-      "pending_local_review_interactions"
+      "pending_local_wallet_connection_interactions",
+      "pending_local_review_interactions",
+      "wallet_operation_availability_separate_from_stored_transaction_facts"
     ],
     cannotAnswer: [
       "wallet_login_or_authentication",
       "wallet_custody_or_authorization",
+      "wallet_unavailability_as_chain_failure_or_lost_stored_result",
       "transaction_execution_result",
       "transaction_building",
       "signing_data_or_readiness",
       "complete_wallet_history",
       "profit_or_pnl"
     ],
-    answerFields: ["activeAccount", "pendingWalletIdentitySessions", "pendingReviewSessions"],
+    answerFields: ["activeAccount", "pendingWalletConnections", "pendingReviewSessions", "walletAvailability"],
     diagnosticOnlyFields: [
-      "pendingWalletIdentitySessions.truncated",
+      "pendingWalletConnections.truncated",
       "pendingReviewSessions.truncated"
     ],
     followUp: {
       tool: TOOL_NAMES.sessionGetReviewStatus,
       inputFields: ["pendingReviewSessions.items[].reviewSessionId"],
       answerFields: ["pollingStatus", "statusCategory", "reviewState"],
-      reason: "Use for the current status of a specific pending review; interaction status is a local overview."
+      reason: "Read one review's stored preparation and request facts. The overview lists live input or ongoing work; cancelled input alone is not pending."
     }
   };
 }
 
-export function walletIdentityUserAnswerUse(
-  fields: {
-    hasAccount?: boolean;
-    hasFailure?: boolean;
-    hasWalletInfo?: boolean;
-    hasWaitOutcome?: boolean;
-    hasOpenFields?: boolean;
-  } = {}
-): UserAnswerUse {
-  const hasAccount = fields.hasAccount ?? false;
-  const hasFailure = fields.hasFailure ?? false;
-  const hasWalletInfo = fields.hasWalletInfo ?? false;
-  const hasWaitOutcome = fields.hasWaitOutcome ?? false;
-  const hasOpenFields = fields.hasOpenFields ?? false;
-  const followUp =
-    hasOpenFields || (!hasAccount && !hasFailure)
-      ? {
-          tool: TOOL_NAMES.sessionWaitWalletIdentity,
-          inputFields: ["walletSessionId"],
-          answerFields: ["status", "account", "chain", "waitOutcome"],
-          reason:
-            "Use after giving the walletUrl to check whether the local wallet identity capture connected, timed out, failed, or was rejected."
-        }
-      : hasAccount
-        ? {
-            tool: TOOL_NAMES.accountGetActiveAccount,
-            answerFields: ["status", "account", "boundary"],
-            reason:
-              "Use after a connected wallet identity result before telling the user which active account read context is stored."
-          }
-        : undefined;
-
-  return {
-    canAnswer: [
-      "local_wallet_identity_capture_status",
-      ...(hasAccount ? ["active_account_candidate_captured_for_read_context"] : []),
-      ...(hasFailure ? ["wallet_identity_failure_reason"] : []),
-      ...(hasWaitOutcome ? ["whether_the_bounded_wait_finished_or_timed_out"] : [])
-    ],
-    cannotAnswer: [
-      "wallet_login_or_authentication",
-      "wallet_custody_or_authorization",
-      "transaction_authorization",
-      "transaction_building",
-      "signing_data_or_readiness",
-      "wallet_balance_or_activity",
-      "complete_wallet_history",
-      "profit_or_pnl"
-    ],
-    answerFields: [
-      ...(hasWaitOutcome ? ["waitOutcome"] : []),
-      "walletSessionId",
-      ...(hasOpenFields ? ["walletUrl", "openTarget", "accessScope"] : []),
-      "status",
-      ...(hasAccount ? ["account", "chain"] : []),
-      ...(hasFailure ? ["failureReason"] : []),
-      "expiresAt",
-      "lastActivityAt",
-      "pollingHint"
-    ],
-    diagnosticOnlyFields: [
-      ...(hasWalletInfo ? ["walletName", "walletId"] : []),
-      ...(hasFailure ? ["failureDetail"] : [])
-    ],
-    ...(followUp === undefined ? {} : { followUp })
-  };
-}
-
 export function executionResultUserAnswerUse(
-  fields: { hasExecutionResult?: boolean; hasWaitOutcome?: boolean } = {}
+  fields: { hasExecutionResult?: boolean; hasWaitOutcome?: boolean; hasRequest?: boolean } = {}
 ): UserAnswerUse {
   const hasExecutionResult = fields.hasExecutionResult ?? false;
   const hasWaitOutcome = fields.hasWaitOutcome ?? false;
@@ -110,6 +44,7 @@ export function executionResultUserAnswerUse(
     canAnswer: [
       "current_local_execution_polling_status",
       "whether_user_action_or_chain_polling_is_still_pending",
+      "wallet_operation_availability_separate_from_stored_transaction_facts",
       ...(hasExecutionResult ? ["recorded_review_execution_result"] : [])
     ],
     cannotAnswer: [
@@ -121,22 +56,25 @@ export function executionResultUserAnswerUse(
       "absolute_safety_verdict",
       "route_quality",
       "wallet_custody_or_authorization",
+      "wallet_unavailability_as_chain_failure_or_lost_stored_result",
       "transaction_building",
       "signing_data_or_readiness",
       "complete_wallet_history",
       "profit_or_pnl"
     ],
     answerFields: [
-      ...(hasWaitOutcome ? ["waitOutcome"] : []),
+      "walletAvailability", "progress",      ...(hasWaitOutcome ? ["waitOutcome"] : []),
       "reviewSessionId",
       "status",
+      "pollingStatus",
       "statusCategory",
       "lastActivityAt",
       "pollingHint",
+      ...(fields.hasRequest ? ["attemptId", "requestStatus", "request"] : []),
       ...(hasExecutionResult ? ["executionResult"] : [])
     ],
     conclusionRuleFields: [
-      "statusCategory",
+      "walletAvailability.status", "progress.status",      "statusCategory",
       "pollingHint.finalStatuses",
       "pollingHint.userActionRequiredStatuses",
       "pollingHint.nonTerminalStatuses"
@@ -146,7 +84,7 @@ export function executionResultUserAnswerUse(
       tool: TOOL_NAMES.sessionGetReviewStatus,
       inputFields: ["reviewSessionId"],
       answerFields: ["pollingStatus", "statusCategory", "reviewState"],
-      reason: "Use for current review state and checks; execution polling status alone is not a safety or signing verdict."
+      reason: "Use for current review state and checks. Wallet availability describes backend operations, not authorization. An unavailable wait retains stored facts and does not prove chain failure."
     }
   };
 }
@@ -161,25 +99,27 @@ export function reviewStatusUserAnswerUse(
     canAnswer: [
       "current_local_review_session_status",
       "current_review_checks_when_reviewState_is_present",
-      ...(hasAdapterLifecycle ? ["current_deepbook_review_lifecycle_stage_status"] : []),
+      ...(hasAdapterLifecycle ? ["current_adapter_review_lifecycle_stage_status"] : []),
       ...(hasHumanReadableReview ? ["current_human_readable_review_facts_projected_from_verified_review_evidence"] : []),
       ...(hasSimulation ? ["current_review_time_simulation_summary_projected_from_private_review_evidence"] : []),
-      "whether_user_action_or_chain_polling_is_still_pending"
+      "whether_user_action_or_chain_polling_is_still_pending",
+      "wallet_operation_availability_separate_from_stored_transaction_facts"
     ],
     cannotAnswer: [
       "transaction_execution_guarantee",
       "absolute_safety_verdict",
       "route_quality",
       "wallet_custody_or_authorization",
+      "wallet_unavailability_as_chain_failure_or_lost_stored_result",
       "transaction_building",
-      "transaction_bytes_or_digest_values",
+      "transaction_bytes_or_signatures",
       "signing_data_or_readiness",
       "complete_wallet_history",
       "profit_or_pnl"
     ],
     answerFields: [
-      "reviewSessionId",
-      "internalStatus",
+      "walletAvailability", "progress",      "reviewSessionId",
+      "status",
       "pollingStatus",
       "statusCategory",
       ...(hasReviewState
@@ -251,12 +191,12 @@ export function reviewActivityListUserAnswerUse(): UserAnswerUse {
       "signing_data_or_readiness",
       "profit_or_pnl"
     ],
-    answerFields: ["activities", "activities[].reviewSessionId", "activities[].currentStatus", "activities[].updatedAt"],
+    answerFields: ["activities", "activities[].reviewSessionId", "activities[].reviewStatus", "activities[].updatedAt"],
     diagnosticOnlyFields: ["dataScope", "accountSource", "lowSampleWarning", "lowSampleThreshold", "truncated"],
     followUp: {
       tool: TOOL_NAMES.readGetReviewSessionDetail,
       inputFields: ["activities[].reviewSessionId"],
-      answerFields: ["session", "planJson", "intentJson", "stateSnapshots", "transitions", "execution"],
+      answerFields: ["session", "planJson", "intentJson", "stateSnapshots", "transitions", "requests"],
       reason: "Use for stored plan, state snapshot, transition, and execution detail for one review session."
     }
   };
@@ -284,7 +224,7 @@ export function prepareActionReviewUserAnswerUse(
   const hasBlockingPreliminaryChecks = fields.hasBlockingPreliminaryChecks ?? false;
   return {
     canAnswer: [
-      "review_session_url_for_local_review_page",
+      "internal_review_card_for_user_review",
       "preliminary_check_results_for_proposed_plan",
       "proposed_plan_asset_flow_preview",
       ...(hasBlockingPreliminaryChecks ? ["why_signing_is_currently_blocked_for_this_review"] : [])
@@ -300,7 +240,7 @@ export function prepareActionReviewUserAnswerUse(
     ],
     answerFields: [
       "reviewSessionId",
-      "reviewUrl",
+      "card",
       "plans",
       "plans[].title",
       "plans[].summary",
@@ -322,7 +262,7 @@ export function prepareActionReviewUserAnswerUse(
 export function prepareExternalProposalReviewUserAnswerUse(): UserAnswerUse {
   return {
     canAnswer: [
-      "review_session_url_for_local_review_page",
+      "internal_review_card_for_user_review",
       "external_proposal_summary_for_local_review",
       "proposal_asset_flow_preview",
       "proposal_recipient_or_target_fields",
@@ -343,7 +283,7 @@ export function prepareExternalProposalReviewUserAnswerUse(): UserAnswerUse {
     ],
     answerFields: [
       "reviewSessionId",
-      "reviewUrl",
+      "card",
       "plans",
       "plans[].reviewModel.proposedAction",
       "plans[].reviewModel.assetFlow",
@@ -374,44 +314,26 @@ export function prepareExternalProposalReviewUserAnswerUse(): UserAnswerUse {
       inputFields: ["reviewSessionId"],
       answerFields: ["pollingStatus", "statusCategory", "reviewState"],
       reason:
-        "Use for current review status after the user opens the local page; the prepare response does not make the proposal signable."
+        "Use for current review status after the user opens the internal card; the prepare response does not make the proposal signable."
     }
   };
 }
 
-export function reviewSessionDetailUserAnswerUse(hasExecution = false): UserAnswerUse {
+export function reviewSessionDetailUserAnswerUse(options: {
+  hasCurrentRequest: boolean; hasCurrentExecution: boolean; hasHistoricalExecution: boolean;
+} = { hasCurrentRequest: false, hasCurrentExecution: false, hasHistoricalExecution: false }): UserAnswerUse {
+  const hasExecution = options.hasCurrentExecution || options.hasHistoricalExecution;
   return {
-    canAnswer: [
-      "stored_local_review_session_plan_and_lifecycle_detail",
-      "stored_review_state_snapshots",
-      ...(hasExecution ? ["stored_review_execution_result"] : [])
-    ],
-    cannotAnswer: [
-      "sui_wallet_transaction_history",
-      "complete_wallet_history",
-      ...(hasExecution ? [] : ["stored_review_execution_result_without_execution_field"]),
-      "transaction_execution_guarantee",
-      "absolute_safety_verdict",
-      "route_quality",
-      "wallet_custody_or_authorization",
-      "transaction_building",
-      "signing_data_or_readiness",
-      "profit_or_pnl"
-    ],
-    answerFields: [
-      "session",
-      "planJson",
-      "intentJson",
-      "stateSnapshots",
-      "transitions",
-      ...(hasExecution ? ["execution", "execution.resultJson"] : [])
-    ],
-    diagnosticOnlyFields: ["dataScope", "accountSource", "lowSampleWarning", "lowSampleThreshold", "truncated"],
-    followUp: {
-      tool: TOOL_NAMES.sessionGetReviewStatus,
-      inputFields: ["session.reviewSessionId"],
-      answerFields: ["pollingStatus", "reviewState"],
-      reason: "Use for the current in-memory review status; stored detail is local review history."
-    }
+    canAnswer: ["stored_local_review_session_plan_and_lifecycle_detail", "stored_review_state_snapshots", "stored_transaction_request_history",
+      ...(hasExecution ? ["stored_review_chain_execution_result"] : [])],
+    cannotAnswer: ["sui_wallet_transaction_history", "complete_wallet_history", "transaction_execution_guarantee", "absolute_safety_verdict",
+      "route_quality", "wallet_custody_or_authorization", "transaction_building", "signing_data_or_readiness", "profit_or_pnl",
+      ...(hasExecution ? [] : ["chain_execution_result_without_execution_field"])],
+    answerFields: ["session", "planJson", "intentJson", "stateSnapshots", "transitions", "requests",
+      ...(options.hasCurrentRequest ? ["request"] : []), ...(options.hasCurrentExecution ? ["request.execution"] : [])],
+    diagnosticOnlyFields: ["dataScope", "accountSource", "lowSampleWarning", "lowSampleThreshold", "truncated", "requestCount"],
+    followUp: { tool: TOOL_NAMES.sessionGetReviewStatus, inputFields: ["session.reviewSessionId"],
+      answerFields: ["status", "pollingStatus", "reviewState"],
+      reason: "Read the current DB review and request status. Stored history, including imported history, is not an active approval." }
   };
 }

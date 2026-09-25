@@ -422,7 +422,7 @@ export class TransactionActivityService {
     const active = await this.options.activityStore.getActiveAccount();
     if (!active) {
       throw new TransactionActivityError("active_account_not_set", "Active account read context is not set", {
-        action: "connect_wallet_identity"
+        action: "connect_wallet_connection"
       });
     }
     return { account: active.address, accountSource: "active_account_context" };

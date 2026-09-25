@@ -71,7 +71,7 @@ npm run smoke:mainnet
 
 DeepBook orderbook and raw-quantity quote reads use an internal mainnet SDK simulation sender placeholder, not a user's wallet. The display-amount quote path is covered by automated tests, not by this smoke script. This smoke script does not exercise account-bound DeepBook transaction-material build or digest binding; that path needs a separate funded-account material-build smoke before smoke results are treated as product-grade proof for that review stage.
 
-Wallet asset summaries and active-account activity summaries use the smoke address through a wallet identity session created by the smoke script. Browser wallet behavior is checked separately. This smoke script does not record raw GraphQL payloads, transaction bytes, signatures, raw transaction details, or compact transaction aggregates.
+Wallet and activity reads use an explicitly synthetic active-account context in a temporary SQLite database. The script never creates a wallet connection, a review URL or an HTTP wallet result. Wallet approval is checked separately. This smoke script does not record raw GraphQL payloads, transaction bytes, signatures, raw transaction details, or compact transaction aggregates.
 
 ## Mainnet Read Smoke Notes
 
@@ -211,3 +211,16 @@ It is not an MCP tool, not a CI check, not packaged product functionality, not r
 - When a review activity output has `lowSampleWarning: true`, report raw counts and avoid inferring behavior patterns.
 - For review activity list output, `dataScope.recordCount` is the full matching local review count. The returned `activities` array can be shorter when `truncated.activities: true`.
 - Local settings page actions mutate local settings or logical local data only. They do not execute transactions, sign, or create custody. MCP settings tools create a settings page session or read current settings.
+
+### Optional account-bound review smoke
+
+Set `SMOKE_SWAP_PROTOCOL`, `SMOKE_SWAP_FROM_SYMBOL`, `SMOKE_SWAP_TO_SYMBOL` and
+`SMOKE_SWAP_AMOUNT_DISPLAY` together to opt into read-only account-bound review
+computation. Protocol is explicitly `deep` or `flowx`; none is silently selected.
+A partially configured group is an error. `SMOKE_SWAP_MAX_SLIPPAGE_BPS` keeps the
+existing explicit override. The script uses the same runtime review composition,
+material store and evidence validation as the product, and records whether
+transaction review data was emitted. This can involve mainnet simulation but
+never wallet pairing, signing or submission. The temporary active-account
+fixture is not proof of a wallet connection or ownership. Without the complete
+optional group, the result records that review computation was not run.

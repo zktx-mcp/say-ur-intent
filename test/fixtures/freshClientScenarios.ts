@@ -349,9 +349,9 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
       'User asks "make me a DeepBook swap review". The prepare response must create a local review session, keep signing data out of MCP output, and direct the client to account-bound review status.',
     tool: TOOL_NAMES.actionPrepareSuiActionReview,
     toolExpectation: {
-      requiredAnswerFields: ["reviewSessionId", "reviewUrl", "plans[].preliminaryChecks"],
+      requiredAnswerFields: ["reviewSessionId", "card", "plans[].preliminaryChecks"],
       requiredCanAnswerClaims: [
-        "review_session_url_for_local_review_page",
+        "internal_review_card_for_user_review",
         "preliminary_check_results_for_proposed_plan",
         "proposed_plan_asset_flow_preview"
       ],
@@ -418,7 +418,7 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
     toolExpectation: {
       requiredAnswerFields: [
         "reviewSessionId",
-        "internalStatus",
+        "status",
         "pollingStatus",
         "statusCategory",
         "reviewState.status",
@@ -444,9 +444,9 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
       expectedFollowUpAnswerFields: ["executionResult"]
     },
     responseRules: [
-      { fieldPath: "internalStatus", equals: "ready_for_wallet_review" },
-      { fieldPath: "pollingStatus", equals: "awaiting_signature" },
-      { fieldPath: "statusCategory", equals: "non_terminal" },
+      { fieldPath: "status", equals: "ready_for_wallet_review" },
+      { fieldPath: "pollingStatus", equals: "ready_for_wallet_review" },
+      { fieldPath: "statusCategory", equals: "user_action_required" },
       { fieldPath: "statusCategory", notOneOf: ["final"] },
       { fieldPath: "reviewState.status", equals: "ready_for_wallet_review" }
     ]
@@ -484,8 +484,8 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
       expectedFollowUpAnswerFields: ["pollingStatus", "statusCategory", "reviewState"]
     },
     responseRules: [
-      { fieldPath: "status", equals: "awaiting_signature" },
-      { fieldPath: "statusCategory", equals: "non_terminal" },
+      { fieldPath: "status", equals: "ready_for_wallet_review" },
+      { fieldPath: "statusCategory", equals: "user_action_required" },
       { fieldPath: "statusCategory", notOneOf: ["final"] },
       { fieldPath: "pollingHint.nonTerminalStatuses", arrayContains: ["awaiting_signature"] },
       {
@@ -546,52 +546,4 @@ export const FRESH_CLIENT_SCENARIOS: readonly FreshClientScenario[] = [
       expectedFollowUpTool: TOOL_NAMES.readPreviewIntentEvidence
     }
   },
-  {
-    id: "wallet_identity_capture_not_login_or_signing",
-    description:
-      'User asks "connect my wallet" or "I need to use my wallet for balance checks". The session.create_wallet_identity response must let a fresh client describe a same-machine wallet identity capture flow without claiming login, authentication, custody, signing authorization, signing readiness, or transaction execution, and must point at session.wait_wallet_identity for the outcome.',
-    tool: TOOL_NAMES.sessionCreateWalletIdentity,
-    toolExpectation: {
-      requiredAnswerFields: ["walletUrl", "openTarget", "accessScope", "status"],
-      requiredCanAnswerClaims: ["local_wallet_identity_capture_status"],
-      requiredCannotAnswerClaims: [
-        "wallet_login_or_authentication",
-        "wallet_custody_or_authorization",
-        "transaction_authorization",
-        "transaction_building",
-        "signing_data_or_readiness"
-      ],
-      forbiddenCanAnswerClaims: [
-        "wallet_login_or_authentication",
-        "wallet_custody_or_authorization",
-        "transaction_authorization",
-        "transaction_building",
-        "signing_data_or_readiness"
-      ],
-      expectedFollowUpTool: TOOL_NAMES.sessionWaitWalletIdentity,
-      expectedFollowUpAnswerFields: ["status", "account", "chain", "waitOutcome"],
-      forbiddenAnswerFields: [
-        "account",
-        "chain",
-        "failureReason",
-        "waitOutcome",
-        "executionResult",
-        "signingReadiness"
-      ],
-      forbiddenAnswerFieldPatterns: [
-        /custody/i,
-        /authori[sz]ation/i,
-        /signing|signature|signatures|signable|signed/i,
-        /transaction/i,
-        /execution/i,
-        /privateKey/i,
-        /^tx/i
-      ]
-    },
-    responseRules: [
-      { fieldPath: "status", equals: "pending" },
-      { fieldPath: "openTarget", equals: "system_browser" },
-      { fieldPath: "accessScope", equals: "same_machine_loopback" }
-    ]
-  }
 ] as const;

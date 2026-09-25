@@ -5,7 +5,7 @@ export const activeAccountResponseSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("set"),
     account: z.string(),
-    source: z.literal("wallet_identity"),
+    source: z.literal("wallet_connection"),
     setAt: z.string(),
     boundary: z.literal("read_context_only_not_signing_authorization")
   }),

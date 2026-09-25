@@ -3,14 +3,11 @@
 This document defines the contract boundary for wallet-review adapters.
 It is a product and implementation contract, not a current feature announcement.
 
-The current release can build local unsigned transaction material for the
-account-bound DeepBook swap and FlowX swap review stages and internally bind a
-Sui transaction digest to that stored material. The byte handoff to the
-same-machine browser is gated on recomputed-digest equality, and the review page
-offers user-controlled wallet signing with execution receipts recorded on the
-session. No MCP tool returns
-transaction bytes, signing data, signing readiness, executable transaction
-material, or payment execution readiness.
+The backend builds local account-bound DeepBook/FlowX transaction material and
+binds its Sui digest to verified review evidence. Only explicit user selection
+and wallet approval allow the backend WalletConnect request. Returned bytes and
+signer must match the admission before submission. No model or card receives
+transaction bytes or signatures.
 
 The source-level schema for this contract lives in
 `src/core/action/signableAdapterContract.ts`.
@@ -22,19 +19,16 @@ DeepBook and FlowX account-bound swap reviews emit it. When an account-bound rev
 completes every evidence stage (local unsigned transaction material, internal
 digest commitment, object ownership, quote/policy provenance, human-readable
 review facts, and review-time simulation), the review layer assembles those
-private artifacts into a schema-validated `WalletReviewAdapterContract` and
-records it on the public review state as `walletReviewAdapterContract` on a
+private artifacts into a schema-validated `TransactionReviewData` and
+records it on the public review state as `transactionReviewData` on a
 `ready_for_wallet_review` status. If any required evidence is
 missing or fails contract validation, no contract is emitted and the review
 stays blocked with `blockedReason: "wallet_review_contract_emit_missing"`.
 
-No MCP response or review UI response exposes executable transaction material.
-The emitted contract carries the Sui transaction digest as
-`transactionMaterialCommitment` (a hash only); raw transaction bytes stay
-inside the review-server session and leave it only through the digest-gated
-handoff endpoint for the same-machine browser. After the handoff gate, the
-same-machine browser page requests the user's wallet signature and submits the
-signed transaction; the contract layer itself never signs or executes.
+`reviewedTransactionDigest` is a hash only. Private bytes travel directly from
+the backend to the wallet through WalletConnect after atomic admission; there
+is no browser handoff endpoint. The adapter contract itself never signs or
+executes. The platform owns request authority and verified chain outcomes.
 
 ## Final Acceptance Gate
 
@@ -71,24 +65,20 @@ channel:
   `reviewSessionId`. They never appear in an MCP tool response or in the
   review-API JSON an AI client reads; those surfaces carry the commitment hash
   only.
-- Handoff channel: the only path that may carry the bytes is the local
-  review-server to same-machine browser to wallet-adapter handoff for that
-  session. There is no other handoff path, and the MCP layer and AI client never
-  receive the bytes.
-- Bind at handoff: before the wallet is asked to sign, the handoff path must
-  recompute the digest of the exact bytes it is about to hand over and require it
-  to equal the commitment that `humanReadableReview` and `simulation` were bound
-  to. If they differ, or if any alternate or side handoff path is used, signing
-  is refused.
-
-Any design that exposes a commitment but routes the signed bytes through a
-different origin or channel violates this gate and is prohibited.
-
-One review session covers exactly one transaction. While a handoff is
-outstanding, the session is locked: state recomputes are refused until the
-wallet result is recorded, the user cancels the handoff, or the handed-off
-material expires (the lock then self-releases). A recorded `success` or
-`failure` execution result is final and deletes the stored material.
+- Transport: the only byte path is the private backend to the wallet through
+  its approved WalletConnect session. No browser signer or MCP response carries
+  bytes or signatures.
+- Binding: before requesting a signature, recompute the stored bytes' digest
+  and require equality with both reviewed producers. Verify the returned bytes'
+  digest and selected account's signature again before one backend submission.
+- Admission: one request per review session/revision, consumed atomically with
+  the card selection and public history. A different card cannot duplicate the
+  request. Recomputing while signature/submission callbacks or initial chain
+  observation remain unsettled is refused. Local timeout or stop does not prove
+  remote cancellation or callback cleanup.
+- Results: request status and chain success/failure are separate. Unknown
+  outcomes retain the known digest and may be read again, never resubmitted.
+  A later explicit reviewed revision has a new attempt while prior facts remain.
 
 DeepBook swap material is built with an explicit fee mode. When the account's
 DEEP balance covers the protocol fee, the swap quotes and builds in DEEP fee
@@ -99,31 +89,21 @@ review evidence and shown as a check. Before building, the producer verifies
 the account holds the source amount plus the explicit gas budget and fails
 closed with the exact required and held amounts.
 
-This gate is enforced at the contract-schema layer. `walletReviewAdapterContractSchema`
-requires a `transactionMaterialCommitment` (the Sui transaction digest of the
+This gate is enforced at the contract-schema layer. `transactionReviewDataSchema`
+requires a `reviewedTransactionDigest` (the Sui transaction digest of the
 transaction that will be signed, validated with the pinned SDK source of truth
 `isValidTransactionDigest`; a digest only, never raw bytes) and binds
-`humanReadableReview.boundToCommitment` and `simulation.boundToCommitment` to it
+`humanReadableReview.transactionDigest` and `simulation.transactionDigest` to it
 through a `superRefine` invariant (reusing the `requireEqual` cross-field helper)
 that rejects any contract whose three commitments are missing, malformed, or
 unequal (`src/core/action/signableAdapterContract.ts`,
 `test/signableAdapterContract.test.ts`).
 
-The runtime bind-at-handoff step is implemented at the session-store boundary:
-`prepareWalletHandoff` recomputes the digest of the exact stored bytes and
-refuses the handoff unless it equals the reviewed
-`transactionMaterialCommitment`. The handoff endpoint
-(`POST /api/review/:id/handoff`) is the only channel that carries the bytes,
-and it serves the same-machine browser only. After the gate passes, the
-review page requests the wallet signature; the signature, execution, and
-receipt stay user-controlled and never flow through the MCP layer.
-
-The current release builds local unsigned DeepBook swap and FlowX swap
-transaction material inside account-bound review, binds a Sui transaction digest
-to the stored material, hands the digest-verified bytes to the same-machine
-browser, and lets the user sign and execute in their wallet with the receipt
-recorded on the review session. The MCP layer never requests signatures or
-executes.
+The private `prepareReviewedTransaction` session-store operation verifies stored
+material and the reviewed digest. `WalletWorkflow` and its SQLite owner admit
+the exact account/revision, verify wallet response bytes and signature, submit
+once and record independently read receipt facts. Public output never gains
+signing authority. Internal preparation is distinct from final user admission.
 
 ## Adapter Contract
 
@@ -136,13 +116,13 @@ The adapter contract requires these fields:
 
 - `inputProvenance`: where the request came from, when it was captured, and why
   it remains untrusted until the local review layer regenerates and verifies it.
-- `sourceOfTruth`: source metadata for pinned SDK registries, verified mainnet
+- `sourceReferences`: source metadata for pinned SDK registries, verified mainnet
   onchain metadata, wallet reads, quote evidence, simulation, validated request
-  facts, or explicit user choices. A `sourceOfTruth` record is not itself a
+  facts, or explicit user choices. A `sourceReferences` record is not itself a
   value-bearing fact. It identifies where a typed evidence claim came from.
 - `evidenceClaims`: typed value-bearing claims for every safety-critical fact
   used by the payload. Each claim has a `factKind`, a `sourceEvidenceId` pointing
-  to `sourceOfTruth[].id`, and the value fields required for that fact. The
+  to `sourceReferences[].id`, and the value fields required for that fact. The
   schema validates the claim against the safety-critical fact matrix and then
   validates that payload fields match their referenced claim values.
 - `rawQuantities`: raw integer strings plus normalized Sui coin type, verified
@@ -161,7 +141,7 @@ The adapter contract requires these fields:
   `checkedAt`, `expiresAt`, and `evidenceClaimId`; `current` requires
   `expiresAt` after `checkedAt`, and `expired` requires `expiresAt` at or before
   `checkedAt`. The referenced `expiry_status` claim must match the payload and
-  must reference a `sourceOfTruth` record with `checkedAt` and `expiresAt`.
+  must reference a `sourceReferences` record with `checkedAt` and `expiresAt`.
   `not_provided` and `not_applicable` must omit `expiresAt`, include
   `evidenceClaimId` and `reason`, and reference an `expiry_status` claim backed
   by `checkedAt` and `expiryStatus`.
@@ -214,8 +194,8 @@ It defines the required source kind and source fields for these fact kinds:
 - `object_ownership`;
 - `simulation_result`.
 
-Payload fields do not cite `sourceOfTruth` records directly as proof. They cite
-typed evidence claims, and those claims cite `sourceOfTruth` records. The schema
+Payload fields do not cite `sourceReferences` records directly as proof. They cite
+typed evidence claims, and those claims cite `sourceReferences` records. The schema
 rejects payload values that do not match their typed claims.
 
 ## Consumer Invariant Matrix
@@ -313,7 +293,7 @@ core review-state schema binds public fields to them:
 Adapter acceptance gate: a new protocol enters as read-only tools or
 non-signable proposal review first. A signable adapter is accepted only when it
 produces every required evidence stage from independently built or verified
-material, passes `walletReviewAdapterContractSchema` without placeholder
+material, passes `transactionReviewDataSchema` without placeholder
 values, and fails closed when any evidence is missing. Protocol names stay out
 of public docs, runtime guidance, and MCP resources until a concrete
 implementation or support decision exists.
@@ -325,12 +305,12 @@ Tests must keep this contract in place before any adapter can use it:
 - schema tests for required provenance, source-of-truth, raw quantity, gas,
   expiry, slippage or minimum output, object ownership, simulation, and
   human-readable review fields;
-- tests that reject duplicate `sourceOfTruth[].id` and `evidenceClaims[].id`
+- tests that reject duplicate `sourceReferences[].id` and `evidenceClaims[].id`
   values;
 - tests that reject every payload claim reference that does not resolve to a
   typed `evidenceClaims[].id`;
 - tests that reject every `evidenceClaims[].sourceEvidenceId` that does not
-  resolve to a `sourceOfTruth[].id`;
+  resolve to a `sourceReferences[].id`;
 - tests that reject safety-critical claims whose source references resolve to the
   wrong source kind or to records missing the required fields for that claim;
 - tests that reject payload values whose raw amounts, decimals, gas quantities,

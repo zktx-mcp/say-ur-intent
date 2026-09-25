@@ -1,8 +1,9 @@
+import { ZodError } from "zod";
+import { decideReviewEvaluation, needsReviewMaterial, type ReviewEvaluationCandidate, type ValidatedReviewMaterial } from "./reviewValidity.js";
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type {
   ActionPlan,
-  ExecutionResult,
-  FailureReason,
   InternalSessionStatus,
   ReviewSession,
   ReviewState
@@ -10,11 +11,9 @@ import type {
 import type {
   ActivityStore,
   LiveReviewSessionMutation,
-  ReviewExecutionInput,
   ReviewStateSnapshotInput,
   ReviewTransitionInput
 } from "../activity/activityStore.js";
-import { executionResultSchema } from "../action/schemas.js";
 import type { AdapterLifecycleValidator } from "../action/adapterLifecycleValidation.js";
 import { parseLifecycleValidatedReviewState } from "../action/reviewStateValidation.js";
 import type { EventLogRecord, EventLogSink } from "../eventlog/sink.js";
@@ -60,19 +59,9 @@ import {
   isLocalSessionExpired,
   tokenMatchesHash
 } from "./localSession.js";
-import {
-  type WalletIdentityResultInput,
-  type WalletIdentitySession
-} from "./walletIdentity.js";
 import type { SettingsSession } from "./settingsSession.js";
 import { SessionStoreError } from "./sessionErrors.js";
 import { SettingsSessionManager } from "./settingsSessions.js";
-import {
-  transitionWalletIdentity,
-  WalletIdentitySessionManager
-} from "./walletIdentitySessions.js";
-
-export { transitionWalletIdentity };
 
 type PrivateDerivedReviewFieldBinding = {
   field: "humanReadableReview" | "simulation";
@@ -120,18 +109,6 @@ export type CreatedReviewSession = {
   token: string;
 };
 
-export type CreatedWalletIdentitySession = {
-  session: WalletIdentitySession;
-  token: string;
-};
-
-export type WalletHandoffMaterial = {
-  transactionBytesBase64: string;
-  transactionMaterialCommitment: string;
-  planId: string;
-  account: string;
-};
-
 export type CreatedSettingsSession = {
   session: SettingsSession;
   token: string;
@@ -139,42 +116,28 @@ export type CreatedSettingsSession = {
 
 export interface SessionStore {
   createReviewSession(plans: ActionPlan[], now?: Date): Promise<CreatedReviewSession>;
-  getReviewSession(id: string, now?: Date): Promise<ReviewSession | undefined>;
-  listReviewSessions(now?: Date): Promise<ReviewSession[]>;
+  getReviewSession(id: string, clock?: () => Date): Promise<ReviewSession | undefined>;
+  inspectReview(id: string, now?: Date): Promise<ReviewEvaluationCandidate | undefined>;
+  recordEvaluationEvents(events: EventLogRecord[]): void;
+  listReviewSessions(clock?: () => Date): Promise<ReviewSession[]>;
+  readReviewSession(id: string): ReviewSession | undefined;
+  reviewSessionIds(): string[];
   validateReviewToken(id: string, token: string, now?: Date): Promise<boolean>;
-  recordReviewPageOpened(id: string, now?: Date): Promise<ReviewSession>;
   recordWalletConnected(id: string, account: string, now?: Date): Promise<ReviewSession>;
   recordReviewState(id: string, state: ReviewState, now?: Date): Promise<ReviewSession>;
   recordReviewStateWithArtifacts(
     id: string,
     state: ReviewState,
     privateArtifacts: PrivateReviewArtifacts | undefined,
-    now?: Date
+    now?: Date,
+    preparation?: { id: string; connectionId: string; connectionRevision: number }
   ): Promise<ReviewSession>;
-  getReviewSessionPrivateArtifacts(
-    id: string,
-    now?: Date
-  ): Promise<PrivateReviewArtifacts | undefined>;
-  recordExecutionResult(id: string, result: ExecutionResult, now?: Date): Promise<ReviewSession>;
-  recordChainExecutionResult(id: string, result: ExecutionResult, now?: Date): Promise<ReviewSession>;
-  createWalletIdentitySession(now?: Date): Promise<CreatedWalletIdentitySession>;
-  getWalletIdentitySession(id: string, now?: Date): Promise<WalletIdentitySession | undefined>;
-  listWalletIdentitySessions(now?: Date): Promise<WalletIdentitySession[]>;
-  validateWalletIdentityToken(id: string, token: string, now?: Date): Promise<boolean>;
-  recordWalletIdentityOpened(id: string, now?: Date): Promise<WalletIdentitySession>;
-  recordWalletIdentityConnecting(id: string, now?: Date): Promise<WalletIdentitySession>;
-  recordWalletIdentityResult(
-    id: string,
-    result: WalletIdentityResultInput,
-    now?: Date
-  ): Promise<WalletIdentitySession>;
-  prepareWalletHandoff(
+  prepareReviewedTransaction(
     id: string,
     planId: string,
     account: string,
     now?: Date
-  ): Promise<WalletHandoffMaterial>;
-  cancelWalletHandoff(id: string, now?: Date): Promise<ReviewSession>;
+  ): Promise<ValidatedReviewMaterial>;
   createSettingsSession(now?: Date): Promise<CreatedSettingsSession>;
   getSettingsSession(id: string, now?: Date): Promise<SettingsSession | undefined>;
   validateSettingsToken(id: string, token: string, now?: Date): Promise<boolean>;
@@ -182,7 +145,9 @@ export interface SessionStore {
 }
 
 export type InMemorySessionStoreOptions = {
+  now?: () => Date;
   ttlMs?: number;
+  ownerId?: string;
   eventLog?: EventLogSink;
   activityStore: ActivityStore;
   transactionMaterialStore?: Pick<
@@ -198,7 +163,6 @@ export type InMemorySessionStoreOptions = {
 export type LocalSessionStoreOptions = InMemorySessionStoreOptions & {
   sessions: SessionRecordStore;
   artifacts: PrivateReviewArtifactStore;
-  walletIdentityStore?: KeyedRecordStore<WalletIdentitySession>;
   settingsStore?: KeyedRecordStore<SettingsSession>;
 };
 
@@ -212,29 +176,23 @@ const REVIEW_STATE_RECOMPUTE_STATUSES = new Set<InternalSessionStatus>([
   "blocked"
 ]);
 
-function canRetainPrivateReviewArtifacts(status: InternalSessionStatus): boolean {
-  return status !== "signed_pending_result" && !isFinalSessionStatus(status);
-}
-
 const ALLOWED_TRANSITIONS: Record<InternalSessionStatus, InternalSessionStatus[]> = {
   proposed: ["awaiting_wallet", "expired"],
   awaiting_wallet: ["wallet_connected", "expired"],
   wallet_connected: ["ready_for_wallet_review", "refresh_required", "blocked", "expired"],
-  ready_for_wallet_review: ["signed_pending_result", "failure", "refresh_required", "blocked", "expired"],
+  ready_for_wallet_review: ["refresh_required", "blocked", "expired"],
   refresh_required: ["ready_for_wallet_review", "blocked", "expired"],
-  blocked: ["refresh_required", "expired"],
-  signed_pending_result: ["success", "failure", "expired"],
-  success: [],
-  failure: [],
+  blocked: ["ready_for_wallet_review", "refresh_required", "expired"],
   expired: []
 };
 
 export class LocalSessionStore implements SessionStore {
   private readonly sessions: SessionRecordStore;
   private readonly privateReviewArtifacts: PrivateReviewArtifactStore;
-  private readonly walletIdentity: WalletIdentitySessionManager;
+  private readonly ownerId: string;
   private readonly settings: SettingsSessionManager;
   private readonly ttlMs: number;
+  private readonly clock: () => Date;
   private readonly eventLog: EventLogSink;
   private readonly activityStore: ActivityStore;
   private readonly transactionMaterialStore: Pick<
@@ -246,16 +204,10 @@ export class LocalSessionStore implements SessionStore {
 
   constructor(options: LocalSessionStoreOptions) {
     this.sessions = options.sessions;
+    this.clock = options.now ?? (() => new Date());
     this.privateReviewArtifacts = options.artifacts;
     this.ttlMs = options.ttlMs ?? DEFAULT_SESSION_TTL_MS;
-    this.walletIdentity = new WalletIdentitySessionManager({
-      ttlMs: this.ttlMs,
-      appendEventLog: (record) => this.appendEventLog(record),
-      setActiveAccount: async (account, now, wallet) => {
-        await this.activityStore.setActiveAccount(account, "wallet_identity", now, wallet);
-      },
-      ...(options.walletIdentityStore ? { recordStore: options.walletIdentityStore } : {})
-    });
+    this.ownerId = options.ownerId ?? randomUUID();
     this.settings = new SettingsSessionManager({
       ttlMs: this.ttlMs,
       appendEventLog: (record) => this.appendEventLog(record),
@@ -276,6 +228,8 @@ export class LocalSessionStore implements SessionStore {
     const { base, token } = createLocalSessionBase(now, this.ttlMs);
     const session: ReviewSession = {
       ...base,
+      ownerId: this.ownerId,
+      reviewRevision: 0,
       status: "proposed",
       plans
     };
@@ -305,23 +259,71 @@ export class LocalSessionStore implements SessionStore {
     return { session: cloneLocalSession(session), token };
   }
 
-  async getReviewSession(id: string, now = new Date()): Promise<ReviewSession | undefined> {
+  // Snapshot access has no expiry, artifact reconciliation or external work.
+  // Public consumers project this private record before exposing any fields.
+  readReviewSession(id: string): ReviewSession | undefined {
     const session = this.sessions.get(id);
-    if (!session) {
-      return undefined;
-    }
+    return session ? cloneLocalSession(session) : undefined;
+  }
+  reviewSessionIds(): string[] { return this.sessions.ids(); }
 
-    if (isLocalSessionExpired(session, now) && !isFinalSessionStatus(session.status)) {
-      return cloneLocalSession(await this.expireReviewSession(id, session, now));
+  async inspectReview(id: string, now = this.clock()): Promise<ReviewEvaluationCandidate | undefined> {
+    const session = this.sessions.get(id), rowRevision = this.sessions.revision(id);
+    if (!session || rowRevision === undefined) return undefined;
+    const artifacts = this.privateReviewArtifacts.get(id);
+    const candidate: ReviewEvaluationCandidate = { session, rowRevision, artifacts };
+    if (!needsReviewMaterial(session, this.sessions.hasAdmittedRevision(id, session.reviewRevision))) return candidate;
+    if (!artifacts || !session.reviewState) return candidate;
+    try {
+      const checked = await this.parseReviewSessionPrivateArtifacts(id, session.reviewState, artifacts, now);
+      const handle = checked.artifacts.transactionMaterial!, digest = checked.artifacts.transactionMaterialDigest!;
+      candidate.material = { reviewSessionId: id, reviewRevision: session.reviewRevision, rowRevision, review: session, artifacts,
+        planId: handle.planId, account: handle.account, reviewedTransactionDigest: digest.transactionDigest,
+        transactionMaterial: handle, transactionMaterialDigest: digest,
+        transactionBytesBase64: Buffer.from(checked.transactionBytes).toString("base64") };
+    } catch (error) {
+      // Invalid evidence is a candidate for refresh, never permission to mutate
+      // a potentially newer revision. Storage failures must still propagate.
+      if (!(error instanceof LocalTransactionMaterialStoreError) && !(error instanceof ReviewEvidenceMismatch) && !(error instanceof ZodError)) throw error;
     }
-
-    return cloneLocalSession(await this.sanitizePrivateDerivedReviewState(id, session, now));
+    return candidate;
   }
 
-  async listReviewSessions(now = new Date()): Promise<ReviewSession[]> {
+  recordEvaluationEvents(events: EventLogRecord[]): void {
+    for (const event of events) void this.appendEventLog(event).catch(() => {});
+  }
+
+  async getReviewSession(id: string, clock: () => Date = this.clock): Promise<ReviewSession | undefined> {
+    const candidate = await this.inspectReview(id, clock());
+    if (!candidate) return undefined;
+    if (this.activityStore.finalizeReviewEvaluation) {
+      const result = this.activityStore.finalizeReviewEvaluation(candidate, clock);
+      this.recordEvaluationEvents(result.events);
+      return cloneLocalSession(result.session);
+    }
+    // Preparation-only in-memory fixtures share the decision function. They do
+    // not establish SQLite atomicity or wallet admission guarantees.
+    const current = this.sessions.get(id);
+    if (!current) return undefined;
+    const at = clock(), artifacts = this.privateReviewArtifacts.get(id);
+    const admitted = this.sessions.hasAdmittedRevision(id, current.reviewRevision);
+    const material = !admitted && !current.preparationId && artifacts?.transactionMaterial
+      ? this.transactionMaterialStore?.getTransactionMaterial(artifacts.transactionMaterial, at) : undefined;
+    if (!admitted && !current.preparationId && artifacts && !material && !needsReviewMaterial(current, admitted)) {
+      this.deleteReviewSessionTransactionMaterials(id);
+    }
+    const next = decideReviewEvaluation(candidate, current, this.sessions.revision(id)!, artifacts, material, admitted, at);
+    if (next === current) return cloneLocalSession(current);
+    if (next.status === "expired") return this.expireReviewSession(id, current, at);
+    await this.recordReviewStateSnapshotWithLiveSession({ reviewSessionId: id, fromStatus: current.status,
+      state: next.reviewState!, reviewRevision: next.reviewRevision, recordedAt: at.toISOString() }, current, next, { deleteTransactionMaterials: true });
+    return cloneLocalSession(next);
+  }
+
+  async listReviewSessions(clock: () => Date = this.clock): Promise<ReviewSession[]> {
     const sessions: ReviewSession[] = [];
     for (const id of this.sessions.ids()) {
-      const session = await this.getReviewSession(id, now);
+      const session = await this.getReviewSession(id, clock);
       if (session) {
         sessions.push(session);
       }
@@ -340,41 +342,6 @@ export class LocalSessionStore implements SessionStore {
     return tokenMatchesHash(session.tokenHash, token);
   }
 
-  async recordReviewPageOpened(id: string, now = new Date()): Promise<ReviewSession> {
-    const session = this.sessions.get(id);
-    if (!session) {
-      throw new SessionStoreError("session_not_found", `Review session not found: ${id}`);
-    }
-
-    if (isLocalSessionExpired(session, now) && !isFinalSessionStatus(session.status)) {
-      return cloneLocalSession(await this.expireReviewSession(id, session, now));
-    }
-
-    if (session.status === "success" || session.status === "failure" || session.status === "expired") {
-      return cloneLocalSession(session);
-    }
-
-    const nextSession = cloneLocalSession(session);
-    if (nextSession.status === "proposed") {
-      transition(nextSession, "awaiting_wallet");
-    }
-    nextSession.lastActivityAt = now.toISOString();
-    await this.recordReviewTransitionWithLiveSession({
-      reviewSessionId: id,
-      event: "opened",
-      fromStatus: session.status,
-      toStatus: nextSession.status,
-      transitionedAt: now.toISOString()
-    }, session, nextSession);
-    await this.appendEventLog({
-      type: "review.opened",
-      sessionId: id,
-      status: nextSession.status,
-      at: now.toISOString()
-    });
-    return cloneLocalSession(nextSession);
-  }
-
   async recordWalletConnected(id: string, account: string, now = new Date()): Promise<ReviewSession> {
     const session = await this.requireMutableSession(id, now);
     const normalizedAccount = parseSuiAddress(account);
@@ -385,13 +352,13 @@ export class LocalSessionStore implements SessionStore {
     if (!activeAccount) {
       throw new SessionStoreError(
         "active_account_not_set",
-        "Review account binding requires an active wallet identity account"
+        "Review account binding requires an active read account"
       );
     }
     if (activeAccount.address !== normalizedAccount) {
       throw new SessionStoreError(
         "invalid_session_transition",
-        `Review account does not match active wallet identity account: ${id}`
+        `Review account does not match active read account: ${id}`
       );
     }
     const nextSession = cloneLocalSession(session);
@@ -402,11 +369,9 @@ export class LocalSessionStore implements SessionStore {
       );
     }
     if (nextSession.status === "proposed") {
-      // Persisted wallet identity (active account already set) lets the review
-      // page skip the wallet-identity prompt, so the session is still
-      // "proposed" when it binds the account. Walk the canonical
-      // proposed -> awaiting_wallet -> wallet_connected path; the active-account
-      // match above already proved the binding is legitimate.
+      // Explicit backend account binding follows the preparation lifecycle.
+      // Active read context alone is not wallet approval; the workflow checks
+      // the live wallet connection before invoking this operation.
       transition(nextSession, "awaiting_wallet");
       transition(nextSession, "wallet_connected");
     } else if (nextSession.status === "awaiting_wallet") {
@@ -444,62 +409,25 @@ export class LocalSessionStore implements SessionStore {
     id: string,
     state: ReviewState,
     privateArtifacts: PrivateReviewArtifacts | undefined,
-    now = new Date()
+    now = this.clock(),
+    preparation?: { id: string; connectionId: string; connectionRevision: number }
   ): Promise<ReviewSession> {
-    const pendingSession = this.sessions.get(id);
-    if (pendingSession?.pendingHandoffDigest) {
-      if (await this.pendingHandoffMaterialAvailable(id, now)) {
-        throw new SessionStoreError(
-          "invalid_session_transition",
-          "Signing is in progress for this review session; record the wallet result or cancel signing before recomputing"
-        );
-      }
-      // The handed-off material expired without a recorded result; release the
-      // lock so the session can recompute instead of being stuck.
-      await this.clearPendingHandoff(id, "material_expired", now);
+    if (this.sessions.hasUnsettledRequest(id, now)) {
+      throw new SessionStoreError("invalid_session_transition", "The previous wallet request is still being settled.");
     }
-    return this.recordReviewStateInternal(id, state, privateArtifacts, now);
-  }
-
-  async getReviewSessionPrivateArtifacts(
-    id: string,
-    now = new Date()
-  ): Promise<PrivateReviewArtifacts | undefined> {
-    const session = await this.getReviewSession(id, now);
-    if (!session) {
-      return undefined;
-    }
-    if (!canRetainPrivateReviewArtifacts(session.status)) {
-      this.deleteReviewSessionTransactionMaterials(id);
-      return undefined;
-    }
-    const artifacts = this.privateReviewArtifacts.get(id);
-    if (!artifacts) {
-      return undefined;
-    }
-    if (!session.reviewState) {
-      this.deleteReviewSessionTransactionMaterials(id);
-      return undefined;
-    }
-    try {
-      return await this.parseReviewSessionPrivateArtifacts(id, session.reviewState, artifacts, now);
-    } catch (error) {
-      this.logger.error("private review artifact verification failed", {
-        reviewSessionId: id,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      this.deleteReviewSessionTransactionMaterials(id);
-      return undefined;
-    }
+    return this.recordReviewStateInternal(id, state, privateArtifacts, now, preparation);
   }
 
   private async recordReviewStateInternal(
     id: string,
     state: ReviewState,
     privateArtifacts: PrivateReviewArtifacts | undefined,
-    now: Date
+    now: Date,
+    preparation?: { id: string; connectionId: string; connectionRevision: number }
   ): Promise<ReviewSession> {
     const session = await this.requireMutableSession(id, now);
+    if (preparation && (session.preparationId !== preparation.id || session.walletConnectionId !== preparation.connectionId ||
+        session.walletConnectionRevision !== preparation.connectionRevision)) this.throwStaleReviewSession(id);
     assertSameSessionId(id, state.reviewSessionId, "Review state");
     assertPlanInSession(session, state.planId);
     const parsedState = parseReviewState(state, this.validateAdapterLifecycle);
@@ -515,20 +443,30 @@ export class LocalSessionStore implements SessionStore {
         `Review state account does not match the review session account: ${id}`
       );
     }
-    await this.assertReviewSessionPrivateArtifacts(id, parsedState, privateArtifacts, now);
+    let verified;
+    try { verified = await this.assertReviewSessionPrivateArtifacts(id, parsedState, privateArtifacts, now); }
+    catch (error) {
+      if (isDeepStrictEqual(this.sessions.get(id), session)) this.deleteReviewSessionTransactionMaterials(id);
+      throw error;
+    }
     const nextSession = cloneLocalSession(session);
     transition(nextSession, parsedState.status);
     nextSession.account = session.account;
     nextSession.reviewState = parsedState;
+    nextSession.reviewRevision = session.reviewRevision + 1;
+    delete nextSession.preparationId;
+    delete nextSession.preparationError;
     nextSession.lastActivityAt = now.toISOString();
     try {
       await this.recordReviewStateSnapshotWithLiveSession({
         reviewSessionId: id,
         fromStatus: session.status,
         state: parsedState,
+        reviewRevision: nextSession.reviewRevision,
         recordedAt: now.toISOString()
       }, session, nextSession, {
-        privateArtifactsJson: this.privateArtifactsJsonForLiveMutation(privateArtifacts)
+        privateArtifactsJson: this.privateArtifactsJsonForLiveMutation(privateArtifacts),
+        ...(preparation && verified ? { publication: { material: verified, clock: this.clock } } : {})
       }, () => this.replaceReviewSessionPrivateArtifacts(id, privateArtifacts));
       await this.appendEventLog({
         type: "state.computed",
@@ -540,123 +478,9 @@ export class LocalSessionStore implements SessionStore {
       });
       return cloneLocalSession(nextSession);
     } catch (error) {
-      if (privateArtifacts && !this.isStaleReviewSessionCommitError(error)) {
+      if (privateArtifacts && !this.isStaleReviewSessionCommitError(error) && isDeepStrictEqual(this.sessions.get(id), session)) {
         this.deleteReviewSessionTransactionMaterials(id);
       }
-      throw error;
-    }
-  }
-
-  async recordExecutionResult(
-    id: string,
-    result: ExecutionResult,
-    now = new Date()
-  ): Promise<ReviewSession> {
-    const session = await this.requireMutableSession(id, now);
-    const parsedResult = parseExecutionResult(result);
-    assertPageExecutionResultTransition(session, parsedResult);
-    return this.recordExecutionResultInternal(id, session, parsedResult, now);
-  }
-
-  async recordChainExecutionResult(
-    id: string,
-    result: ExecutionResult,
-    now = new Date()
-  ): Promise<ReviewSession> {
-    const session = await this.requireMutableSession(id, now);
-    if (session.executionResult?.status === "success" || session.executionResult?.status === "failure") {
-      this.deleteReviewSessionTransactionMaterials(id);
-      throw new SessionStoreError(
-        "execution_result_finalized",
-        `Execution result already finalized: ${id}`
-      );
-    }
-    const parsedResult = parseExecutionResult(result);
-    assertChainExecutionResultTransition(session, parsedResult);
-    return this.recordExecutionResultInternal(id, session, parsedResult, now);
-  }
-
-  private async recordExecutionResultInternal(
-    id: string,
-    session: ReviewSession,
-    parsedResult: ExecutionResult,
-    now: Date
-  ): Promise<ReviewSession> {
-    assertSameSessionId(id, parsedResult.reviewSessionId, "Execution result");
-    assertPlanInSession(session, parsedResult.planId);
-    if (session.executionResult?.status === "success" || session.executionResult?.status === "failure") {
-      this.deleteReviewSessionTransactionMaterials(id);
-      throw new SessionStoreError(
-        "execution_result_finalized",
-        `Execution result already finalized: ${id}`
-      );
-    }
-    if (
-      session.executionResult?.status === "signed_pending_result" &&
-      parsedResult.status === "signed_pending_result"
-    ) {
-      if (
-        session.executionResult.planId !== parsedResult.planId ||
-        session.executionResult.txDigest !== parsedResult.txDigest
-      ) {
-        this.deleteReviewSessionTransactionMaterials(id);
-        throw new SessionStoreError(
-          "signed_pending_result_conflict",
-          `Signed pending result already recorded: ${id}`
-        );
-      }
-      this.deleteReviewSessionTransactionMaterials(id);
-      return cloneLocalSession(session);
-    }
-    if (
-      session.executionResult?.status === "signed_pending_result" &&
-      parsedResult.status !== "signed_pending_result" &&
-      session.executionResult.txDigest !== parsedResult.txDigest
-    ) {
-      this.deleteReviewSessionTransactionMaterials(id);
-      throw new SessionStoreError(
-        "signed_pending_result_conflict",
-        `Execution result digest does not match signed pending result: ${id}`
-      );
-    }
-    const nextSession = cloneLocalSession(session);
-    transition(nextSession, parsedResult.status);
-    const reviewAccount = session.account;
-    if (!reviewAccount || session.reviewState?.account !== reviewAccount) {
-      throw new SessionStoreError(
-        "invalid_session_transition",
-        `Execution result requires account-bound review state: ${id}`
-      );
-    }
-    nextSession.account = reviewAccount;
-    nextSession.executionResult = parsedResult;
-    // The outstanding handoff is settled by this recorded result.
-    delete nextSession.pendingHandoffDigest;
-    nextSession.lastActivityAt = now.toISOString();
-    try {
-      await this.recordReviewExecutionWithLiveSession({
-        reviewSessionId: parsedResult.reviewSessionId,
-        planId: parsedResult.planId,
-        account: reviewAccount,
-        fromStatus: session.status,
-        status: parsedResult.status,
-        txDigest: parsedResult.txDigest,
-        explorerUrl: parsedResult.explorerUrl,
-        failureReason: "failureReason" in parsedResult ? parsedResult.failureReason : undefined,
-        result: parsedResult,
-        recordedAt: parsedResult.recordedAt
-      }, session, nextSession, { deleteTransactionMaterials: true });
-      const event = {
-        type: "result.recorded",
-        sessionId: id,
-        planId: parsedResult.planId,
-        status: parsedResult.status,
-        at: now.toISOString()
-      } as const;
-      await this.appendEventLog(parsedResult.txDigest ? { ...event, txDigest: parsedResult.txDigest } : event);
-      return cloneLocalSession(nextSession);
-    } catch (error) {
-      this.deleteReviewSessionTransactionMaterials(id);
       throw error;
     }
   }
@@ -676,41 +500,6 @@ export class LocalSessionStore implements SessionStore {
     return session;
   }
 
-  async createWalletIdentitySession(now = new Date()): Promise<CreatedWalletIdentitySession> {
-    return this.walletIdentity.create(now);
-  }
-
-  async getWalletIdentitySession(
-    id: string,
-    now = new Date()
-  ): Promise<WalletIdentitySession | undefined> {
-    return this.walletIdentity.get(id, now);
-  }
-
-  async listWalletIdentitySessions(now = new Date()): Promise<WalletIdentitySession[]> {
-    return this.walletIdentity.list(now);
-  }
-
-  async validateWalletIdentityToken(id: string, token: string, _now = new Date()): Promise<boolean> {
-    return this.walletIdentity.validateToken(id, token);
-  }
-
-  async recordWalletIdentityOpened(id: string, now = new Date()): Promise<WalletIdentitySession> {
-    return this.walletIdentity.recordOpened(id, now);
-  }
-
-  async recordWalletIdentityConnecting(id: string, now = new Date()): Promise<WalletIdentitySession> {
-    return this.walletIdentity.recordConnecting(id, now);
-  }
-
-  async recordWalletIdentityResult(
-    id: string,
-    result: WalletIdentityResultInput,
-    now = new Date()
-  ): Promise<WalletIdentitySession> {
-    return this.walletIdentity.recordResult(id, result, now);
-  }
-
   async createSettingsSession(now = new Date()): Promise<CreatedSettingsSession> {
     return this.settings.create(now);
   }
@@ -723,139 +512,21 @@ export class LocalSessionStore implements SessionStore {
     return this.settings.validateToken(id, token, now);
   }
 
-  async prepareWalletHandoff(
-    id: string,
-    planId: string,
-    account: string,
-    now = new Date()
-  ): Promise<WalletHandoffMaterial> {
-    const session = await this.requireMutableSession(id, now);
-    assertPlanInSession(session, planId);
-    try {
-      return await this.gateWalletHandoff(id, session, planId, account, now);
-    } catch (error) {
-      if (error instanceof SessionStoreError) {
-        await this.appendEventLog({
-          type: "handoff.refused",
-          sessionId: id,
-          planId,
-          reason: error.code,
-          at: now.toISOString()
-        });
-      }
-      throw error;
+  async prepareReviewedTransaction(id: string, planId: string, account: string, now = this.clock()): Promise<ValidatedReviewMaterial> {
+    const candidate = await this.inspectReview(id, now);
+    if (!candidate) throw new SessionStoreError("session_not_found", "Review session is unavailable.");
+    assertPlanInSession(candidate.session, planId);
+    const state = candidate.session.reviewState;
+    if (candidate.session.status !== "ready_for_wallet_review" || state?.planId !== planId || !state.transactionReviewData) {
+      throw new SessionStoreError("invalid_session_transition", "Reviewed transaction requires current verified review evidence.");
     }
-  }
-
-  private async pendingHandoffMaterialAvailable(id: string, now: Date): Promise<boolean> {
-    if (!this.transactionMaterialStore) {
-      return false;
+    if (state.account !== parseSuiAddress(account)) throw new SessionStoreError("input_invalid", "Reviewed transaction account does not match the reviewed account");
+    const material = candidate.material;
+    if (!material) throw new SessionStoreError("handoff_unavailable", "Reviewed transaction material is unavailable.");
+    if (material.reviewedTransactionDigest !== state.transactionReviewData.reviewedTransactionDigest) {
+      throw new SessionStoreError("handoff_commitment_mismatch", "Reviewed transaction digest differs from the reviewed commitment.");
     }
-    const artifacts = await this.getReviewSessionPrivateArtifacts(id, now);
-    const handle = artifacts?.transactionMaterial;
-    if (!handle) {
-      return false;
-    }
-    return this.transactionMaterialStore.getTransactionMaterial(handle, now) !== undefined;
-  }
-
-  private async clearPendingHandoff(id: string, reason: string, now: Date): Promise<void> {
-    const session = this.sessions.get(id);
-    if (!session || session.pendingHandoffDigest === undefined) {
-      return;
-    }
-    this.sessions.releaseHandoffLock(id, session.pendingHandoffDigest);
-    await this.appendEventLog({
-      type: "handoff.cancelled",
-      sessionId: id,
-      reason,
-      at: now.toISOString()
-    });
-  }
-
-  async cancelWalletHandoff(id: string, now = new Date()): Promise<ReviewSession> {
-    const session = this.sessions.get(id);
-    if (!session) {
-      throw new SessionStoreError("session_not_found", `Review session not found: ${id}`);
-    }
-    await this.clearPendingHandoff(id, "user_cancelled", now);
-    return cloneLocalSession(this.sessions.get(id)!);
-  }
-
-  private async gateWalletHandoff(
-    id: string,
-    session: ReviewSession,
-    planId: string,
-    account: string,
-    now: Date
-  ): Promise<WalletHandoffMaterial> {
-    const state = session.reviewState;
-    if (!state || state.status !== "ready_for_wallet_review" || state.planId !== planId) {
-      throw new SessionStoreError(
-        "invalid_session_transition",
-        "Wallet handoff requires a ready_for_wallet_review state for this plan"
-      );
-    }
-    const normalizedAccount = parseSuiAddress(account);
-    if (!normalizedAccount || state.account !== normalizedAccount) {
-      throw new SessionStoreError("input_invalid", "Wallet handoff account does not match the reviewed account");
-    }
-    const contract = state.walletReviewAdapterContract;
-    if (!contract) {
-      throw new SessionStoreError("handoff_unavailable", "Wallet handoff requires an emitted wallet review contract");
-    }
-    const artifacts = await this.getReviewSessionPrivateArtifacts(id, now);
-    const handle = artifacts?.transactionMaterial;
-    const digest = artifacts?.transactionMaterialDigest;
-    if (!handle || !digest || !this.transactionMaterialStore) {
-      throw new SessionStoreError("handoff_unavailable", "Wallet handoff transaction material is unavailable");
-    }
-    // Bind at handoff: recompute the digest of the exact stored bytes and require
-    // it to equal the commitment the user reviewed before any bytes leave the store.
-    try {
-      await verifyLocalTransactionMaterialArtifacts({
-        materialStore: this.transactionMaterialStore,
-        transactionMaterial: handle,
-        transactionMaterialDigest: digest,
-        now
-      });
-    } catch (error) {
-      if (error instanceof LocalTransactionMaterialStoreError) {
-        throw new SessionStoreError("handoff_unavailable", `Wallet handoff refused: ${error.message}`);
-      }
-      throw error;
-    }
-    if (digest.transactionDigest !== contract.transactionMaterialCommitment) {
-      throw new SessionStoreError(
-        "handoff_commitment_mismatch",
-        "Wallet handoff refused: stored transaction digest does not match the reviewed contract commitment"
-      );
-    }
-    const material = this.transactionMaterialStore.getTransactionMaterial(handle, now);
-    if (!material) {
-      throw new SessionStoreError("handoff_unavailable", "Wallet handoff transaction material is unavailable");
-    }
-    // One-transaction lock: while a handoff is outstanding, state recomputes
-    // are refused so a second, different transaction cannot be signed from
-    // the same session. Cleared on result recording, cancel, or material expiry.
-    if (!this.sessions.acquireHandoffLock(id, contract.transactionMaterialCommitment)) {
-      throw new SessionStoreError(
-        "handoff_unavailable",
-        "Another signing is already in progress for this review session"
-      );
-    }
-    await this.appendEventLog({
-      type: "handoff.prepared",
-      sessionId: id,
-      planId,
-      at: now.toISOString()
-    });
-    return {
-      transactionBytesBase64: Buffer.from(material.transactionBytes).toString("base64"),
-      transactionMaterialCommitment: contract.transactionMaterialCommitment,
-      planId,
-      account: normalizedAccount
-    };
+    return material;
   }
 
   async invalidateAllLocalSessions(reason: string, now = new Date()): Promise<void> {
@@ -863,7 +534,6 @@ export class LocalSessionStore implements SessionStore {
       this.deleteReviewSessionTransactionMaterials(id);
     }
     this.sessions.clear();
-    this.walletIdentity.clear();
     this.settings.clear();
     await this.appendEventLog({
       type: "local_sessions.invalidated",
@@ -973,26 +643,6 @@ export class LocalSessionStore implements SessionStore {
     });
   }
 
-  private async recordReviewExecutionWithLiveSession(
-    input: ReviewExecutionInput,
-    expectedSession: ReviewSession,
-    nextSession: ReviewSession,
-    liveSideEffects: LiveReviewSessionSideEffects = {}
-  ): Promise<void> {
-    await this.commitLiveReviewSessionProcess({
-      sessionId: expectedSession.id,
-      expectedSession,
-      nextSession,
-      liveSideEffects,
-      commitWithLiveSession: this.activityStore.recordReviewExecutionWithLiveSession
-        ? async (live) => (await this.activityStore.recordReviewExecutionWithLiveSession!(input, live)) !== undefined
-        : undefined,
-      commitActivityOnly: async () => { await this.activityStore.recordReviewExecution(input); },
-      commitLiveSessionOnly: () => this.commitReviewSessionUpdate(expectedSession.id, expectedSession, nextSession),
-      applyActivityOnlySideEffects: () => this.applyActivityOnlyLiveSessionSideEffects(expectedSession.id, liveSideEffects)
-    });
-  }
-
   private applyActivityOnlyLiveSessionSideEffects(
     reviewSessionId: string,
     liveSideEffects: LiveReviewSessionSideEffects
@@ -1060,97 +710,6 @@ export class LocalSessionStore implements SessionStore {
     return nextSession;
   }
 
-  private async sanitizePrivateDerivedReviewState(
-    id: string,
-    session: ReviewSession,
-    now: Date
-  ): Promise<ReviewSession> {
-    // While a wallet handoff is outstanding, the page is signing bytes that
-    // were already handed over; material expiry must not demote the session
-    // out from under that signature (slow hardware wallets legitimately take
-    // longer than the material TTL). The lock still releases on result
-    // recording, explicit cancel, or the recompute-time expiry self-heal.
-    if (session.pendingHandoffDigest !== undefined) {
-      return session;
-    }
-    if (
-      !canRetainPrivateReviewArtifacts(session.status) ||
-      (!session.reviewState?.humanReadableReview && !session.reviewState?.simulation)
-    ) {
-      return session;
-    }
-    const artifacts = this.privateReviewArtifacts.get(id);
-    if (!artifacts) {
-      return await this.markPrivateDerivedReviewStateRefreshRequired(id, session, now);
-    }
-    try {
-      await this.parseReviewSessionPrivateArtifacts(id, session.reviewState, artifacts, now);
-      return session;
-    } catch (error) {
-      this.logger.error("private-derived review state refresh required", {
-        reviewSessionId: id,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      return await this.markPrivateDerivedReviewStateRefreshRequired(id, session, now);
-    }
-  }
-
-  private async markPrivateDerivedReviewStateRefreshRequired(
-    id: string,
-    session: ReviewSession,
-    now: Date
-  ): Promise<ReviewSession> {
-    const nextSession = cloneLocalSession(session);
-    transition(nextSession, "refresh_required");
-    if (nextSession.reviewState) {
-      nextSession.reviewState = {
-        planId: nextSession.reviewState.planId,
-        reviewSessionId: id,
-        account: nextSession.reviewState.account,
-        status: "refresh_required",
-        refreshReason: "quote_stale",
-        checks: [{
-          id: "private_review_artifacts_refresh_required",
-          label: "Review evidence refresh",
-          status: "fail",
-          message: "Private review evidence expired or no longer matches stored material; recompute the account-bound review before using human-readable review facts.",
-          source: "adapter"
-        }],
-        updatedAt: now.toISOString()
-      };
-    }
-    nextSession.lastActivityAt = now.toISOString();
-    if (nextSession.reviewState) {
-      await this.recordReviewStateSnapshotWithLiveSession({
-        reviewSessionId: id,
-        fromStatus: session.status,
-        state: nextSession.reviewState,
-        recordedAt: now.toISOString()
-      }, session, nextSession, { deleteTransactionMaterials: true });
-    } else {
-      await this.recordReviewTransitionWithLiveSession({
-        reviewSessionId: id,
-        event: "state_computed",
-        fromStatus: session.status,
-        toStatus: nextSession.status,
-        reason: "private_review_artifacts_refresh_required",
-        transitionedAt: now.toISOString()
-      }, session, nextSession, { deleteTransactionMaterials: true });
-    }
-    await this.appendEventLog({
-      type: "state.computed",
-      sessionId: id,
-      status: nextSession.status,
-      reason: "private_review_artifacts_refresh_required",
-      at: now.toISOString(),
-      ...(nextSession.reviewState?.planId ? { planId: nextSession.reviewState.planId } : {}),
-      ...(nextSession.reviewState?.account
-        ? { walletAddressHash: hashEventValue(nextSession.reviewState.account) }
-        : {})
-    });
-    return nextSession;
-  }
-
   private replaceReviewSessionPrivateArtifacts(
     reviewSessionId: string,
     privateArtifacts: PrivateReviewArtifacts | undefined
@@ -1167,10 +726,9 @@ export class LocalSessionStore implements SessionStore {
     state: ReviewState,
     privateArtifacts: PrivateReviewArtifacts | undefined,
     now: Date
-  ): Promise<void> {
+  ): Promise<{ artifacts: PrivateReviewArtifacts; transactionBytes: Uint8Array } | undefined> {
     if (!privateArtifacts) {
       if (state.humanReadableReview || state.simulation) {
-        this.deleteReviewSessionTransactionMaterials(reviewSessionId);
         throw new SessionStoreError(
           "session_mismatch",
           `Review private-derived state requires matching private evidence: ${reviewSessionId}`
@@ -1179,13 +737,12 @@ export class LocalSessionStore implements SessionStore {
       return;
     }
     try {
-      await this.parseReviewSessionPrivateArtifacts(reviewSessionId, state, privateArtifacts, now);
+      return await this.parseReviewSessionPrivateArtifacts(reviewSessionId, state, privateArtifacts, now);
     } catch (error) {
       this.logger.error("private review artifact rejected", {
         reviewSessionId,
         error: error instanceof Error ? error.message : String(error)
       });
-      this.deleteReviewSessionTransactionMaterials(reviewSessionId);
       throw new SessionStoreError(
         "session_mismatch",
         `Review private artifacts do not match the stored review state: ${reviewSessionId}`
@@ -1198,14 +755,14 @@ export class LocalSessionStore implements SessionStore {
     state: ReviewState,
     privateArtifacts: PrivateReviewArtifacts,
     now: Date
-  ): Promise<PrivateReviewArtifacts> {
+  ): Promise<{ artifacts: PrivateReviewArtifacts; transactionBytes: Uint8Array }> {
     const { transactionMaterial, transactionMaterialDigest } = privateArtifacts;
     if (
       !transactionMaterial ||
       !transactionMaterialDigest ||
       !this.transactionMaterialStore
     ) {
-      throw new Error("missing private artifact material, digest, or material store");
+      throw new ReviewEvidenceMismatch("missing private artifact material, digest, or material store");
     }
     const parsed = await verifyLocalTransactionMaterialArtifacts({
       materialStore: this.transactionMaterialStore,
@@ -1218,8 +775,9 @@ export class LocalSessionStore implements SessionStore {
       parsed.transactionMaterial.planId !== state.planId ||
       parsed.transactionMaterial.account !== state.account
     ) {
-      throw new Error("private artifacts do not match review state identity");
+      throw new ReviewEvidenceMismatch("private artifacts do not match review state identity");
     }
+    try {
     const transactionObjectOwnership = privateArtifacts.transactionObjectOwnership
       ? verifyTransactionObjectOwnershipEvidence({
           transactionMaterial: parsed.transactionMaterial,
@@ -1254,14 +812,18 @@ export class LocalSessionStore implements SessionStore {
         })
       : undefined;
     const verifiedArtifacts = {
-      ...parsed,
+      transactionMaterial: parsed.transactionMaterial,
+      transactionMaterialDigest: parsed.transactionMaterialDigest,
       ...(swapQuotePolicy ? { swapQuotePolicy } : {}),
       ...(transactionObjectOwnership ? { transactionObjectOwnership } : {}),
       ...(humanReadableReview ? { humanReadableReview } : {}),
       ...(reviewTimeSimulation ? { reviewTimeSimulation } : {})
     };
     assertPrivateDerivedReviewStateProjections(state, verifiedArtifacts);
-    return verifiedArtifacts;
+    return { artifacts: verifiedArtifacts, transactionBytes: parsed.transactionBytes };
+    } catch (error) {
+      throw new ReviewEvidenceMismatch(error instanceof Error ? error.message : "Private review evidence does not match.");
+    }
   }
 }
 
@@ -1289,11 +851,11 @@ function assertPrivateDerivedReviewStateProjections(
       continue;
     }
     if (publicValue === undefined || privateEvidence === undefined) {
-      throw new Error(`review state ${binding.field} must match private ${binding.field} evidence`);
+      throw new ReviewEvidenceMismatch(`review state ${binding.field} must match private ${binding.field} evidence`);
     }
     const projected = binding.projectPrivateEvidence(privateEvidence);
     if (!isDeepStrictEqual(publicValue, projected)) {
-      throw new Error(`review state ${binding.field} must be projected from private ${binding.field} evidence`);
+      throw new ReviewEvidenceMismatch(`review state ${binding.field} must be projected from private ${binding.field} evidence`);
     }
   }
 }
@@ -1348,86 +910,4 @@ function parseReviewState(
   return { ...parsed, account: normalizedAccount } as ReviewState;
 }
 
-const CHAIN_EXECUTION_FAILURE_REASONS = new Set<FailureReason>([
-  "chain_receipt_unavailable",
-  "receipt_verification_failed",
-  "chain_execution_failed"
-]);
-
-const PAGE_EXECUTION_FAILURE_REASONS = new Set<FailureReason>([
-  "wallet_rejected",
-  "wallet_provider_error",
-  "signing_disconnected",
-  "network_error",
-  "unknown_failure"
-]);
-
-function assertPageExecutionResultTransition(
-  session: ReviewSession,
-  result: ExecutionResult
-): void {
-  if (result.status === "success") {
-    throw new SessionStoreError("input_invalid", "Page execution result cannot finalize chain success");
-  }
-  if (result.status === "signed_pending_result") {
-    const commitment = session.reviewState?.walletReviewAdapterContract?.transactionMaterialCommitment;
-    if (commitment !== undefined && result.txDigest !== commitment) {
-      throw new SessionStoreError(
-        "handoff_commitment_mismatch",
-        "Signed transaction digest does not match the reviewed transaction commitment"
-      );
-    }
-    return;
-  }
-  if (!PAGE_EXECUTION_FAILURE_REASONS.has(result.failureReason) || result.txDigest !== undefined) {
-    throw new SessionStoreError("input_invalid", "Page execution failure must be a local pre-chain failure");
-  }
-  if (session.executionResult?.status === "signed_pending_result") {
-    throw new SessionStoreError(
-      "signed_pending_result_conflict",
-      `Signed pending result already recorded: ${session.id}`
-    );
-  }
-}
-
-function assertChainExecutionResultTransition(
-  session: ReviewSession,
-  result: ExecutionResult
-): void {
-  const pending = session.executionResult;
-  if (!pending || pending.status !== "signed_pending_result") {
-    throw new SessionStoreError(
-      "invalid_session_transition",
-      `Chain execution finalization requires signed pending result: ${session.id}`
-    );
-  }
-  if (result.status === "signed_pending_result") {
-    throw new SessionStoreError("input_invalid", "Chain execution finalization requires a final result");
-  }
-  if (result.txDigest !== pending.txDigest) {
-    throw new SessionStoreError(
-      "signed_pending_result_conflict",
-      `Chain execution result digest does not match signed pending result: ${session.id}`
-    );
-  }
-  if (result.status === "success") {
-    if (!result.chainReceipt) {
-      throw new SessionStoreError("input_invalid", "Verified chain success requires chain receipt evidence");
-    }
-    return;
-  }
-  if (!CHAIN_EXECUTION_FAILURE_REASONS.has(result.failureReason)) {
-    throw new SessionStoreError("input_invalid", "Chain execution finalization requires a chain failure reason");
-  }
-  if (result.failureReason === "chain_execution_failed" && !result.chainReceipt) {
-    throw new SessionStoreError("input_invalid", "Verified chain execution failure requires chain receipt evidence");
-  }
-}
-
-function parseExecutionResult(result: ExecutionResult): ExecutionResult {
-  const parsed = executionResultSchema.safeParse(result);
-  if (!parsed.success) {
-    throw new SessionStoreError("input_invalid", "Invalid execution result shape");
-  }
-  return parsed.data as ExecutionResult;
-}
+class ReviewEvidenceMismatch extends Error {}

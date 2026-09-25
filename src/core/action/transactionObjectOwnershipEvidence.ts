@@ -202,7 +202,7 @@ export function verifyTransactionObjectOwnershipEvidence(input: {
 export type ObjectOwnershipContractMapping =
   | {
       status: "mapped";
-      sourceOfTruth: AdapterSourceOfTruth;
+      sourceReferences: AdapterSourceOfTruth;
       evidenceClaims: Array<Extract<AdapterEvidenceClaim, { factKind: "object_ownership" }>>;
       objectOwnership: AdapterObjectOwnershipEvidence;
       gasObjectOwnershipLinks: AdapterGasObjectOwnershipLink[];
@@ -280,7 +280,7 @@ export function mapTransactionObjectOwnershipEvidenceToContractDraft(
 
   return {
     status: "mapped",
-    sourceOfTruth: adapterSourceOfTruthSchema.parse({
+    sourceReferences: adapterSourceOfTruthSchema.parse({
       id: sourceEvidenceId,
       kind: "wallet_account_read",
       network: "sui:mainnet",

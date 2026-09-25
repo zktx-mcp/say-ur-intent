@@ -29,7 +29,7 @@ const toolFiles = [
   "src/mcp/tools/action/prepareSuiActionReview.ts",
   "src/mcp/tools/session/executionResultTools.ts",
   "src/mcp/tools/session/statusTools.ts",
-  "src/mcp/tools/session/walletIdentityTools.ts",
+  "src/mcp/tools/session/walletConnectionTools.ts",
   "src/mcp/tools/settings/index.ts"
 ];
 
@@ -38,7 +38,7 @@ const behaviorDocs = [
   "docs/FRONTEND_POLICY.md",
   "docs/golden-scenarios/INTENT_EVIDENCE_MATRIX.md",
   "docs/golden-scenarios/BEHAVIOR_MATRIX.md",
-  "docs/WALLET_IDENTITY.md"
+  "docs/WALLET_CONNECTION.md"
 ];
 
 const protocolResearchDocs = [
@@ -156,14 +156,13 @@ describe("source policy", () => {
     }
   });
 
-  it("keeps the review page from reporting chain-final execution results", () => {
-    const source = readFileSync(join(process.cwd(), "review-app/src/review.ts"), "utf8");
-
-    expect(source).toContain('body: { status: "signed_pending_result" | "failure"; txDigest?: string; failureReason?: string }');
-    expect(source).toContain('status: "signed_pending_result"');
-    expect(source).not.toContain('status: "success"');
-    expect(source).not.toContain("transaction_submit_failed");
-    expect(source).not.toContain("execution_result_unavailable");
+  it("keeps card actions from supplying an execution result or signing material", () => {
+    const actions = readFileSync(join(process.cwd(), "src/core/session/workflowView.ts"), "utf8");
+    const end = actions.indexOf("export const workflowViewSchema");
+    expect(actions.slice(0, end)).not.toMatch(/transactionBytes|signature:|executionResult:/);
+    const backend = readFileSync(join(process.cwd(), "src/core/session/walletWorkflow.ts"), "utf8");
+    expect(backend).toContain("verifyTransactionSignature");
+    expect(backend).toContain('result.status === "verified_success" || result.status === "verified_failure"');
   });
 
   it("keeps the internal receipt card display-only and server-fact owned", () => {
@@ -177,7 +176,7 @@ describe("source policy", () => {
     // server SOT type and validates it before rendering.
     const displaySource = readFileSync(join(process.cwd(), "src/mcp-ui/view/receiptData.ts"), "utf8");
     expect(pageSource).toContain("receiptForCard(snapshot, display)");
-    expect(displaySource).toContain("parseReceipt(result?.receipt)");
+    expect(displaySource).toContain("parseReceipt(receiptResult?.receipt)");
     expect(displaySource).toContain("display.transactionDigest !== receipt.txDigest");
     expect(displaySource).toContain("display.cardId !== snapshot.cardId");
     expect(displaySource).toContain("display.revision !== snapshot.revision");
@@ -187,27 +186,20 @@ describe("source policy", () => {
     expect(source).not.toMatch(/all matched|safe to sign|ready to sign/i);
     // Public page: never carries a session token or review/session evidence.
     expect(source).not.toMatch(/x-say-ur-intent-token|readPageToken|tokenHeaders/);
-    expect(source).not.toMatch(/reviewedRequest|labeledSessionFacts|walletReviewAdapterContract|reviewState/);
+    expect(source).not.toMatch(/reviewedRequest|labeledSessionFacts|transactionReviewData|reviewState/);
     }
   });
 
-  it("wires transaction signing and the byte handoff only on the Review & Execution page", () => {
-    const directory = join(process.cwd(), "review-app/src");
-    const frontendFiles = readdirSync(directory).filter((file) => file.endsWith(".ts"));
-    // The digest-gated byte handoff and wallet signing are the only transaction
-    // exit; they must live on review.ts alone, never on a public or other token
-    // page.
-    const signingMarker = /signTransaction|\/handoff/;
-    let reviewWiresSigning = false;
-    for (const file of frontendFiles) {
-      const source = readFileSync(join(directory, file), "utf8");
-      if (file === "review.ts") {
-        reviewWiresSigning = signingMarker.test(source);
-      } else {
-        expect(signingMarker.test(source), `${file} must not wire signing or the byte handoff`).toBe(false);
+  it("keeps wallet and transaction I/O out of every card and remaining page", () => {
+    for (const directory of ["src/mcp-ui/view", "review-app/src"]) {
+      for (const file of readdirSync(join(process.cwd(), directory)).filter((file) => file.endsWith(".ts"))) {
+        const source = readFileSync(join(process.cwd(), directory, file), "utf8");
+        expect(source, file).not.toMatch(/@walletconnect\/sign-client|dappKit|signTransaction\(|executeTransaction\(|transactionBytesBase64|\/handoff/);
       }
     }
-    expect(reviewWiresSigning, "review.ts must wire signing and the byte handoff").toBe(true);
+    const backend = readFileSync(join(process.cwd(), "src/runtime/walletConnectTransport.ts"), "utf8");
+    expect(backend).toContain("SUI_SIGN_TRANSACTION_METHOD");
+    expect(backend).not.toMatch(/sui_signAndExecuteTransaction/);
   });
 
   it("documents chain receipts as server-read execution evidence without expanding authority", () => {
@@ -226,10 +218,10 @@ describe("source policy", () => {
     // negative guards below.
     const publicAndRuntimeSurfaceNormalized = publicAndRuntimeSurface.replace(/\s+/g, " ");
 
-    expect(publicAndRuntimeSurface).toMatch(/server re-reads Sui mainnet[\s\S]{0,220}chain receipt/i);
-    expect(publicAndRuntimeSurface).toMatch(/chain receipts are server-read execution facts/i);
-    expect(publicAndRuntimeSurface).toMatch(/not transaction bytes[\s\S]{0,220}signing readiness/i);
-    expect(publicAndRuntimeSurface).toMatch(/not execution guarantees[\s\S]{0,180}route quality[\s\S]{0,180}P&L/i);
+    expect(publicAndRuntimeSurface).toMatch(/checks Sui mainnet[\s\S]{0,140}independently read chain effects/i);
+    expect(publicAndRuntimeSurface).toMatch(/independently (read|observed|verified)[\s\S]{0,80}chain/i);
+    expect(publicAndRuntimeSurface).toMatch(/never receive executable transaction bytes or signatures/i);
+    expect(publicAndRuntimeSurface).toMatch(/not (?:establish )?execution guarantees[\s\S]{0,180}route quality[\s\S]{0,180}P&L/i);
     expect(publicAndRuntimeSurfaceNormalized).not.toMatch(/server-side receipt verification against chain state/i);
     expect(publicAndRuntimeSurfaceNormalized).not.toMatch(/receipt verification against chain state is not implemented/i);
     expect(publicAndRuntimeSurfaceNormalized).not.toMatch(/execution receipts happen on the local review page/i);
@@ -296,8 +288,8 @@ describe("source policy", () => {
       .join("\n");
 
     expect(source).toMatch(/answer playbook/i);
-    expect(source).toMatch(/review URL can be created.*proposal and local review evidence/is);
-    expect(source).toMatch(/Ordinary MCP responses do not provide a sign action, signing data, transaction bytes, or signing readiness/is);
+    expect(source).toMatch(/internal Review card/i);
+    expect(source).toMatch(/Ordinary MCP responses are facts, never signing authority or bytes/is);
     expect(source).toMatch(/Unsupported/i);
     expect(source).not.toMatch(/[\uAC00-\uD7A3]/u);
     expect(source).not.toMatch(/safe to sign/i);
@@ -520,25 +512,13 @@ describe("source policy", () => {
     }
   });
 
-  it("does not document MCP client webviews as supported wallet identity surfaces", () => {
-    const walletIdentityDocs = [
-      "docs/AGENT_BEHAVIOR.md",
-      "docs/MCP_SETUP.md",
-      "docs/MCP_TOOLS.md",
-      "docs/WALLET_IDENTITY.md"
-    ];
-    const unsupportedSurfaceTerms =
-      /in-app browser|embedded webviews?|in-app webviews?|sidebar wallet|open in (a |the )?sidebar|client sidebars?|client webviews?/i;
-    const unsupportedContext = /\bnot\b|\bcannot\b|do not|unsupported/i;
-
-    for (const file of walletIdentityDocs) {
-      const lines = readFileSync(join(process.cwd(), file), "utf8").split("\n");
-      for (const line of lines) {
-        if (unsupportedSurfaceTerms.test(line)) {
-          expect(line).toMatch(unsupportedContext);
-        }
-      }
-    }
+  it("documents internal cards as the connection surface without a browser signer", () => {
+    const docs = ["docs/MCP_SETUP.md", "docs/WALLET_CONNECTION.md", "docs/FRONTEND_POLICY.md"]
+      .map((file) => readFileSync(join(process.cwd(), file), "utf8")).join("\n");
+    expect(docs).toMatch(/internal Connect card/);
+    expect(docs).toMatch(/WalletConnect/);
+    expect(docs).toMatch(/No browser signer|no external wallet\/review page or browser/);
+    expect(docs).not.toMatch(/Open the .*walletUrl.*system browser/);
   });
 
   it("keeps DeepBook product source and external web context separated", () => {
@@ -591,27 +571,13 @@ describe("source policy", () => {
     }
   });
 
-  it("keeps wallet identity routing tied to immediate wait or polling after URL handoff", () => {
-    // Wallet-identity ordering rules live in docs/AGENT_BEHAVIOR.md,
-    // docs/MCP_SETUP.md, docs/WALLET_IDENTITY.md, and the golden scenario doc.
-    // Per-response followUp on wallet identity tools also points clients at
-    // session.wait_wallet_identity.
-    const walletWaitDocs = {
-      "docs/AGENT_BEHAVIOR.md": /Immediately call `session\.wait_wallet_identity` in the same turn after giving the URL/,
-      "docs/MCP_SETUP.md": /Immediately call `session\.wait_wallet_identity` after giving the URL/,
-      "docs/WALLET_IDENTITY.md": /After an AI client gives the wallet URL to the user, it should immediately call `session\.wait_wallet_identity`/,
-      "docs/golden-scenarios/BEHAVIOR_MATRIX.md": /then immediately call `session\.wait_wallet_identity` in the same turn/
-    };
-
-    for (const [file, requiredPattern] of Object.entries(walletWaitDocs)) {
-      const source = readFileSync(join(process.cwd(), file), "utf8");
-      expect(source).toMatch(requiredPattern);
-      for (const line of source.split("\n")) {
-        if (/wait for the user to (say|tell).{0,80}connected/i.test(line)) {
-          expect(line).toMatch(/do not|don't|should not/i);
-        }
-      }
-    }
+  it("keeps connection observation distinct from an unsubmitted card and transaction approval", () => {
+    const docs = readFileSync(join(process.cwd(), "docs/AGENT_BEHAVIOR.md"), "utf8");
+    expect(docs).toMatch(/unsubmitted card needs input/);
+    expect(docs).toMatch(/waiting does not create a[\s\S]{0,20}pairing/);
+    expect(docs).toMatch(/model must not call app-only actions/);
+    expect(docs).toMatch(/session\.get_wallet_connection/);
+    expect(docs).toMatch(/session\.wait_wallet_connection/);
   });
 
   it("keeps numeric unit policy explicit and forbids decimals inference guidance", () => {
@@ -1032,10 +998,11 @@ describe("source policy", () => {
     expect(deepbookReviewSource).toMatch(/function quoteSourceFailureOutcome/);
     expect(deepbookReviewSource).toMatch(/error\.kind === "quote_unavailable"[\s\S]{0,140}status:\s*"refresh_required"/);
     expect(deepbookReviewSource).toMatch(/status:\s*"blocked",\s*blockedReason:\s*"object_resolution_failed",\s*checks/);
-    expect(runtimeSource).toMatch(/createReviewTimeSimulationProducer/);
+    expect(runtimeSource).toMatch(/createRuntimeReviewDependencies/);
+    expect(readFileSync(join(process.cwd(), "src/runtime/reviewDependencies.ts"), "utf8")).toMatch(/createReviewTimeSimulationProducer/);
     expect(responseGuidanceSource).toMatch(/reviewState\.simulation/);
     expect(responseGuidanceSource).toMatch(/current_review_time_simulation_summary_projected_from_private_review_evidence/);
-    expect(statusToolsSource).toMatch(/session\.reviewState\?\.simulation !== undefined/);
+    expect(statusToolsSource).toMatch(/!!session\.reviewState\?\.simulation/);
     expect(docs).toMatch(/reviewState\.simulation/);
     expect(docs).toMatch(/public summary (?:projected from private|of server-side)[\s\S]{0,100}review-time simulation evidence/i);
     expect(docs).toMatch(/not wallet handoff[\s\S]{0,120}signing data[\s\S]{0,120}signing readiness/i);
@@ -1117,7 +1084,7 @@ describe("source policy", () => {
       "docs/SDK_API.md",
       "docs/TRANSACTION_ACTIVITY_LOG.md",
       "docs/UTILITY_INDEX.md",
-      "docs/WALLET_IDENTITY.md",
+      "docs/WALLET_CONNECTION.md",
       "docs/golden-scenarios/BEHAVIOR_MATRIX.md",
       "protocols/deepbook-margin.md",
       "protocols/deepbook-v3.md"
@@ -1286,7 +1253,7 @@ describe("source policy", () => {
       "docs/AGENT_BEHAVIOR.md",
       "docs/MCP_SETUP.md",
       "docs/MCP_TOOLS.md",
-      "docs/WALLET_IDENTITY.md",
+      "docs/WALLET_CONNECTION.md",
       "src/mcp/serverInfo.ts",
       "src/mcp/tools/action/prepareSuiActionReview.ts",
       "src/review-server/server.ts"
@@ -1294,7 +1261,7 @@ describe("source policy", () => {
     const source = files.map((file) => readFileSync(join(process.cwd(), file), "utf8")).join("\n");
 
     expect(source).toMatch(/account-bound DeepBook and FlowX swap review/i);
-    expect(source).toMatch(/protocol-agnostic adapter contracts|descriptor contract/i);
+    expect(source).toMatch(/protocol-agnostic adapters|protocol-agnostic adapter contracts|descriptor contract/i);
     const deepBookOwnedPhrases = [
       ["DeepBook", "signable", "adapter"],
       ["signable", "DeepBook", "adapter"],
@@ -1305,78 +1272,21 @@ describe("source policy", () => {
     }
   });
 
-  it("keeps DeepBook review evidence separate from signing readiness", () => {
-    const docs = [
-      "docs/AGENT_BEHAVIOR.md",
-      "docs/FRONTEND_POLICY.md",
-      "docs/MCP_TOOLS.md"
-    ].map((file) => readFileSync(join(process.cwd(), file), "utf8")).join("\n");
-    const source = [
-      "review-app/src/review.ts",
-      "src/core/action/schemas.ts",
-      "src/core/review/reviewComputation.ts",
-      "src/core/review/reviewComputationResult.ts",
-      "src/adapters/deepbook/deepbookReviewEvidence.ts",
-      "src/review-server/server.ts"
-    ].map((file) => readFileSync(join(process.cwd(), file), "utf8")).join("\n");
-    const deepbookEvidenceSource = readFileSync(
-      join(process.cwd(), "src/adapters/deepbook/deepbookReviewEvidence.ts"),
-      "utf8"
-    );
-    const reviewComputationSource = readFileSync(
-      join(process.cwd(), "src/core/review/reviewComputation.ts"),
-      "utf8"
-    );
-
-    expect(docs).toMatch(/review-state checks[\s\S]{0,180}raw quote evidence/i);
-    expect(docs).toMatch(/reviewState\.adapterLifecycle[\s\S]{0,180}completedStages[\s\S]{0,180}missingStages/i);
-    expect(docs).toMatch(/blockedReason: "wallet_review_contract_emit_missing"/);
-    expect(docs).toMatch(/producer_stage_missing[\s\S]{0,120}missingStages/i);
-    expect(docs).toMatch(/derived raw min-out policy/i);
-    expect(docs).toMatch(/DEEP fee raw evidence/i);
-    expect(docs).toMatch(/MCP layer never signs, executes, or returns transaction bytes/i);
-    expect(docs).toMatch(/review page[\s\S]{0,180}server-computed review state/i);
-    expect(docs).toMatch(/account-bound review computation[\s\S]{0,200}wallet identity sessions are created only on the Connect page/i);
-    expect(docs).toMatch(/account-bound review action[\s\S]{0,260}compute review state/i);
-    expect(docs).toMatch(/not a sign action[\s\S]{0,160}transaction-building action[\s\S]{0,160}signing readiness signal/i);
-    expect(docs).toMatch(/Each state should expose at most one primary action/i);
-    expect(source).toMatch(/Start review/);
-    expect(source).toMatch(/Run review again/);
-    expect(source).toMatch(/runAccountBoundReview/);
-    expect(source).toMatch(/Adapter lifecycle/);
-    expect(source).toMatch(/Completed stages/);
-    expect(source).toMatch(/Missing stages/);
-    expect(source).toMatch(/simulation\?: TransactionSimulationSummary/);
-    expect(source).toMatch(/renderSimulationSummary/);
-    expect(source).toMatch(/Review-time simulation/);
-    expect(source).toMatch(/Redacted summary of private review-time simulation evidence/);
-    expect(source).toMatch(/case "no_identity"[\s\S]{0,900}No active wallet account/);
-    expect(source).toMatch(/function renderHeaderWallet[\s\S]{0,900}sessionPayload\?\.activeAccount/);
-    expect(source).toMatch(/Wallet connection is not done on this review page/);
-    expect(source).toMatch(/case "pre_review"[\s\S]{0,400}Start review/);
-    expect(source).toMatch(/create_wallet_identity/);
-    expect(source).toMatch(/deepbook_quote_policy/);
-    expect(source).toMatch(/producer_stage_missing/);
-    expect(source).toMatch(/wallet_review_contract_emit_missing/);
-    expect(source).toMatch(/producer_stage_missing requires adapterLifecycle with at least one missing stage/);
-    expect(source).toMatch(/producer_stage_missing requires at least one adapterLifecycle\.missingStages entry/);
-    expect(source).toMatch(/simulation public evidence cannot be present while review_time_simulation is missing/);
-    expect(source).toMatch(/humanReadableReview public evidence cannot be present while human_readable_review is missing/);
-    expect(source).toMatch(/wallet_review_contract_emit_missing requires humanReadableReview public evidence/);
-    expect(source).toMatch(/wallet_review_contract_emit_missing requires simulation public evidence/);
-    expect(source).toMatch(/producerStageMissingReviewResult/);
-    expect(source).toMatch(/walletReviewContractEmitMissingResult/);
-    expect(source).toMatch(/parseMappedReviewState/);
-    expect(source).toMatch(/adapterLifecycle/);
-    expect(source).toMatch(/minOutRaw/);
-    expect(source).toMatch(/deepAmountRaw/);
-    expect(source).toMatch(/adapter_not_implemented/);
-    expect(reviewComputationSource).toMatch(/mapReviewComputationResultToState/);
-    expect(deepbookEvidenceSource).toMatch(/reviewSessionId:\s*input\.reviewSessionId/);
-    expect(deepbookEvidenceSource).not.toMatch(/reviewSessionId[\s\S]{0,160}(transactionBytes|signingData|signingMaterial|ready_for_wallet_review)/i);
-    expect(source).not.toMatch(/ready_for_wallet_review[\s\S]{0,240}deepbook_quote_policy/i);
-    expect(docs).toMatch(/Do not describe those checks as wallet readiness, signing readiness, route quality, or execution safety/i);
-    expect(docs).not.toMatch(/review-state checks[\s\S]{0,240}(provide|prove|indicate|establish).{0,80}(signing readiness|wallet readiness|execution safety)/i);
+  it("keeps adapter review evidence separate from backend signing authority", () => {
+    const core = readFileSync(join(process.cwd(), "src/core/action/schemas.ts"), "utf8");
+    const workflow = readFileSync(join(process.cwd(), "src/core/session/walletWorkflow.ts"), "utf8");
+    const review = readFileSync(join(process.cwd(), "src/mcp-ui/view/review.ts"), "utf8");
+    expect(core).toContain("producer_stage_missing requires at least one adapterLifecycle.missingStages entry");
+    expect(core).toContain("simulation public evidence cannot be present while review_time_simulation is missing");
+    expect(core).toContain("humanReadableReview public evidence cannot be present while human_readable_review is missing");
+    expect(core).toContain("ready_for_wallet_review requires an emitted wallet review contract");
+    expect(workflow).toContain("prepareReviewedTransaction");
+    expect(workflow).toContain("admitRequest");
+    expect(workflow).toContain("verifyTransactionSignature");
+    expect(review).toContain("requiredUserChoices");
+    expect(review).toContain("unsupportedClaims");
+    expect(review).toContain('External proposal — not signable');
+    expect(review).not.toMatch(/signTransaction\(|executeTransaction\(|transactionBytes/);
   });
 
   it("keeps DeepBook review lifecycle stage catalogs adapter-owned", () => {
@@ -1478,8 +1388,8 @@ describe("source policy", () => {
       "test/mcpSchemas.test.ts"
     ]);
     expect(filesImporting("reviewStateOutputSchema")).toEqual([
-      "src/mcp/tools/read/reviewActivityTools.ts",
-      "src/mcp/tools/session/statusTools.ts"
+      "src/core/session/sqliteWalletWorkflowStore.ts", "src/core/session/workflowState.ts", "src/core/session/workflowView.ts",
+      "src/mcp/tools/read/reviewActivityTools.ts", "src/mcp/tools/session/shared.ts"
     ]);
     expect(localDataValidationSource).toMatch(/parseLocalDataEnvelope/);
     expect(localDataValidationSource).toMatch(/validateAdapterLifecycle:\s*AdapterLifecycleValidator/);
@@ -1723,7 +1633,7 @@ describe("source policy", () => {
     expect(docs).not.toMatch(/deferred renderer candidate/i);
     expect(docs).not.toMatch(/@zktx\.io\/ptb-cli/i);
     expect(docs).toMatch(/not transaction-building[\s\S]{0,180}signing readiness/i);
-    expect(docs).toMatch(/never contain signing data, a wallet signature request,[\s\S]{0,80}or signing readiness/i);
+    expect(docs).toMatch(/No model or card receives[\s\S]{0,60}transaction bytes or signatures/i);
     expect(docs).toMatch(/A PTB graph is not signing data, not signing readiness/i);
     expect(docs).not.toMatch(/PTB graph[\s\S]{0,180}(provides|proves|indicates|establishes).{0,80}(signing readiness|execution safety|wallet authorization)/i);
   });
@@ -1739,7 +1649,7 @@ describe("source policy", () => {
       "docs/SDK_API.md",
       "docs/TRANSACTION_ACTIVITY_LOG.md",
       "docs/UTILITY_INDEX.md",
-      "docs/WALLET_IDENTITY.md",
+      "docs/WALLET_CONNECTION.md",
       "docs/golden-scenarios/BEHAVIOR_MATRIX.md",
       "protocols/deepbook-margin.md",
       "protocols/deepbook-v3.md",
@@ -1771,7 +1681,7 @@ describe("source policy", () => {
       "docs/SDK_API.md",
       "docs/TRANSACTION_ACTIVITY_LOG.md",
       "docs/UTILITY_INDEX.md",
-      "docs/WALLET_IDENTITY.md",
+      "docs/WALLET_CONNECTION.md",
       "docs/golden-scenarios/BEHAVIOR_MATRIX.md",
       "src/mcp/serverInfo.ts",
       "src/mcp/toolNames.ts",
@@ -1918,7 +1828,7 @@ describe("source policy", () => {
     expect(source).not.toMatch(/P&L is supported/i);
     expect(source).not.toMatch(/cost basis[\s\S]{0,120}(profit would be|profit is|calculate profit)/i);
     const boundedHistoryTerms =
-      /background index|complete wallet history|P&L|raw GraphQL payload|non-known party address|signing readiness|transaction building|route recommendation|protocol support|position inventory|supported-protocol list/i;
+      /background index|complete wallet history|P&L|raw GraphQL payload|non-known party address|signing readiness|route recommendation|protocol support|position inventory|supported-protocol list/i;
     const negativeContext = /\bnot\b|do not|does not|must not|\bcreate no\b|out of scope|unsupported/i;
     let listIntroduction = "";
     for (const line of source.split("\n")) {

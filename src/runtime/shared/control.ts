@@ -4,7 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import type { IncomingMessage } from "node:http";
 
-export const INTERNAL_API_VERSION = 1;
+export const INTERNAL_API_VERSION = 3;
 export const IDENTITY_PATH = "/__runtime/identity";
 export const INTERNAL_MCP_PATH = "/__runtime/mcp";
 export const IDENTITY_CHALLENGE_HEADER = "x-say-identity-challenge";

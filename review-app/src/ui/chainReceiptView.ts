@@ -58,7 +58,7 @@ export function chainReceiptView(receipt: PublicChainReceipt): HTMLElement {
   // placeholder card holds the same slot when the transaction has no renderable graph.
   if (receipt.ptbGraph) {
     wrap.append(
-      ptbGraphCard({ mermaid: receipt.ptbGraph.mermaid })
+      ptbGraphCard({ source: "receipt", mermaid: receipt.ptbGraph.mermaid })
     );
   } else {
     const graphCard = infoTitleCard(t.receipt.graph, t.receipt.graphTip);

@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { SETTINGS_APPLIES_AFTER_RESTART } from "../../../core/preferences/preferencesStore.js";
 import { registerSayUrIntentTool } from "../../registerTool.js";
-import { okToolResult } from "../../result.js";
+import { errorToolResult, okToolResult } from "../../result.js";
 import { noParamsInputSchema, successOutputSchema } from "../../schemas.js";
 import type { McpServerDeps } from "../../server.js";
 import { localSettingsToolError, sessionStoreToolError } from "../../toolErrors.js";
@@ -36,6 +36,7 @@ export function registerSettingsTools(server: McpServer, deps: McpServerDeps): v
     },
     async () => {
       try {
+        if (!deps.reviewBaseUrl) return errorToolResult({ kind: "ui_unavailable", details: { reason: "Settings UI is unavailable in this runtime." } });
         const created = await deps.sessions.createSettingsSession();
         return okToolResult({
           settingsSessionId: created.session.id,

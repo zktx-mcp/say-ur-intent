@@ -105,7 +105,14 @@ export async function startOrDeferReviewServer<T extends StartedReviewServerLike
       if (stopped || acquired) {
         break;
       }
-      const next = await tryStart(start, port);
+      let next: T | undefined;
+      try { next = await tryStart(start, port); }
+      catch (error) {
+        // An authenticated prior owner may have closed its port while its SDK
+        // still owns private storage. Reuse the existing takeover observation.
+        if (typeof error === "object" && error !== null && "code" in error && error.code === "DATA_DIRECTORY_OWNED") continue;
+        throw error;
+      }
       if (!next) {
         continue; // a peer still owns the port; keep deferring
       }

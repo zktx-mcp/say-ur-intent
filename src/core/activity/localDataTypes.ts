@@ -8,6 +8,8 @@ export type LocalDataCounts = {
   reviewStateSnapshots: number;
   reviewStatusTransitions: number;
   reviewExecutions: number;
+  reviewRequests: number;
+  outcomeUnknownRequests: number;
   externalActivityScans: number;
   externalActivityTransactions: number;
   localSettings: number;
@@ -28,6 +30,7 @@ export type LocalDataPayload = {
   reviewStateSnapshots: ReviewStateSnapshotExportRow[];
   reviewStatusTransitions: ReviewStatusTransitionExportRow[];
   reviewExecutions: ReviewExecutionExportRow[];
+  reviewRequests: ReviewRequestExportRow[];
   externalActivityScans: ExternalActivityScanExportRow[];
   externalActivityTransactions: ExternalActivityTransactionExportRow[];
   localSettings: LocalSettingExportRow[];
@@ -59,6 +62,8 @@ export type ReviewSessionExportRow = {
   protocol: string;
   account_id: number | null;
   current_status: string;
+  current_attempt_id: string | null;
+  opened_at: string | null;
   plan_json: string;
   intent_json: string | null;
   created_at: string;
@@ -67,6 +72,7 @@ export type ReviewSessionExportRow = {
 
 export type ReviewStateSnapshotExportRow = {
   id: number;
+  review_revision: number;
   review_session_id: string;
   plan_id: string;
   account_id: number;
@@ -82,6 +88,8 @@ export type ReviewStatusTransitionExportRow = {
   id: number;
   review_session_id: string;
   event: string;
+  domain: "review" | "request";
+  attempt_id: string | null;
   from_status: string | null;
   to_status: string;
   account_id: number | null;
@@ -90,6 +98,7 @@ export type ReviewStatusTransitionExportRow = {
 };
 
 export type ReviewExecutionExportRow = {
+  attempt_id: string;
   review_session_id: string;
   plan_id: string;
   account_id: number;
@@ -100,6 +109,14 @@ export type ReviewExecutionExportRow = {
   result_json: string;
   recorded_at: string;
   updated_at: string;
+};
+
+export type ReviewRequestExportRow = {
+  attempt_id: string; review_session_id: string; plan_id: string; review_revision: number;
+  account_id: number; transaction_digest: string; review_state_json: string;
+  request_status: import("../session/transactionRequest.js").TransactionRequestStatus;
+  revision: number; reason: string | null; created_at: string; updated_at: string;
+  signature_verified_at: string | null; submitted_at: string | null;
 };
 
 export type ExternalActivityScanExportRow = {
@@ -186,6 +203,8 @@ type EndpointImportValidator = (url: string) => Promise<void> | void;
 
 export type SqliteLocalDataServiceOptions = {
   onDataReplaced?: (() => void) | undefined;
+  advanceRequestDeadlines: (now: Date) => void;
+  now?: (() => Date) | undefined;
   suiGrpcUrl: string;
   suiGraphqlUrl: string;
   verifySuiGrpcUrl: EndpointImportValidator;

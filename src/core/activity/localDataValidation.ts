@@ -1,9 +1,11 @@
+import { transactionRequestStatusSchema, transactionRequestSchema } from "../session/transactionRequest.js";
+import { REVIEW_TRANSITION_EVENTS } from "./sqliteActivityStoreRows.js";
 import { DB_USER_VERSION } from "./schemaVersion.js";
 import { z, type ZodType } from "zod";
 import type { AdapterLifecycleValidator } from "../action/adapterLifecycleValidation.js";
 import { assertNoForbiddenMcpFields } from "../action/forbiddenFields.js";
 import { parseLifecycleValidatedReviewState } from "../action/reviewStateValidation.js";
-import { actionPlanSchema, executionResultSchema, internalSessionStatusSchema } from "../action/schemas.js";
+import { actionPlanSchema, transactionExecutionSummarySchema, internalSessionStatusSchema } from "../action/schemas.js";
 import type { ReviewState } from "../action/types.js";
 import { parseSuiAddress } from "../suiAddress.js";
 import { parseGraphqlUrl, parseGrpcUrl } from "../suiEndpoint.js";
@@ -26,6 +28,7 @@ import {
   type LocalDataPayload,
   type LocalSettingExportRow,
   type ReviewExecutionExportRow,
+  type ReviewRequestExportRow,
   type ReviewSessionExportRow,
   type ReviewStateSnapshotExportRow,
   type ReviewStatusTransitionExportRow
@@ -43,14 +46,14 @@ const accountRowSchema: z.ZodType<AccountExportRow> = z.object({
   sui_address: z.string().refine((value) => parseSuiAddress(value) === value, "must be a normalized Sui address"),
   first_seen_at: isoTimestamp,
   last_used_at: isoTimestamp,
-  first_source: z.enum(["wallet_identity", "review_execution"]),
-  last_source: z.enum(["wallet_identity", "review_execution"])
+  first_source: z.enum(["wallet_connection", "review_execution"]),
+  last_source: z.enum(["wallet_connection", "review_execution"])
 }).strict();
 
 const activeAccountContextRowSchema: z.ZodType<ActiveAccountContextExportRow> = z.object({
   id: z.literal(1),
   account_id: z.number().int().positive().nullable(),
-  source: z.enum(["wallet_identity", "cleared"]),
+  source: z.enum(["wallet_connection", "cleared"]),
   set_at: isoTimestamp,
   wallet_name: z.string().min(1).max(200).nullish(),
   wallet_id: z.string().min(1).max(200).nullish()
@@ -64,6 +67,8 @@ const reviewSessionRowSchema: z.ZodType<ReviewSessionExportRow> = z.object({
   protocol: z.string().min(1),
   account_id: z.number().int().positive().nullable(),
   current_status: internalSessionStatusSchema,
+  current_attempt_id: z.string().min(1).nullable(),
+  opened_at: isoTimestamp.nullable(),
   plan_json: z.string(),
   intent_json: z.string().nullable(),
   created_at: isoTimestamp,
@@ -72,6 +77,7 @@ const reviewSessionRowSchema: z.ZodType<ReviewSessionExportRow> = z.object({
 
 const reviewStateSnapshotRowSchema: z.ZodType<ReviewStateSnapshotExportRow> = z.object({
   id: z.number().int().positive(),
+  review_revision: z.number().int().nonnegative(),
   review_session_id: z.string().min(1),
   plan_id: z.string().min(1),
   account_id: z.number().int().positive(),
@@ -86,25 +92,36 @@ const reviewStateSnapshotRowSchema: z.ZodType<ReviewStateSnapshotExportRow> = z.
 const reviewStatusTransitionRowSchema: z.ZodType<ReviewStatusTransitionExportRow> = z.object({
   id: z.number().int().positive(),
   review_session_id: z.string().min(1),
-  event: z.enum(["created", "opened", "wallet_connected", "state_computed", "result_recorded", "expired"]),
-  from_status: internalSessionStatusSchema.nullable(),
-  to_status: internalSessionStatusSchema,
+  event: z.enum(REVIEW_TRANSITION_EVENTS),
+  domain: z.enum(["review", "request"]),
+  attempt_id: z.string().min(1).nullable(),
+  from_status: z.string().nullable(),
+  to_status: z.string(),
   account_id: z.number().int().positive().nullable(),
   reason: nullableString,
   transitioned_at: isoTimestamp
 }).strict();
 
 const reviewExecutionRowSchema: z.ZodType<ReviewExecutionExportRow> = z.object({
+  attempt_id: z.string().min(1),
   review_session_id: z.string().min(1),
   plan_id: z.string().min(1),
   account_id: z.number().int().positive(),
-  status: z.enum(["signed_pending_result", "success", "failure"]),
+  status: z.enum(["success", "failure"]),
   tx_digest: nullableString,
   explorer_url: nullableString,
   failure_reason: nullableString,
   result_json: z.string(),
   recorded_at: isoTimestamp,
   updated_at: isoTimestamp
+}).strict();
+
+const reviewRequestRowSchema: z.ZodType<ReviewRequestExportRow> = z.object({
+  attempt_id: z.string().min(1), review_session_id: z.string().min(1), plan_id: z.string().min(1),
+  review_revision: z.number().int().nonnegative(), account_id: z.number().int().positive(), transaction_digest: z.string().min(1),
+  review_state_json: z.string(), request_status: transactionRequestStatusSchema, revision: z.number().int().nonnegative(),
+  reason: nullableString, created_at: isoTimestamp, updated_at: isoTimestamp,
+  signature_verified_at: isoTimestamp.nullable(), submitted_at: isoTimestamp.nullable()
 }).strict();
 
 const externalActivityScanRowSchema: z.ZodType<ExternalActivityScanExportRow> = z.object({
@@ -158,6 +175,7 @@ const payloadSchema: z.ZodType<LocalDataPayload> = z.object({
   reviewStateSnapshots: z.array(reviewStateSnapshotRowSchema),
   reviewStatusTransitions: z.array(reviewStatusTransitionRowSchema),
   reviewExecutions: z.array(reviewExecutionRowSchema),
+  reviewRequests: z.array(reviewRequestRowSchema),
   externalActivityScans: z.array(externalActivityScanRowSchema),
   externalActivityTransactions: z.array(externalActivityTransactionRowSchema),
   localSettings: z.array(localSettingRowSchema).length(2)
@@ -194,20 +212,22 @@ function validatePayloadSemantics(
   ensureUnique(data.reviewSessions.map((row) => row.id), "duplicate_review_session_id");
   ensureUnique(data.reviewStateSnapshots.map((row) => row.id), "duplicate_review_state_snapshot_id");
   ensureUnique(data.reviewStatusTransitions.map((row) => row.id), "duplicate_review_transition_id");
-  ensureUnique(data.reviewExecutions.map((row) => row.review_session_id), "duplicate_review_execution_id");
+  ensureUnique(data.reviewExecutions.map((row) => row.attempt_id), "duplicate_review_execution_id");
   ensureUnique(data.externalActivityScans.map((row) => row.scan_id), "duplicate_external_activity_scan_id");
   ensureUnique(
     data.externalActivityTransactions.map((row) => `${row.account_id}:${row.digest}:${row.relationship}`),
     "duplicate_external_activity_transaction"
   );
   ensureUnique(data.localSettings.map((row) => row.key), "duplicate_local_setting_key");
+  ensureUnique(data.reviewRequests.map((row) => row.attempt_id), "duplicate_review_request_id");
+  ensureUnique(data.reviewRequests.map((row) => `${row.review_session_id}:${row.review_revision}`), "duplicate_review_request_revision");
   const accountIds = new Set(data.accounts.map((row) => row.id));
   const accountAddressesById = new Map(data.accounts.map((row) => [row.id, row.sui_address]));
   for (const row of data.activeAccountContext) {
     if (row.source === "cleared" && row.account_id !== null) {
       throw invalidBackup("invalid_active_account_context");
     }
-    if (row.source === "wallet_identity" && (row.account_id === null || !accountIds.has(row.account_id))) {
+    if (row.source === "wallet_connection" && (row.account_id === null || !accountIds.has(row.account_id))) {
       throw invalidBackup("invalid_active_account_context");
     }
   }
@@ -234,22 +254,56 @@ function validatePayloadSemantics(
     }
     validateReviewStateJsonColumn(row.state_json, "state_json", validateAdapterLifecycle);
   }
-  for (const row of data.reviewStatusTransitions) {
-    if (!reviewSessionIds.has(row.review_session_id) || (row.account_id !== null && !accountIds.has(row.account_id))) {
-      throw invalidBackup("invalid_review_transition_reference");
+  const requestsById = new Map(data.reviewRequests.map((row) => [row.attempt_id, row]));
+  const sessionsById = new Map(data.reviewSessions.map((row) => [row.id, row]));
+  const executionsById = new Map(data.reviewExecutions.map((row) => [row.attempt_id, row]));
+  for (const row of data.reviewRequests) {
+    const session = sessionsById.get(row.review_session_id), account = accountAddressesById.get(row.account_id);
+    if (!session || !account || session.account_id !== row.account_id || session.plan_id !== row.plan_id) throw invalidBackup("invalid_review_request_reference");
+    validateReviewStateJsonColumn(row.review_state_json, "review_requests.review_state_json", validateAdapterLifecycle);
+    const state = JSON.parse(row.review_state_json) as ReviewState;
+    if (state.reviewSessionId !== row.review_session_id || state.planId !== row.plan_id || state.account !== account ||
+        state.transactionReviewData?.reviewedTransactionDigest !== row.transaction_digest) throw invalidBackup("invalid_review_request_evidence");
+    const execution = executionsById.get(row.attempt_id);
+    const result = execution ? validateJsonColumn(execution.result_json, "result_json", transactionExecutionSummarySchema) : undefined;
+    const parsed = transactionRequestSchema.safeParse({ attemptId: row.attempt_id, reviewSessionId: row.review_session_id,
+      planId: row.plan_id, reviewRevision: row.review_revision, account, transactionDigest: row.transaction_digest,
+      requestStatus: row.request_status, revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at,
+      ...(row.reason === null ? {} : { reason: row.reason }), ...(row.signature_verified_at === null ? {} : { signatureVerifiedAt: row.signature_verified_at }),
+      ...(row.submitted_at === null ? {} : { submittedAt: row.submitted_at }), ...(result ? { execution: result } : {}) });
+    if (!parsed.success) throw invalidBackup("invalid_review_request_state");
+    if (row.updated_at < row.created_at || (row.signature_verified_at !== null && row.signature_verified_at < row.created_at) ||
+        (row.submitted_at !== null && (row.signature_verified_at === null || row.submitted_at < row.signature_verified_at))) throw invalidBackup("invalid_review_request_time");
+  }
+  for (const row of data.reviewSessions) {
+    const attempts = data.reviewRequests.filter((request) => request.review_session_id === row.id);
+    const latest = attempts.reduce<(typeof attempts)[number] | undefined>((found, request) =>
+      !found || request.review_revision > found.review_revision ? request : found, undefined);
+    if ((latest?.attempt_id ?? null) !== row.current_attempt_id) throw invalidBackup("invalid_current_request_reference");
+    if (row.current_attempt_id !== null) {
+      const request = requestsById.get(row.current_attempt_id);
+      if (!request || request.review_session_id !== row.id || request.account_id !== row.account_id) throw invalidBackup("invalid_current_request_reference");
     }
+    if (row.opened_at !== null && row.opened_at < row.created_at) throw invalidBackup("invalid_review_open_time");
+  }
+  for (const row of data.reviewStatusTransitions) {
+    if (!reviewSessionIds.has(row.review_session_id) || (row.account_id !== null && !accountIds.has(row.account_id))) throw invalidBackup("invalid_review_transition_reference");
+    const requestEvent = ["request_admitted", "request_status_changed", "signature_verified", "chain_result_recorded"].includes(row.event);
+    if ((row.domain === "request") !== requestEvent) throw invalidBackup("invalid_review_transition_domain");
+    const statusSchema = row.domain === "request" ? transactionRequestStatusSchema : internalSessionStatusSchema;
+    if (!statusSchema.safeParse(row.to_status).success || (row.from_status !== null && !statusSchema.safeParse(row.from_status).success)) throw invalidBackup("invalid_review_transition_state");
+    if (row.domain === "request") {
+      const request = row.attempt_id ? requestsById.get(row.attempt_id) : undefined;
+      if (!request || request.review_session_id !== row.review_session_id || request.account_id !== row.account_id) throw invalidBackup("invalid_review_transition_attempt");
+    } else if (row.attempt_id !== null) throw invalidBackup("invalid_review_transition_attempt");
   }
   for (const row of data.reviewExecutions) {
-    if (!reviewSessionIds.has(row.review_session_id) || !accountIds.has(row.account_id)) {
-      throw invalidBackup("invalid_review_execution_reference");
-    }
-    if (row.status === "failure" && row.failure_reason === null) {
-      throw invalidBackup("invalid_review_execution_status");
-    }
-    if (row.status !== "failure" && row.failure_reason !== null) {
-      throw invalidBackup("invalid_review_execution_status");
-    }
-    validateJsonColumn(row.result_json, "result_json", executionResultSchema);
+    const request = requestsById.get(row.attempt_id);
+    if (!request || request.review_session_id !== row.review_session_id || request.plan_id !== row.plan_id || request.account_id !== row.account_id ||
+        request.transaction_digest !== row.tx_digest) throw invalidBackup("invalid_review_execution_reference");
+    const result = transactionExecutionSummarySchema.parse(validateJsonColumn(row.result_json, "result_json", transactionExecutionSummarySchema));
+    if (result.status !== row.status || result.txDigest !== row.tx_digest || result.failureReason !== (row.failure_reason ?? undefined) ||
+        result.chainReceipt.sender !== accountAddressesById.get(row.account_id)) throw invalidBackup("invalid_review_execution_status");
   }
   const scanIds = new Set(data.externalActivityScans.map((row) => row.scan_id));
   for (const row of data.externalActivityScans) {
@@ -400,6 +454,8 @@ export function countsForPayload(data: LocalDataPayload): LocalDataCounts {
     reviewStateSnapshots: data.reviewStateSnapshots.length,
     reviewStatusTransitions: data.reviewStatusTransitions.length,
     reviewExecutions: data.reviewExecutions.length,
+    reviewRequests: data.reviewRequests.length,
+    outcomeUnknownRequests: data.reviewRequests.filter((row) => row.request_status === "outcome_unknown").length,
     externalActivityScans: data.externalActivityScans.length,
     externalActivityTransactions: data.externalActivityTransactions.length,
     localSettings: data.localSettings.length

@@ -24,11 +24,10 @@ export const SUI_CHAIN_RECEIPT_GET_TRANSACTION_INCLUDE = includeObjectFromFields
   SUI_CHAIN_RECEIPT_REQUIRED_INCLUDE
 );
 
-// How long the post-sign verifier waits for the just-signed transaction to become queryable on
-// this server's fullnode before reporting not_found. The transaction is already confirmed on the
-// wallet's fullnode (executeTransaction returned), so this only absorbs checkpoint-propagation lag
-// to the server's node — a single review-page poll then resolves straight to the final receipt
-// instead of stalling on "Signed - verifying on Sui mainnet".
+// Bounded per-read wait for the known digest to become visible on this node.
+// This existing 12-second source-read window is independent of the backend's
+// 10-minute initial observation deadline. A missing receipt does not establish
+// whether a prior submit (including one with a lost reply) executed.
 export const SUI_CHAIN_RECEIPT_WAIT_TIMEOUT_MS = 12_000;
 
 // waitForTransaction aborts with a DOMException named "TimeoutError" when its wait window elapses.

@@ -21,6 +21,7 @@ export async function errorCodeFromResponse(response: Response): Promise<string>
 
 export function messageForHttpError(error: unknown, fallback: string): string {
   if (error instanceof HttpJsonRequestError) {
+    if (error.code === "wallet_request_unsettled") return "A wallet request is still being settled. Local data cannot be replaced yet.";
     return `${fallback} (${error.code})`;
   }
   return fallback;

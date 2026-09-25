@@ -4,23 +4,11 @@ import { createHash } from "node:crypto";
 export type EventLogRecord = {
   type:
     | "session.created"
-    | "review.opened"
     | "wallet.connected"
-    | "wallet_identity.created"
-    | "wallet_identity.opened"
-    | "wallet_identity.connecting"
-    | "wallet_identity.connected"
-    | "wallet_identity.rejected"
-    | "wallet_identity.failed"
-    | "wallet_identity.expired"
     | "settings_session.created"
     | "local_sessions.invalidated"
     | "state.computed"
-    | "handoff.prepared"
-    | "handoff.refused"
-    | "handoff.cancelled"
-    | "sign.requested"
-    | "result.recorded";
+    | "handoff.refused";
   sessionId: string;
   planId?: string;
   walletAddressHash?: string;

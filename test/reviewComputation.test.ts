@@ -661,8 +661,7 @@ describe("review computation", () => {
     }
     expect(computed.privateArtifacts.humanReadableReview).toMatchObject({
       materialId: computed.privateArtifacts.transactionMaterial?.materialId,
-      transactionDigest: computed.privateArtifacts.transactionMaterialDigest?.transactionDigest,
-      boundToCommitment: computed.privateArtifacts.transactionMaterialDigest?.transactionDigest
+      transactionDigest: computed.privateArtifacts.transactionMaterialDigest?.transactionDigest
     });
     expect(computed.state.checks.map((check) => check.id)).toContain("deepbook_human_readable_review_evidence");
     expect(computed.state.checks.at(-1)).toMatchObject({
@@ -821,15 +820,15 @@ describe("review computation", () => {
       transactionDigest: computed.privateArtifacts.transactionMaterialDigest?.transactionDigest,
       status: "success"
     });
-    const contract = computed.state.walletReviewAdapterContract;
+    const contract = computed.state.transactionReviewData;
     expect(contract).toBeDefined();
     if (!contract) {
       throw new Error("expected an emitted wallet review adapter contract");
     }
     const internalDigest = computed.privateArtifacts.transactionMaterialDigest?.transactionDigest;
-    expect(contract.transactionMaterialCommitment).toBe(internalDigest);
-    expect(contract.humanReadableReview.boundToCommitment).toBe(internalDigest);
-    expect(contract.simulation.boundToCommitment).toBe(internalDigest);
+    expect(contract.reviewedTransactionDigest).toBe(internalDigest);
+    expect(contract.humanReadableReview.transactionDigest).toBe(internalDigest);
+    expect(contract.simulation.transactionDigest).toBe(internalDigest);
     expect(contract.outputBoundary.prohibited).toContain("transaction_bytes");
     expect(computed.state.ptbVisualization?.mermaid.diagramType).toBe("flowchart");
     expect(computed.state.ptbVisualization?.source.authority).toBe("visualization_only_not_wallet_authorization");

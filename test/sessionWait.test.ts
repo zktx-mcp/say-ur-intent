@@ -1,314 +1,93 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { validateSupportedAdapterLifecycle } from "../src/adapters/adapterLifecycleValidators.js";
-import type { ActionPlan, ReviewSession } from "../src/core/action/types.js";
-import { InMemorySessionStore, type SessionStore } from "../src/core/session/sessionStore.js";
-import { SessionStoreError } from "../src/core/session/sessionStore.js";
-import type { WalletIdentitySession } from "../src/core/session/walletIdentity.js";
-import {
-  WaitRequestAbortedError,
-  waitForExecutionResult,
-  waitForWalletIdentitySession
-} from "../src/core/session/wait.js";
-import { InMemoryActivityStore } from "./fixtures/inMemoryActivityStore.js";
-import { chainReceiptDigest, chainReceiptFixture } from "./fixtures/chainReceipt.js";
+import type { ReviewSession } from "../src/core/action/types.js";
+import type { ReviewSnapshot } from "../src/core/session/status.js";
+import type { CardStore } from "../src/core/session/cardSessionStore.js";
+import { CardError } from "../src/core/session/cardSessionStore.js";
+import type { CardSnapshot } from "../src/core/session/cardSession.js";
+import type { TransactionRequest } from "../src/core/session/transactionRequest.js";
+import { WaitRequestAbortedError, waitForExecutionResult, waitForWalletConnection } from "../src/core/session/wait.js";
+import { CONNECT_BOUNDARY } from "../src/core/session/workflowView.js";
+import { chainReceiptDigest } from "./fixtures/chainReceipt.js";
 
-const walletPending: WalletIdentitySession = {
-  id: "wallet_1",
-  tokenHash: "hash",
-  status: "pending",
-  createdAt: "2026-05-12T00:00:00.000Z",
-  expiresAt: "2026-05-12T00:30:00.000Z",
-  lastActivityAt: "2026-05-12T00:00:00.000Z"
+const review: ReviewSession = { id: "review", ownerId: "owner", reviewRevision: 1, tokenHash: "private",
+  status: "ready_for_wallet_review", plans: [], createdAt: new Date(0).toISOString(), expiresAt: new Date(1000).toISOString(), lastActivityAt: new Date(0).toISOString() };
+const request: TransactionRequest = { attemptId: "attempt", reviewSessionId: "review", planId: "plan", reviewRevision: 1,
+  account: `0x${"a".repeat(64)}`, transactionDigest: chainReceiptDigest, requestStatus: "awaiting_signature", revision: 0,
+  createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
+const connection: CardSnapshot = { cardId: "card", kind: "connect", state: "running", revision: 1,
+  createdAt: new Date(0).toISOString(), expiresAt: new Date(1000).toISOString(), input: {}, pollAfterMs: 5000, inputRemainingMs: 0,
+  data: { kind: "connect", mode: "connect", allowedActions: [], actionRemainingMs: 1000, observe: true,
+    walletAvailability: { status: "available" }, progress: { status: "waiting" }, boundary: CONNECT_BOUNDARY, connections: [] } };
+const stateReader = (read: () => Promise<ReviewSession | undefined>, readRequest?: () => TransactionRequest) => async (): Promise<ReviewSnapshot | undefined> => {
+  const session = await read();
+  return session ? { session, hasReviewInput: false, request: readRequest?.(), walletAvailability: { status: "available" }, progress: { status: readRequest ? "waiting" : "idle" } } : undefined;
 };
+const cardStore = (read: () => Promise<CardSnapshot>) => ({ readSaved: read }) as unknown as CardStore;
+afterEach(() => vi.useRealTimers());
 
-const walletConnected: WalletIdentitySession = {
-  ...walletPending,
-  status: "connected",
-  account: `0x${"a".repeat(64)}`,
-  chain: "sui:mainnet"
-};
-
-const reviewPending: ReviewSession = {
-  id: "review_1",
-  tokenHash: "hash",
-  status: "awaiting_wallet",
-  plans: [],
-  createdAt: "2026-05-12T00:00:00.000Z",
-  expiresAt: "2026-05-12T00:30:00.000Z",
-  lastActivityAt: "2026-05-12T00:00:00.000Z"
-};
-
-const reviewPlan: ActionPlan = {
-  id: "plan_wait_test",
-  actionKind: "swap",
-  adapterId: "deepbook-swap",
-  protocol: "DeepBookV3",
-  title: "Wait test swap",
-  summary: "Wait test swap",
-  assetFlowPreview: {
-    outgoing: [{ symbol: "SUI", amount: "1", amountKind: "display_intent" }],
-    expectedIncoming: [{ symbol: "USDC", amount: "unknown", amountKind: "display_intent", approx: true }]
-  },
-  adapterData: {
-    requestedIntent: {
-      from: "SUI",
-      to: "USDC",
-      amount: "1"
-    }
-  },
-  createdAt: "2026-05-12T00:00:00.000Z"
-};
-
-const reviewBlocked: ReviewSession = {
-  ...reviewPending,
-  status: "blocked"
-};
-
-const reviewRefreshRequired: ReviewSession = {
-  ...reviewPending,
-  status: "refresh_required"
-};
-
-const reviewSignedPending: ReviewSession = {
-  ...reviewPending,
-  status: "signed_pending_result",
-  account: `0x${"b".repeat(64)}`,
-  executionResult: {
-    reviewSessionId: "review_1",
-    planId: "plan_1",
-    status: "signed_pending_result",
-    txDigest: chainReceiptDigest,
-    recordedAt: "2026-05-12T00:00:01.000Z"
-  }
-};
-
-const reviewSuccess: ReviewSession = {
-  ...reviewSignedPending,
-  status: "success",
-  executionResult: {
-    reviewSessionId: "review_1",
-    planId: "plan_1",
-    status: "success",
-    txDigest: chainReceiptDigest,
-    chainReceipt: chainReceiptFixture(),
-    recordedAt: "2026-05-12T00:00:02.000Z"
-  }
-};
-
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-describe("session wait helpers", () => {
-  it("returns immediately for terminal wallet identity sessions", async () => {
-    await expect(
-      waitForWalletIdentitySession(walletStore([walletConnected]), "wallet_1")
-    ).resolves.toMatchObject({
-      waitOutcome: "status_reached",
-      statusCategory: "terminal",
-      session: { status: "connected" }
-    });
+describe("bounded stored-state waits", () => {
+  it("does not wait for user preparation or claim that it is already signing", async () => {
+    await expect(waitForExecutionResult(stateReader(async () => review), "review")).resolves.toMatchObject({ waitOutcome: "status_reached", status: "ready_for_wallet_review", request: undefined });
   });
-
-  it("times out for non-terminal wallet identity sessions", async () => {
-    vi.useFakeTimers();
-    const wait = waitForWalletIdentitySession(walletStore([walletPending]), "wallet_1", { timeoutMs: 100 });
+  it("reads the same attempt until its local request ends, without inventing a chain result", async () => {
+    vi.useFakeTimers(); let current = request;
+    const wait = waitForExecutionResult(stateReader(async () => review, () => current), "review", { timeoutMs: 4000 });
+    current = { ...request, requestStatus: "request_failed" };
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(wait).resolves.toMatchObject({ waitOutcome: "status_reached", status: "request_failed", request: { attemptId: "attempt" } });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("resolves concurrent observers from the same stored request", async () => {
+    vi.useFakeTimers(); let current = request;
+    const options = { timeoutMs: 4000 };
+    const first = waitForExecutionResult(stateReader(async () => review, () => current), "review", options);
+    const second = waitForExecutionResult(stateReader(async () => review, () => current), "review", options);
+    current = { ...request, requestStatus: "outcome_unknown" };
+    await vi.advanceTimersByTimeAsync(3000);
+    for (const wait of [first, second]) await expect(wait).resolves.toMatchObject({ status: "outcome_unknown" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("times out wallet observation without cancelling or reconnecting", async () => {
+    vi.useFakeTimers(); const read = vi.fn(async () => connection);
+    const wait = waitForWalletConnection(cardStore(read), "card", { timeoutMs: 100 });
     await vi.advanceTimersByTimeAsync(100);
-    await expect(wait).resolves.toMatchObject({
-      waitOutcome: "timed_out",
-      statusCategory: "non_terminal",
-      session: { status: "pending" }
-    });
+    await expect(wait).resolves.toMatchObject({ waitOutcome: "timed_out", snapshot: { state: "running" } });
+    expect(read).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
   });
-
-  it("clears wallet wait timers when the host abort signal is forwarded", async () => {
-    vi.useFakeTimers();
-    const controller = new AbortController();
-    const wait = waitForWalletIdentitySession(walletStore([walletPending]), "wallet_1", {
-      timeoutMs: 1000,
-      signal: controller.signal
-    });
-
-    await vi.advanceTimersByTimeAsync(0);
-    controller.abort();
-
-    await expect(wait).rejects.toBeInstanceOf(WaitRequestAbortedError);
+  it("returns immediately for an unsubmitted connection card", async () => {
+    await expect(waitForWalletConnection(cardStore(async () => ({ ...connection, state: "ready", data: { ...connection.data as object, observe: false } })), "card"))
+      .resolves.toMatchObject({ waitOutcome: "status_reached", snapshot: { state: "ready" } });
+  });
+  it.each(["connection", "request"] as const)("cleans the %s wait on host abort", async (kind) => {
+    vi.useFakeTimers(); const controller = new AbortController();
+    const wait = kind === "connection" ? waitForWalletConnection(cardStore(async () => connection), "card", { signal: controller.signal }) :
+      waitForExecutionResult(stateReader(async () => review, () => request), "review", { signal: controller.signal });
+    const rejection = expect(wait).rejects.toBeInstanceOf(WaitRequestAbortedError);
+    await vi.advanceTimersByTimeAsync(0); controller.abort(); await rejection;
     expect(vi.getTimerCount()).toBe(0);
   });
-
-  it("does not read the store when the host abort signal is already forwarded", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    const store = {
-      async getWalletIdentitySession() {
-        throw new Error("store should not be read after abort");
-      }
-    } as unknown as SessionStore;
-
-    await expect(
-      waitForWalletIdentitySession(store, "wallet_1", { signal: controller.signal })
-    ).rejects.toBeInstanceOf(WaitRequestAbortedError);
+  it("does not read after an already aborted host request", async () => {
+    const controller = new AbortController(); controller.abort(); const read = vi.fn(async () => connection);
+    await expect(waitForWalletConnection(cardStore(read), "card", { signal: controller.signal })).rejects.toBeInstanceOf(WaitRequestAbortedError);
+    expect(read).not.toHaveBeenCalled();
   });
-
-  it("maps missing wallet sessions to session_not_found", async () => {
-    await expect(waitForWalletIdentitySession(walletStore([]), "missing", { timeoutMs: 1 })).rejects.toMatchObject({
-      code: "session_not_found",
-      details: { reason: "missing" }
-    } satisfies Partial<SessionStoreError>);
-  });
-
-  it("maps wallet sessions removed during wait to session_not_found with a removal reason", async () => {
-    vi.useFakeTimers();
-    let current: WalletIdentitySession | undefined = walletPending;
-    const store = {
-      async getWalletIdentitySession(id: string) {
-        return current?.id === id ? current : undefined;
-      }
-    } as SessionStore;
-    const wait = waitForWalletIdentitySession(store, "wallet_1", { timeoutMs: 100 });
-    const waitFailure = expect(wait).rejects.toMatchObject({
-      code: "session_not_found",
-      details: { reason: "session_removed_during_wait" }
-    } satisfies Partial<SessionStoreError>);
-
-    current = undefined;
-    await vi.advanceTimersByTimeAsync(100);
-
-    await waitFailure;
-  });
-
-  it("resolves wallet waits when lazy expiry occurs during the wait", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-12T00:00:00.000Z"));
-    const store = new InMemorySessionStore({
-      activityStore: new InMemoryActivityStore(),
-      logger: { error() {} },
-      validateAdapterLifecycle: validateSupportedAdapterLifecycle,
-      ttlMs: 1_000
-    });
-    const { session } = await store.createWalletIdentitySession(new Date());
-    const wait = waitForWalletIdentitySession(store, session.id, {
-      timeoutMs: 2_000,
-      now: () => new Date()
-    });
-
-    await vi.advanceTimersByTimeAsync(2_000);
-
-    await expect(wait).resolves.toMatchObject({
-      waitOutcome: "status_reached",
-      statusCategory: "terminal",
-      session: { status: "expired" }
-    });
-  });
-
-  it("returns blocked execution status as user-action-required wait stop", async () => {
-    await expect(waitForExecutionResult(reviewStore([reviewBlocked]), "review_1")).resolves.toMatchObject({
-      waitOutcome: "status_reached",
-      status: "blocked",
-      session: { status: "blocked" }
-    });
-  });
-
-  it("returns refresh-required execution status as user-action-required wait stop", async () => {
-    await expect(waitForExecutionResult(reviewStore([reviewRefreshRequired]), "review_1")).resolves.toMatchObject({
-      waitOutcome: "status_reached",
-      status: "refresh_required",
-      session: { status: "refresh_required" }
-    });
-  });
-
-  it("treats signed_pending_result as non-terminal until success or failure appears", async () => {
-    vi.useFakeTimers();
-    const store = sequenceReviewStore([reviewSignedPending, reviewSuccess]);
-    const wait = waitForExecutionResult(store, "review_1", { timeoutMs: 4000 });
-
-    await vi.advanceTimersByTimeAsync(3000);
-
-    await expect(wait).resolves.toMatchObject({
-      waitOutcome: "status_reached",
-      status: "success",
-      session: { status: "success" }
-    });
-  });
-
-  it("resolves simultaneous execution waiters for the same session from shared state", async () => {
-    vi.useFakeTimers();
-    let current = reviewSignedPending;
-    const store = {
-      async getReviewSession(id: string) {
-        return current.id === id ? current : undefined;
-      }
-    } as SessionStore;
-    const firstWait = waitForExecutionResult(store, "review_1", { timeoutMs: 4000 });
-    const secondWait = waitForExecutionResult(store, "review_1", { timeoutMs: 4000 });
-
-    current = reviewSuccess;
-    await vi.advanceTimersByTimeAsync(3000);
-
-    await expect(firstWait).resolves.toMatchObject({ waitOutcome: "status_reached", status: "success" });
-    await expect(secondWait).resolves.toMatchObject({ waitOutcome: "status_reached", status: "success" });
+  it("reports a removed review instead of endlessly polling", async () => {
+    vi.useFakeTimers(); let current: ReviewSession | undefined = review;
+    const wait = waitForExecutionResult(stateReader(async () => current, () => request), "review");
+    const rejection = expect(wait).rejects.toMatchObject({ code: "session_not_found", details: { reason: "session_removed_during_wait" } });
+    await vi.advanceTimersByTimeAsync(0); current = undefined; await vi.advanceTimersByTimeAsync(3000); await rejection;
     expect(vi.getTimerCount()).toBe(0);
   });
-
-  it("resolves execution waits when lazy expiry occurs during the wait", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-12T00:00:00.000Z"));
-    const store = new InMemorySessionStore({
-      activityStore: new InMemoryActivityStore(),
-      logger: { error() {} },
-      validateAdapterLifecycle: validateSupportedAdapterLifecycle,
-      ttlMs: 1_000
-    });
-    const { session } = await store.createReviewSession([reviewPlan], new Date());
-    const wait = waitForExecutionResult(store, session.id, {
-      timeoutMs: 3_000,
-      now: () => new Date()
-    });
-
-    await vi.advanceTimersByTimeAsync(3_000);
-
-    await expect(wait).resolves.toMatchObject({
-      waitOutcome: "status_reached",
-      status: "expired",
-      session: { status: "expired" }
-    });
+  it("stops wallet waits if the card is removed", async () => {
+    vi.useFakeTimers(); const read = vi.fn(async () => connection);
+    const wait = waitForWalletConnection(cardStore(read), "card"); const rejection = expect(wait).rejects.toBeInstanceOf(CardError);
+    await vi.advanceTimersByTimeAsync(0); read.mockRejectedValueOnce(new CardError("Saved card data is unavailable."));
+    await vi.advanceTimersByTimeAsync(5000); await rejection; expect(vi.getTimerCount()).toBe(0);
   });
-
-  it("clears execution wait timers when a poll iteration throws", async () => {
-    vi.useFakeTimers();
-    const store = sequenceReviewStore([reviewPending], new Error("activity store failed"));
-    const wait = waitForExecutionResult(store, "review_1", { timeoutMs: 4000 });
-    const waitFailure = expect(wait).rejects.toThrow("activity store failed");
-
-    await vi.advanceTimersByTimeAsync(3000);
-
-    await waitFailure;
-    expect(vi.getTimerCount()).toBe(0);
+  it("cleans up a request wait if a later store read fails", async () => {
+    vi.useFakeTimers(); const read = vi.fn(async () => review);
+    const wait = waitForExecutionResult(stateReader(read, () => request), "review"); const rejection = expect(wait).rejects.toThrow("read failed");
+    await vi.advanceTimersByTimeAsync(0); read.mockRejectedValueOnce(new Error("read failed")); await vi.advanceTimersByTimeAsync(3000);
+    await rejection; expect(vi.getTimerCount()).toBe(0);
   });
 });
-
-function walletStore(sessions: WalletIdentitySession[]): SessionStore {
-  return {
-    async getWalletIdentitySession(id: string) {
-      return sessions.find((session) => session.id === id);
-    }
-  } as SessionStore;
-}
-
-function reviewStore(sessions: ReviewSession[]): SessionStore {
-  return sequenceReviewStore(sessions);
-}
-
-function sequenceReviewStore(sessions: ReviewSession[], finalError?: Error): SessionStore {
-  let calls = 0;
-  return {
-    async getReviewSession(id: string) {
-      const session = sessions[Math.min(calls, sessions.length - 1)];
-      calls += 1;
-      if (calls > sessions.length && finalError) {
-        throw finalError;
-      }
-      return session?.id === id ? session : undefined;
-    }
-  } as SessionStore;
-}

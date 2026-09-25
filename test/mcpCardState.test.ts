@@ -13,6 +13,7 @@ const account = `0x${"1".repeat(64)}`;
 const now = new Date("2026-09-22T00:00:00.000Z");
 const choice = { account };
 const dataOptions = { suiGrpcUrl: DEFAULT_SUI_GRPC_URL, suiGraphqlUrl: DEFAULT_SUI_GRAPHQL_URL,
+  advanceRequestDeadlines: (_now: Date) => {}, // Read-card fixtures have no wallet requests.
   verifySuiGrpcUrl: async (url: string) => { expect(url).toBe(DEFAULT_SUI_GRPC_URL); },
   verifySuiGraphqlUrl: async (url: string) => { expect(url).toBe(DEFAULT_SUI_GRAPHQL_URL); } };
 async function database(access?: RuntimeDataAccess) {
@@ -37,14 +38,14 @@ describe("DB-owned card admission, recovery and results", () => {
     try {
       const created = await cards.create("account", {});
       const ref = { cardId: created.snapshot.cardId, permission: created.permission };
-      expect(cards.readSaved(ref.cardId)).toMatchObject({ state: "ready", revision: 0 });
-      expect(cards.read(ref).snapshot).toMatchObject({ state: "ready", revision: 0, inputRemainingMs: 1_800_000 });
+      expect((await cards.readSaved(ref.cardId))).toMatchObject({ state: "ready", revision: 0 });
+      expect((await cards.read(ref)).snapshot).toMatchObject({ state: "ready", revision: 0, inputRemainingMs: 1_800_000 });
       const second = new CardStore(options);
-      expect(second.read(ref).snapshot).toMatchObject({ state: "ready", revision: 0 });
+      expect((await second.read(ref)).snapshot).toMatchObject({ state: "ready", revision: 0 });
       const result = await cards.submit({ ...ref, revision: 0, input: choice });
       expect(result.snapshot).toMatchObject({ state: "closed", reason: "completed", revision: 2, input: choice, data: { value: "source result" } });
       expect(await second.submit({ ...ref, revision: 0, input: choice })).toEqual(result);
-      expect(second.readSaved(ref.cardId)).toEqual(result.snapshot);
+      expect((await second.readSaved(ref.cardId))).toEqual(result.snapshot);
       expect(calls).toBe(1);
       expect(JSON.stringify(result)).not.toContain(created.permission);
       expect(JSON.stringify(result)).not.toContain("tokenHash");
@@ -67,7 +68,7 @@ describe("DB-owned card admission, recovery and results", () => {
       expect(conflict.snapshot).toMatchObject({ state: "running", input: choice });
       source.resolve({ value: "one result" });
       await pending;
-      expect(second.read(input).snapshot).toMatchObject({ state: "closed", reason: "completed", data: { value: "one result" } });
+      expect((await second.read(input)).snapshot).toMatchObject({ state: "closed", reason: "completed", data: { value: "one result" } });
       expect(calls).toBe(1);
     } finally { peer.close(); db.close(); }
   });
@@ -83,9 +84,9 @@ describe("DB-owned card admission, recovery and results", () => {
       const stale = await cards.submit({ ...input, revision: 1 });
       expect(stale).toMatchObject({ error: { code: "card_conflict" }, snapshot: { state: "ready", revision: 0 } });
       clock = new Date("2026-09-22T00:29:59.999Z");
-      expect(cards.read(input).snapshot.inputRemainingMs).toBe(1);
+      expect((await cards.read(input)).snapshot.inputRemainingMs).toBe(1);
       clock = new Date("2026-09-22T00:30:00.000Z");
-      expect(cards.read(input).snapshot).toMatchObject({ state: "closed", reason: "expired", revision: 1 });
+      expect((await cards.read(input)).snapshot).toMatchObject({ state: "closed", reason: "expired", revision: 1 });
       expect((await cards.submit(input)).snapshot).toMatchObject({ state: "closed", reason: "expired", revision: 1 });
       expect(calls).toBe(0);
     } finally { db.close(); }
@@ -101,12 +102,12 @@ describe("DB-owned card admission, recovery and results", () => {
       const done = await old.create("account", { account: `0x${"2".repeat(64)}` }, true);
       const recovered = new CardStore({ records: db.records, ownerId: "new", now: () => new Date("2026-09-23T00:00:00.000Z"),
         execute: async () => { throw new Error("Recovery must not execute a query."); } });
-      expect(recovered.readSaved(ready.snapshot.cardId)).toMatchObject({ state: "closed", reason: "expired" });
-      expect(recovered.readSaved(running.snapshot.cardId)).toMatchObject({ state: "closed", reason: "server_restarted" });
-      expect(recovered.readSaved(done.snapshot.cardId)).toMatchObject({ reason: "completed", data: { value: "complete" } });
+      expect((await recovered.readSaved(ready.snapshot.cardId))).toMatchObject({ state: "closed", reason: "expired" });
+      expect((await recovered.readSaved(running.snapshot.cardId))).toMatchObject({ state: "closed", reason: "server_restarted" });
+      expect((await recovered.readSaved(done.snapshot.cardId))).toMatchObject({ reason: "completed", data: { value: "complete" } });
       delayed.resolve({ value: "late" });
       expect((await pending).snapshot).toMatchObject({ reason: "server_restarted" });
-      expect(recovered.readSaved(running.snapshot.cardId).data).toBeUndefined();
+      expect((await recovered.readSaved(running.snapshot.cardId)).data).toBeUndefined();
       expect(calls).toBe(2);
     } finally { db.close(); }
   });
@@ -116,7 +117,7 @@ describe("DB-owned card admission, recovery and results", () => {
     try {
       const ready = await cards.create("account", {});
       const next = new CardStore({ records: db.records, ownerId: "new", now: () => now, execute: async () => ({}) });
-      expect(next.readSaved(ready.snapshot.cardId)).toMatchObject({ state: "closed", reason: "server_restarted" });
+      expect((await next.readSaved(ready.snapshot.cardId))).toMatchObject({ state: "closed", reason: "server_restarted" });
     } finally { db.close(); }
   });
   it.each(["reset", "import"] as const)("removes card permissions with %s and refuses the delayed result", async (operation) => {
@@ -132,7 +133,7 @@ describe("DB-owned card admission, recovery and results", () => {
       const rejection = expect(pending).rejects.toThrow("stale access");
       await access.run(() => operation === "reset" ? data.resetLocalData() : data.importLocalDataReplace(backup));
       delayed.resolve({ value: "late" }); await rejection;
-      expect(() => access.run(() => cards.read(ref))).toThrow("access is unavailable");
+      await expect(access.run(() => cards.read(ref))).rejects.toThrow("access is unavailable");
       expect(access.run(() => db.records.get(ref.cardId))).toBeUndefined();
     } finally { cards.stop(); access.close(); db.close(); }
   });
@@ -141,14 +142,14 @@ describe("DB-owned card admission, recovery and results", () => {
     const cards = new CardStore({ records: db.records, ownerId: "owner", now: () => now, execute: async () => ({ value: "saved" }) });
     const local = db.store.createLocalDataService(dataOptions);
     try {
-      await db.store.setActiveAccount(account, "wallet_identity", now);
+      await db.store.setActiveAccount(account, "wallet_connection", now);
       const created = await cards.create("account", choice, true);
       const backup = await local.exportLocalData();
       expect(JSON.stringify(backup)).not.toContain(created.snapshot.cardId);
       expect(JSON.stringify(backup)).not.toContain(created.permission);
       raw.exec("CREATE TRIGGER fail_reset BEFORE DELETE ON accounts BEGIN SELECT RAISE(ABORT, 'fixture reset failure'); END");
       await expect(local.resetLocalData()).rejects.toThrow("fixture reset failure");
-      expect(cards.read({ cardId: created.snapshot.cardId, permission: created.permission }).snapshot).toEqual(created.snapshot);
+      expect((await cards.read({ cardId: created.snapshot.cardId, permission: created.permission })).snapshot).toEqual(created.snapshot);
       expect(await db.store.getActiveAccount()).toMatchObject({ address: account });
     } finally { raw.close(); db.close(); }
   });
@@ -160,11 +161,11 @@ describe("DB-owned card admission, recovery and results", () => {
       const input = { cardId: created.snapshot.cardId, permission: created.permission, revision: 0, input: choice };
       raw.exec("CREATE TRIGGER fail_admission BEFORE UPDATE ON live_read_cards WHEN NEW.state='running' BEGIN SELECT RAISE(ABORT, 'fixture admission failure'); END");
       await expect(cards.submit(input)).rejects.toThrow("fixture admission failure");
-      expect(calls).toBe(0); expect(cards.read(input).snapshot.state).toBe("ready");
+      expect(calls).toBe(0); expect((await cards.read(input)).snapshot.state).toBe("ready");
       raw.exec("DROP TRIGGER fail_admission");
       raw.exec("CREATE TRIGGER fail_result BEFORE UPDATE ON live_read_cards WHEN NEW.reason='completed' BEGIN SELECT RAISE(ABORT, 'fixture result failure'); END");
       expect((await cards.submit(input)).snapshot).toMatchObject({ state: "closed", reason: "failed" });
-      expect(cards.readSaved(input.cardId).data).toBeUndefined(); expect(calls).toBe(1);
+      expect((await cards.readSaved(input.cardId)).data).toBeUndefined(); expect(calls).toBe(1);
     } finally { raw.close(); db.close(); }
   });
   it("does not persist or expose forbidden source output", async () => {

@@ -790,7 +790,7 @@ export function registerDeepbookReadTools(server: McpServer, deps: McpServerDeps
         return errorToolResult({
           kind: "active_account_not_set",
           details: {
-            action: "connect_wallet_identity"
+            action: "connect_wallet_connection"
           }
         });
       }

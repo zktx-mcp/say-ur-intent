@@ -157,7 +157,7 @@ function buildFlowxHumanReadableReview(
       {
         id: "wallet_authorization_later",
         label: "Wallet authorization",
-        reason: "The wallet signature request happens on this review page after the digest-gated handoff; nothing is signed without your approval in the wallet."
+        reason: "The backend requests a signature only after your explicit Review card action; nothing is signed without your approval in the wallet."
       }
     ],
     unsupportedClaims: [

@@ -1,3 +1,4 @@
+import { hasUnsettledWalletWork } from "../session/sqliteWalletWorkflowStore.js";
 import { DB_USER_VERSION } from "./schemaVersion.js";
 import type Database from "better-sqlite3";
 import type { AdapterLifecycleValidator } from "../action/adapterLifecycleValidation.js";
@@ -18,6 +19,7 @@ import {
   type LocalDataService,
   type LocalSettingExportRow,
   type ReviewExecutionExportRow,
+  type ReviewRequestExportRow,
   type ReviewSessionExportRow,
   type ReviewStateSnapshotExportRow,
   type ReviewStatusTransitionExportRow,
@@ -45,8 +47,17 @@ export class SqliteLocalDataService implements LocalDataService {
     private readonly validateAdapterLifecycle: AdapterLifecycleValidator
   ) {}
 
+  private now(): Date { return this.options.now?.() ?? new Date(); }
+
   async getDataCounts(): Promise<LocalDataCounts> {
-    return this.getDataCountsSync();
+    return this.currentDataCounts();
+  }
+
+  private currentDataCounts(): LocalDataCounts {
+    return this.db.transaction(() => {
+      this.options.advanceRequestDeadlines(this.now());
+      return this.getDataCountsSync();
+    }).immediate();
   }
 
   async exportLocalData(now = new Date()): Promise<LocalDataEnvelope> {
@@ -63,6 +74,7 @@ export class SqliteLocalDataService implements LocalDataService {
           reviewStateSnapshots: this.selectAll<ReviewStateSnapshotExportRow>("review_state_snapshots"),
           reviewStatusTransitions: this.selectAll<ReviewStatusTransitionExportRow>("review_status_transitions"),
           reviewExecutions: this.selectAll<ReviewExecutionExportRow>("review_executions"),
+          reviewRequests: this.selectAll<ReviewRequestExportRow>("review_requests"),
           externalActivityScans: this.selectAll<ExternalActivityScanExportRow>("external_activity_scans"),
           externalActivityTransactions: this.selectAll<ExternalActivityTransactionExportRow>("external_activity_transactions"),
           localSettings: this.selectAll<LocalSettingExportRow>("local_settings")
@@ -83,7 +95,7 @@ export class SqliteLocalDataService implements LocalDataService {
       format: envelope.format,
       network: envelope.network,
       exportedAt: envelope.exportedAt,
-      currentCounts: this.getDataCountsSync(),
+      currentCounts: this.currentDataCounts(),
       incomingCounts: countsForPayload(envelope.data),
       willReplace: true,
       activeAccountChange: activeAccountChange(
@@ -99,11 +111,17 @@ export class SqliteLocalDataService implements LocalDataService {
   async importLocalDataReplace(input: unknown, _now = new Date()): Promise<LocalDataMutationResult> {
     const envelope = await this.parseAndVerifyImportEnvelope(input);
     this.db.transaction(() => {
+      // Endpoint verification may have outlived the original request window.
+      // Evaluate the current owner state inside the actual replacement transaction.
+      const now = this.now();
+      this.options.advanceRequestDeadlines(now);
+      if (hasUnsettledWalletWork(this.db, now)) throw new LocalDataError("input_invalid", "A wallet request is still unsettled.", { reason: "wallet_request_unsettled" });
       this.resetLocalDataTables();
       this.insertAccounts(envelope.data.accounts);
       this.insertActiveAccountContext(envelope.data.activeAccountContext);
       this.insertReviewSessions(envelope.data.reviewSessions);
       this.insertReviewStateSnapshots(envelope.data.reviewStateSnapshots);
+      this.insertReviewRequests(envelope.data.reviewRequests);
       this.insertReviewStatusTransitions(envelope.data.reviewStatusTransitions);
       this.insertReviewExecutions(envelope.data.reviewExecutions);
       this.insertExternalActivityScans(envelope.data.externalActivityScans);
@@ -119,8 +137,10 @@ export class SqliteLocalDataService implements LocalDataService {
     };
   }
 
-  async resetLocalData(now = new Date()): Promise<LocalDataMutationResult> {
+  async resetLocalData(now = this.now()): Promise<LocalDataMutationResult> {
     this.db.transaction(() => {
+      this.options.advanceRequestDeadlines(now);
+      if (hasUnsettledWalletWork(this.db, now)) throw new LocalDataError("input_invalid", "A wallet request is still unsettled.", { reason: "wallet_request_unsettled" });
       this.resetLocalDataTables();
       this.insertDefaultSuiGrpcUrl(now);
     })();
@@ -135,16 +155,19 @@ export class SqliteLocalDataService implements LocalDataService {
   private resetLocalDataTables(): void {
     for (const table of [
       "live_read_cards",
+      "live_execution_details",
+      "live_request_authority",
+      "live_wallet_connections",
       "live_transaction_materials",
       "live_private_review_artifacts",
       "live_review_sessions",
-      "live_wallet_identity_sessions",
       "live_settings_sessions",
       "external_activity_transactions",
       "external_activity_scans",
       "review_state_snapshots",
       "review_status_transitions",
       "review_executions",
+      "review_requests",
       "review_sessions",
       "coin_metadata_cache",
       "active_account_context",
@@ -172,6 +195,8 @@ export class SqliteLocalDataService implements LocalDataService {
       reviewStateSnapshots: this.count("review_state_snapshots"),
       reviewStatusTransitions: this.count("review_status_transitions"),
       reviewExecutions: this.count("review_executions"),
+      reviewRequests: this.count("review_requests"),
+      outcomeUnknownRequests: (this.db.prepare("SELECT COUNT(*) AS count FROM review_requests WHERE request_status='outcome_unknown'").get() as CountRow).count,
       externalActivityScans: this.count("external_activity_scans"),
       externalActivityTransactions: this.count("external_activity_transactions"),
       localSettings: this.count("local_settings")
@@ -209,8 +234,8 @@ export class SqliteLocalDataService implements LocalDataService {
   private insertReviewSessions(rows: ReviewSessionExportRow[]): void {
     const statement = this.db.prepare(
       `INSERT INTO review_sessions
-        (id, plan_id, action_kind, adapter_id, protocol, account_id, current_status, plan_json, intent_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, plan_id, action_kind, adapter_id, protocol, account_id, current_status, plan_json, intent_json, created_at, updated_at, current_attempt_id, opened_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const row of rows) {
       statement.run(
@@ -224,7 +249,7 @@ export class SqliteLocalDataService implements LocalDataService {
         row.plan_json,
         row.intent_json,
         row.created_at,
-        row.updated_at
+        row.updated_at, row.current_attempt_id, row.opened_at
       );
     }
   }
@@ -232,8 +257,8 @@ export class SqliteLocalDataService implements LocalDataService {
   private insertReviewStateSnapshots(rows: ReviewStateSnapshotExportRow[]): void {
     const statement = this.db.prepare(
       `INSERT INTO review_state_snapshots
-        (id, review_session_id, plan_id, account_id, status, blocked_reason, refresh_reason, state_json, updated_at, recorded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, review_session_id, plan_id, account_id, status, blocked_reason, refresh_reason, state_json, updated_at, recorded_at, review_revision)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const row of rows) {
       statement.run(
@@ -246,7 +271,7 @@ export class SqliteLocalDataService implements LocalDataService {
         row.refresh_reason,
         row.state_json,
         row.updated_at,
-        row.recorded_at
+        row.recorded_at, row.review_revision
       );
     }
   }
@@ -254,8 +279,8 @@ export class SqliteLocalDataService implements LocalDataService {
   private insertReviewStatusTransitions(rows: ReviewStatusTransitionExportRow[]): void {
     const statement = this.db.prepare(
       `INSERT INTO review_status_transitions
-        (id, review_session_id, event, from_status, to_status, account_id, reason, transitioned_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, review_session_id, event, from_status, to_status, account_id, reason, transitioned_at, domain, attempt_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const row of rows) {
       statement.run(
@@ -266,16 +291,25 @@ export class SqliteLocalDataService implements LocalDataService {
         row.to_status,
         row.account_id,
         row.reason,
-        row.transitioned_at
+        row.transitioned_at, row.domain, row.attempt_id
       );
     }
+  }
+
+  private insertReviewRequests(rows: ReviewRequestExportRow[]): void {
+    const insert = this.db.prepare(`INSERT INTO review_requests
+      (attempt_id,review_session_id,plan_id,review_revision,account_id,transaction_digest,review_state_json,request_status,
+       revision,reason,created_at,updated_at,signature_verified_at,submitted_at)
+      VALUES (@attempt_id,@review_session_id,@plan_id,@review_revision,@account_id,@transaction_digest,@review_state_json,@request_status,
+       @revision,@reason,@created_at,@updated_at,@signature_verified_at,@submitted_at)`);
+    for (const row of rows) insert.run(row);
   }
 
   private insertReviewExecutions(rows: ReviewExecutionExportRow[]): void {
     const statement = this.db.prepare(
       `INSERT INTO review_executions
-        (review_session_id, plan_id, account_id, status, tx_digest, explorer_url, failure_reason, result_json, recorded_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (review_session_id, plan_id, account_id, status, tx_digest, explorer_url, failure_reason, result_json, recorded_at, updated_at, attempt_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const row of rows) {
       statement.run(
@@ -288,7 +322,7 @@ export class SqliteLocalDataService implements LocalDataService {
         row.failure_reason,
         row.result_json,
         row.recorded_at,
-        row.updated_at
+        row.updated_at, row.attempt_id
       );
     }
   }

@@ -1,17 +1,27 @@
 html, body { margin: 0; min-height: 0; }
 body { color: var(--ui-text); background: var(--ui-bg); }
-#app { padding: var(--ui-space-4, 16px); max-width: 100%; overflow-wrap: anywhere; }
+#app { padding: var(--ui-space-4, 16px); max-width: 100%; min-width: 0; overflow-wrap: anywhere; container: mcp-card / inline-size; }
 #app h1 { font-size: 20px; font-weight: 500; margin: 0 0 12px; }
 #app form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+#app form > * { min-width: 0; max-width: 100%; }
+/* Allow address fields and wallet selects to wrap before they become too small
+   to read; 14rem also accommodates the UTC date-time input format. */
+#app form > input, #app form > select, #app form > label { flex: 1 1 14rem; }
 #app form label { display: flex; flex-direction: column; gap: 6px; }
+#app form label > input, #app form label > select { width: 100%; }
 #app input, #app select, #app textarea { font: inherit; color: var(--ui-text); background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: 6px; padding: 8px; min-width: 0; }
-#app form > input { flex: 1; }
-#app button { font: inherit; cursor: pointer; color: var(--ui-text); background: var(--ui-surface-2); border: 1px solid var(--ui-border-strong); border-radius: 6px; padding: 8px 12px; }
+#app button:not(.ui-icon-btn) { font: inherit; cursor: pointer; color: var(--ui-text); background: var(--ui-surface-2); border: 1px solid var(--ui-border-strong); border-radius: 6px; padding: 8px 12px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 #app button:hover { border-color: var(--ui-text); }
 #app button:disabled { cursor: default; opacity: .55; }
 #app :focus-visible { outline: 2px solid var(--ui-text); outline-offset: 2px; }
 #app textarea { width: 100%; min-height: 140px; }
 .card-actions { margin-top: 12px; }
-.card-actions > div { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.card-actions, .card-actions > div { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#app form > .card-actions, #app form > p { flex-basis: 100%; }
 .ui-error:not(:empty) { color: var(--ui-danger, #b44336); }
-.card-chart { height: 400px; width: 100%; }
+/* Keep room for price, volume and time axes on narrow cards; preserve the
+   existing 400px chart height when the card has sufficient width. */
+.card-chart { height: clamp(280px, 75cqi, 400px); width: 100%; min-width: 0; }
+@container mcp-card (max-width: 28rem) {
+  #app form > button { width: 100%; }
+}

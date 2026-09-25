@@ -1,7 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type {
   ActionPlan,
-  ExecutionResult,
   InternalSessionStatus,
   ReviewSession,
   ReviewState
@@ -14,19 +13,24 @@ import {
 } from "./privateReviewArtifacts.js";
 import type { SessionRecordStore } from "./sessionRecordStore.js";
 import type { KeyedRecordStore } from "./keyedRecordStore.js";
-import { walletIdentitySessionSchema, type WalletIdentitySession } from "./walletIdentity.js";
 import type { SettingsSession } from "./settingsSession.js";
 import { LIVE_REVIEW_SESSION_WRITE_CONTRACT_VERSION } from "./liveReviewSessionContract.js";
+import { INITIAL_CHAIN_OBSERVATION_STATUSES } from "./transactionRequest.js";
 
 export type LiveReviewSessionRow = {
   id: string;
   token_hash: string;
   status: string;
   account: string | null;
-  pending_handoff_digest: string | null;
+  owner_id: string;
+  review_revision: number;
+  preparation_id: string | null;
+  preparation_error: string | null;
+  wallet_connection_id: string | null;
+  wallet_connection_revision: number | null;
+  current_attempt_id: string | null;
   plans_json: string;
   review_state_json: string | null;
-  execution_result_json: string | null;
   created_at: string;
   expires_at: string;
   last_activity_at: string;
@@ -38,12 +42,12 @@ export function insertLiveReviewSessionRow(db: SqliteDatabase, session: ReviewSe
   const serialized = serializeSessionForLiveReviewSessionRow(session);
   db.prepare(
     `INSERT INTO live_review_sessions
-       (id, token_hash, status, account, pending_handoff_digest,
-        plans_json, review_state_json, execution_result_json,
+       (id, token_hash, status, account, owner_id, review_revision, preparation_id, preparation_error, wallet_connection_id, wallet_connection_revision, current_attempt_id,
+        plans_json, review_state_json,
         created_at, expires_at, last_activity_at, revision, write_contract_version)
      VALUES
-       (@id, @tokenHash, @status, @account, @pendingHandoffDigest,
-        @plansJson, @reviewStateJson, @executionResultJson,
+       (@id, @tokenHash, @status, @account, @ownerId, @reviewRevision, @preparationId, @preparationError, @walletConnectionId, @walletConnectionRevision, @currentAttemptId,
+        @plansJson, @reviewStateJson,
         @createdAt, @expiresAt, @lastActivityAt, 0, @writeContractVersion)`
   ).run(serialized);
 }
@@ -60,10 +64,15 @@ export function updateLiveReviewSessionRow(
        SET token_hash = @tokenHash,
            status = @status,
            account = @account,
-           pending_handoff_digest = @pendingHandoffDigest,
+           owner_id = @ownerId,
+           review_revision = @reviewRevision,
+           preparation_id = @preparationId,
+           preparation_error = @preparationError,
+           wallet_connection_id = @walletConnectionId,
+           wallet_connection_revision = @walletConnectionRevision,
+           current_attempt_id = @currentAttemptId,
            plans_json = @plansJson,
            review_state_json = @reviewStateJson,
-           execution_result_json = @executionResultJson,
            created_at = @createdAt,
            expires_at = @expiresAt,
            last_activity_at = @lastActivityAt,
@@ -103,6 +112,11 @@ export class SqliteSessionRecordStore implements SessionRecordStore {
     return row ? sessionFromLiveReviewSessionRow(row) : undefined;
   }
 
+  revision(id: string): number | undefined { return this.getRow(id)?.revision; }
+  hasAdmittedRevision(id: string, reviewRevision: number): boolean {
+    return !!this.db.prepare("SELECT 1 FROM review_requests WHERE review_session_id=? AND review_revision=?").get(id, reviewRevision);
+  }
+
   create(id: string, session: ReviewSession): void {
     if (this.getRow(id)) {
       throw new Error(`Review session already exists: ${id}`);
@@ -130,59 +144,15 @@ export class SqliteSessionRecordStore implements SessionRecordStore {
     this.db.prepare(`DELETE FROM live_review_sessions`).run();
   }
 
-  acquireHandoffLock(id: string, digest: string): boolean {
-    const existing = this.db
-      .prepare(`SELECT pending_handoff_digest FROM live_review_sessions WHERE id = ?`)
-      .get(id) as { pending_handoff_digest: string | null } | undefined;
-    if (!existing) {
-      return false;
-    }
-    if (existing.pending_handoff_digest === digest) {
-      return true;
-    }
-    // Atomic across processes: claim the lock only when it is free or already held
-    // by the same digest. A different in-flight digest leaves the row untouched.
-    const result = this.db
-      .prepare(
-        `UPDATE live_review_sessions
-         SET pending_handoff_digest = ?,
-             revision = revision + 1,
-             write_contract_version = ?
-         WHERE id = ? AND pending_handoff_digest IS NULL`
-      )
-      .run(digest, LIVE_REVIEW_SESSION_WRITE_CONTRACT_VERSION, id);
-    if (result.changes > 0) {
-      return true;
-    }
-    const current = this.get(id);
-    return current?.pendingHandoffDigest === digest;
+  hasUnsettledRequest(id: string, now: Date): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM live_request_authority l JOIN review_requests r ON r.attempt_id=l.attempt_id
+      WHERE r.review_session_id=? AND (l.sdk_pending=1 OR l.submit_pending=1 OR l.lookup_pending=1
+        OR (r.request_status IN (SELECT value FROM json_each(?)) AND (l.lookup_deadline IS NULL OR l.lookup_deadline>?))) LIMIT 1`)
+      .get(id, JSON.stringify(INITIAL_CHAIN_OBSERVATION_STATUSES), now.toISOString());
   }
-
-  releaseHandoffLock(id: string, expectedDigest?: string): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE live_review_sessions
-         SET pending_handoff_digest = NULL,
-             revision = revision + 1,
-             write_contract_version = ?
-         WHERE id = ?
-           AND pending_handoff_digest IS NOT NULL
-           AND (? IS NULL OR pending_handoff_digest = ?)`
-      )
-      .run(LIVE_REVIEW_SESSION_WRITE_CONTRACT_VERSION, id, expectedDigest ?? null, expectedDigest ?? null);
-    if (result.changes > 0) {
-      return true;
-    }
-    const session = this.get(id);
-    return session !== undefined && session.pendingHandoffDigest === undefined;
-  }
-
   private getRow(id: string): LiveReviewSessionRow | undefined {
-    return this.db
-      .prepare(`SELECT * FROM live_review_sessions WHERE id = ?`)
-      .get(id) as LiveReviewSessionRow | undefined;
+    return this.db.prepare("SELECT * FROM live_review_sessions WHERE id=?").get(id) as LiveReviewSessionRow | undefined;
   }
-
 }
 
 export class SqlitePrivateReviewArtifactStore implements PrivateReviewArtifactStore {
@@ -221,8 +191,8 @@ export class SqlitePrivateReviewArtifactStore implements PrivateReviewArtifactSt
 }
 
 /**
- * SQLite-backed id-keyed store for the short-lived wallet-identity and settings
- * session managers. Each record is a JSON blob keyed by id; the table name is a
+ * SQLite-backed id-keyed store for the short-lived settings
+ * session manager. Each record is a JSON blob keyed by id; the table name is a
  * trusted constant supplied by the factories below (never user input).
  */
 export class SqliteKeyedRecordStore<T> implements KeyedRecordStore<T> {
@@ -262,16 +232,6 @@ export class SqliteKeyedRecordStore<T> implements KeyedRecordStore<T> {
   }
 }
 
-export function createSqliteWalletIdentityRecordStore(
-  db: SqliteDatabase
-): KeyedRecordStore<WalletIdentitySession> {
-  return new SqliteKeyedRecordStore<WalletIdentitySession>(
-    db,
-    "live_wallet_identity_sessions",
-    (raw) => walletIdentitySessionSchema.parse(raw) as WalletIdentitySession
-  );
-}
-
 export function createSqliteSettingsRecordStore(db: SqliteDatabase): KeyedRecordStore<SettingsSession> {
   return new SqliteKeyedRecordStore<SettingsSession>(
     db,
@@ -295,12 +255,13 @@ export function sessionFromLiveReviewSessionRow(row: LiveReviewSessionRow): Revi
     ...(row.review_state_json === null
       ? {}
       : { reviewState: JSON.parse(row.review_state_json) as ReviewState }),
-    ...(row.execution_result_json === null
-      ? {}
-      : { executionResult: JSON.parse(row.execution_result_json) as ExecutionResult }),
-    ...(row.pending_handoff_digest === null
-      ? {}
-      : { pendingHandoffDigest: row.pending_handoff_digest })
+    ownerId: row.owner_id,
+    reviewRevision: row.review_revision,
+    ...(row.wallet_connection_id === null ? {} : { walletConnectionId: row.wallet_connection_id }),
+    ...(row.wallet_connection_revision === null ? {} : { walletConnectionRevision: row.wallet_connection_revision }),
+    ...(row.preparation_error === null ? {} : { preparationError: row.preparation_error }),
+    ...(row.preparation_id === null ? {} : { preparationId: row.preparation_id }),
+    ...(row.current_attempt_id === null ? {} : { currentAttemptId: row.current_attempt_id })
   };
 }
 
@@ -310,10 +271,15 @@ export function serializeSessionForLiveReviewSessionRow(session: ReviewSession):
     tokenHash: session.tokenHash,
     status: session.status,
     account: session.account ?? null,
-    pendingHandoffDigest: session.pendingHandoffDigest ?? null,
+    ownerId: session.ownerId,
+    reviewRevision: session.reviewRevision,
+    preparationId: session.preparationId ?? null,
+    preparationError: session.preparationError ?? null,
+    walletConnectionId: session.walletConnectionId ?? null,
+    walletConnectionRevision: session.walletConnectionRevision ?? null,
+    currentAttemptId: session.currentAttemptId ?? null,
     plansJson: JSON.stringify(session.plans),
     reviewStateJson: session.reviewState ? JSON.stringify(session.reviewState) : null,
-    executionResultJson: session.executionResult ? JSON.stringify(session.executionResult) : null,
     createdAt: session.createdAt,
     expiresAt: session.expiresAt,
     lastActivityAt: session.lastActivityAt,

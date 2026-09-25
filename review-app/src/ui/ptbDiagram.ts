@@ -271,20 +271,16 @@ const EYE_ICON =
 const EYE_OFF_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.2A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.3 13.3 0 0 1-2.4 3.1M6.1 6.1A13.4 13.4 0 0 0 2 11s3.5 7 10 7a9 9 0 0 0 3.9-.9"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/></svg>';
 
-// The single shared "Transaction graph" card used by both the review page and the
-// public receipt: a titled card with a name/address eye toggle
-// in the title bar, and the pan/zoom graph below. Callers pass only the Mermaid display
-// model { text (raw addresses), namedText (registered names) }; every label, the title,
-// and the diagnostics-only boundary tooltip come from the single i18n source, so the two
-// pages render the same card and can never drift apart.
-export function ptbGraphCard(opts: { mermaid: { text: string; namedText: string } }): HTMLElement {
+// Shared presentation does not imply shared evidence provenance. Every caller
+// identifies whether its diagram came from local preparation or a chain receipt.
+export function ptbGraphCard(opts: { source: "review" | "receipt"; mermaid: { text: string; namedText: string } }): HTMLElement {
   const panel = card();
   panel.classList.add("ptb-graph-card");
   // Title bar: the "Transaction graph" text with its diagnostics-only ⓘ tooltip right
   // beside it; the eye action sits on the far side.
   const head = element("h2", "ui-card-head");
   const title = element("span", "ptb-graph-title", t.receipt.graph);
-  title.append(" ", info(t.receipt.graphTip));
+  title.append(" ", info(opts.source === "review" ? t.receipt.graphReviewTip : t.receipt.graphTip));
   head.append(title);
   panel.append(head);
   const { text, namedText } = opts.mermaid;

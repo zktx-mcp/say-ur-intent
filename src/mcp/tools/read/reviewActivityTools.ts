@@ -1,11 +1,10 @@
+import { TRANSACTION_REQUEST_STATUSES, transactionRequestSchema, transactionRequestStatusSchema } from "../../../core/session/transactionRequest.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   actionPlanSchema,
-  executionResultSchema,
   internalSessionStatusSchema,
-  reviewStateOutputSchema,
-  unknownRecordSchema
+  reviewStateOutputSchema
 } from "../../../core/action/schemas.js";
 import {
   REVIEW_ACTIVITY_LIST_DEFAULT_LIMIT,
@@ -39,7 +38,8 @@ const reviewActivityCommonOutput = {
   truncated: z.object({
     activities: z.boolean(),
     snapshots: z.boolean(),
-    transitions: z.boolean()
+    transitions: z.boolean(),
+    requests: z.boolean().optional()
   })
 };
 
@@ -49,12 +49,15 @@ const reviewActivityRowSchema = z.object({
   actionKind: z.string(),
   adapterId: z.string(),
   protocol: z.string(),
-  currentStatus: internalSessionStatusSchema,
+  reviewStatus: internalSessionStatusSchema,
+  currentAttemptId: z.string().optional(),
+  requestStatus: transactionRequestStatusSchema.optional(),
+  reviewRevision: z.number().int().nonnegative().optional(),
   account: z.string(),
   createdAt: fetchedAtSchema,
   updatedAt: fetchedAtSchema,
-  executionStatus: z.string().optional(),
-  txDigest: z.string().optional(),
+  executionStatus: z.enum(["success", "failure"]).optional(),
+  transactionDigest: z.string().optional(),
   snapshotCount: z.number().int().nonnegative(),
   transitionCount: z.number().int().nonnegative()
 });
@@ -65,24 +68,26 @@ export function registerReviewActivityListTool(server: McpServer, deps: McpServe
     {
       title: "List review activity",
       description: "List local Say Ur Intent review-session records for one account. Not wallet transaction history.",
-      inputSchema: {
+      inputSchema: z.object({
         ...reviewActivityInputSchema,
-        status: internalSessionStatusSchema.optional(),
+        reviewStatus: internalSessionStatusSchema.optional(),
+        requestStatus: transactionRequestStatusSchema.optional(),
+        executionStatus: z.enum(["success", "failure"]).optional(),
         limit: z.number().int().min(1).max(REVIEW_ACTIVITY_LIST_MAX_LIMIT).optional()
-      },
+      }).strict(),
       outputSchema: successOutputSchema({
         ...reviewActivityCommonOutput,
         activities: z.array(reviewActivityRowSchema)
       }),
       annotations: { readOnlyHint: true, openWorldHint: false }
     },
-    async ({ account, from, to, status, limit }) => {
+    async ({ account, from, to, reviewStatus, requestStatus, executionStatus, limit }) => {
       try {
         const result = await deps.activityStore.listReviewActivity({
           account,
           from,
           to,
-          status,
+          reviewStatus, requestStatus, executionStatus,
           limit: limit ?? REVIEW_ACTIVITY_LIST_DEFAULT_LIMIT
         });
         return okToolResult({
@@ -110,18 +115,20 @@ export function registerReviewActivitySummaryTools(server: McpServer, deps: McpS
           opened: z.number().int().nonnegative(),
           walletConnected: z.number().int().nonnegative(),
           stateComputed: z.number().int().nonnegative(),
-          currentStatusCounts: unknownRecordSchema,
+          reviewStatusCounts: z.record(internalSessionStatusSchema, z.number().int().nonnegative()),
+          requestStatusCounts: z.array(z.object({ requestStatus: z.enum(TRANSACTION_REQUEST_STATUSES), count: z.number().int().nonnegative() }).strict()),
+          executionStatusCounts: z.object({ success: z.number().int().nonnegative(), failure: z.number().int().nonnegative() }),
+          withoutRequest: z.number().int().nonnegative(),
+          withoutExecutionResult: z.number().int().nonnegative(),
           everReachedReviewStateCounts: z.object({
             ready_for_wallet_review: z.number().int().nonnegative(),
             blocked: z.number().int().nonnegative(),
             refresh_required: z.number().int().nonnegative()
           }),
-          signedPending: z.number().int().nonnegative(),
-          success: z.number().int().nonnegative(),
-          failure: z.number().int().nonnegative(),
-          expiredBeforeResult: z.number().int().nonnegative(),
-          avgCreatedToSignedSeconds: z.number().nullable(),
-          avgOpenedToSignedSeconds: z.number().nullable()
+          everAwaitedChainResult: z.number().int().nonnegative(),
+          expiredWithoutExecutionResult: z.number().int().nonnegative(),
+          avgCreatedToSignatureVerifiedSeconds: z.number().nullable(),
+          avgOpenedToSignatureVerifiedSeconds: z.number().nullable()
         })
       }),
       annotations: { readOnlyHint: true, openWorldHint: false }
@@ -152,7 +159,9 @@ export function registerReviewActivitySummaryTools(server: McpServer, deps: McpS
         ...reviewActivityCommonOutput,
         session: reviewActivityRowSchema.omit({
           executionStatus: true,
-          txDigest: true,
+          transactionDigest: true,
+          requestStatus: true,
+          reviewRevision: true,
           snapshotCount: true,
           transitionCount: true
         }),
@@ -161,6 +170,7 @@ export function registerReviewActivitySummaryTools(server: McpServer, deps: McpS
         stateSnapshots: z.array(
           z.object({
             id: z.number().int().positive(),
+            reviewRevision: z.number().int().nonnegative(),
             planId: z.string(),
             account: z.string(),
             status: z.string(),
@@ -175,6 +185,8 @@ export function registerReviewActivitySummaryTools(server: McpServer, deps: McpS
           z.object({
             id: z.number().int().positive(),
             event: z.string(),
+            domain: z.enum(["review", "request"]),
+            attemptId: z.string().optional(),
             fromStatus: z.string().optional(),
             toStatus: z.string(),
             isNoOp: z.boolean(),
@@ -183,21 +195,9 @@ export function registerReviewActivitySummaryTools(server: McpServer, deps: McpS
             transitionedAt: fetchedAtSchema
           })
         ),
-        execution: z
-          .object({
-            reviewSessionId: z.string(),
-            planId: z.string(),
-            accountId: z.number().int().positive(),
-            account: z.string(),
-            status: z.string(),
-            txDigest: z.string().optional(),
-            explorerUrl: z.string().optional(),
-            failureReason: z.string().optional(),
-            recordedAt: fetchedAtSchema,
-            updatedAt: fetchedAtSchema,
-            resultJson: executionResultSchema
-          })
-          .optional()
+        request: transactionRequestSchema.optional(),
+        requestCount: z.number().int().nonnegative(),
+        requests: z.array(transactionRequestSchema)
       }),
       annotations: { readOnlyHint: true, openWorldHint: false }
     },
@@ -206,7 +206,8 @@ export function registerReviewActivitySummaryTools(server: McpServer, deps: McpS
         const result = await deps.activityStore.getReviewSessionDetail({ reviewSessionId, account });
         return okToolResult({
           ...result,
-          userAnswerUse: reviewSessionDetailUserAnswerUse(result.execution !== undefined)
+          userAnswerUse: reviewSessionDetailUserAnswerUse({ hasCurrentRequest: !!result.request, hasCurrentExecution: !!result.request?.execution,
+            hasHistoricalExecution: result.requests.some((request) => !!request.execution) })
         });
       } catch (error) {
         return activityStoreReadError(error, deps);

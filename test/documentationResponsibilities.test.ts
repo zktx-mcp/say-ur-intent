@@ -62,8 +62,8 @@ describe("documentation responsibility boundaries", () => {
         "API reference: tool contracts, response fields, statuses, follow-up fields, and output boundaries."
       ],
       [
-        "sayurintent://docs/wallet-identity",
-        "Wallet identity reference: active-account read context and same-machine capture boundaries."
+        "sayurintent://docs/wallet-connection",
+        "Wallet connection reference: active read context, private SDK ownership and user-approved transaction requests."
       ],
       [
         "sayurintent://docs/agent-behavior",
@@ -102,7 +102,7 @@ describe("documentation responsibility boundaries", () => {
       "docs/MCP_SETUP.md",
       "docs/MCP_TOOLS.md",
       "docs/AGENT_BEHAVIOR.md",
-      "docs/WALLET_IDENTITY.md",
+      "docs/WALLET_CONNECTION.md",
       "docs/TRANSACTION_ACTIVITY_LOG.md",
       "docs/UTILITY_INDEX.md",
       "docs/LOCAL_DB_ARCHITECTURE.md",
@@ -151,7 +151,7 @@ describe("documentation responsibility boundaries", () => {
     expect(agentBehavior).toMatch(/How much are my USD-denominated assets together/);
     expect(agentBehavior).toMatch(/What is the shortfall/);
     expect(agentBehavior).toMatch(/Do not call quote tools for the same payment coverage, balance-total, or shortfall question/);
-    expect(agentBehavior).toMatch(/Immediately call `session\.wait_wallet_identity` in the same turn/);
+    expect(agentBehavior).toMatch(/session\.wait_wallet_connection` use the/);
   });
 
   it("keeps MCP_SETUP focused on setup while linking to API and playbook references", () => {
@@ -230,13 +230,13 @@ describe("documentation responsibility boundaries", () => {
       "TRANSACTION_ACTIVITY_LOG.md"
     );
 
-    const walletIdentity = read("docs/WALLET_IDENTITY.md");
-    expect(walletIdentity).toMatch(/active-account read context/i);
-    expect(walletIdentity).toMatch(/not transaction review, wallet creation, login, signing authorization, custody, or persistent permission/i);
+    const walletIdentity = read("docs/WALLET_CONNECTION.md");
+    expect(walletIdentity).toMatch(/active read account|read context/i);
+    expect(walletIdentity).toMatch(/not login[\s\S]{0,100}custody[\s\S]{0,80}standing permission/i);
     expectNegativeContextOnMatchingLines(
       walletIdentity,
       /login|authentication|signing authorization|custody|permission for transactions|private keys|executable transaction material/i,
-      "WALLET_IDENTITY.md"
+      "WALLET_CONNECTION.md"
     );
   });
 

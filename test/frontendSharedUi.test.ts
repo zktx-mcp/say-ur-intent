@@ -88,9 +88,8 @@ describe("shared-vs-page styling boundary (Plan B B1)", () => {
   // to this list as they migrate.
   const migratedPageCss = [
     "review-app/src/account.css",
-    "review-app/src/connect.css",
+    "src/mcp-ui/view/workflow.css",
     "review-app/src/receipt.css",
-    "review-app/src/review.css",
     "review-app/src/settings.css"
   ];
 

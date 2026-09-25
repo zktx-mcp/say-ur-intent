@@ -58,7 +58,7 @@ import {
   type ReviewComputationResult
 } from "../../core/review/reviewComputationResult.js";
 import {
-  assembleWalletReviewAdapterContract
+  assembleTransactionReviewData
 } from "../../core/action/walletReviewContractAssembler.js";
 import type { PtbVisualizationOutcome } from "../../core/action/ptbVisualizationProducer.js";
 import type { PtbVisualizationArtifact } from "../../core/action/signableAdapterContract.js";
@@ -366,7 +366,7 @@ export async function computeDeepbookSwapReviewEvidence(
   }
   privateArtifacts.reviewTimeSimulation = simulationStage.evidence;
 
-  const assembly = assembleWalletReviewAdapterContract({
+  const assembly = assembleTransactionReviewData({
     adapterId: input.plan.adapterId,
     protocol: input.plan.protocol,
     actionKind: input.plan.actionKind,
@@ -379,7 +379,7 @@ export async function computeDeepbookSwapReviewEvidence(
     objectOwnership: ownershipStage.evidence,
     humanReadableReview: humanReviewStage.evidence,
     reviewTimeSimulation: simulationStage.evidence,
-    transactionMaterialCommitment: digestStage.evidence.transactionDigest,
+    reviewedTransactionDigest: digestStage.evidence.transactionDigest,
     now
   });
 
@@ -752,7 +752,7 @@ function contractEmittedCheck(): ReviewCheck {
     id: "deepbook_wallet_review_contract_emitted",
     label: "Wallet review contract emit",
     status: "pass",
-    message: "DeepBook account-bound review assembled and schema-validated a wallet review contract from verified review evidence. The local review page can now request the digest-gated handoff for user-controlled wallet signing; MCP output stays free of signing data.",
+    message: "DeepBook account-bound review assembled and schema-validated a wallet review contract from verified review evidence. An explicit Review card action can request backend-mediated wallet approval of this exact transaction; ordinary MCP output stays free of signing authority.",
     source: "adapter"
   };
 }

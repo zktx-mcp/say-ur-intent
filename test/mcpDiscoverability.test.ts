@@ -1,3 +1,4 @@
+import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { ADAPTER_PROMPT_SURFACES } from "../src/adapters/adapterPromptSurfaces.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -30,7 +31,6 @@ import { TransactionActivityService, type SuiTransactionActivitySource } from ".
 import { PreferencesStoreError, type LocalSettingsService } from "../src/core/preferences/preferencesStore.js";
 import { SuiEndpointError } from "../src/core/suiEndpoint.js";
 import { InMemorySessionStore } from "../src/core/session/sessionStore.js";
-import type { ChainReceiptVerifier } from "../src/core/session/chainReceiptFinalization.js";
 import { MCP_RESOURCES } from "../src/mcp/resources.js";
 import { createMcpServer } from "../src/mcp/server.js";
 import {
@@ -48,7 +48,6 @@ import {
   InMemoryLocalSettingsService,
   InMemoryPreferencesRepository
 } from "./fixtures/inMemoryLocalSettings.js";
-import { chainReceiptDigest, chainReceiptFixture } from "./fixtures/chainReceipt.js";
 import type { ActionPlan, ReviewState } from "../src/core/action/types.js";
 import { DEFAULT_SUI_GRAPHQL_URL, DEFAULT_SUI_GRPC_URL } from "../src/runtime/config.js";
 
@@ -132,7 +131,6 @@ async function connectTestClient(
     readService?: SuiReadService;
     transactionActivitySource?: SuiTransactionActivitySource;
     sessionTtlMs?: number;
-    chainReceiptVerifier?: ChainReceiptVerifier;
   } = {}
 ) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -152,7 +150,6 @@ async function connectTestClient(
     localSettings,
     reviewBaseUrl: "http://127.0.0.1:4173",
     logger: testLogger,
-    chainReceiptVerifier: options.chainReceiptVerifier,
     readService: options.readService ?? createTestReadService(),
     transactionActivityService: new TransactionActivityService({
       activityStore,
@@ -161,7 +158,7 @@ async function connectTestClient(
       scanId: () => `scan_test_${++scanCounter}`
     })
   });
-  const client = new Client({ name: "test-client", version: "0.0.0" });
+  const client = new Client({ name: "test-client", version: "0.0.0" }, { capabilities: { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } } });
 
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
@@ -417,35 +414,6 @@ function officialSource(
   };
 }
 
-function attachReviewedCommitment(
-  store: InMemorySessionStore,
-  sessionId: string,
-  transactionMaterialCommitment = chainReceiptDigest
-) {
-  const recordStore = (store as unknown as {
-    sessions: {
-      get(id: string): unknown;
-      commitReviewSessionTransition(id: string, expected: unknown, next: unknown): boolean;
-    };
-  }).sessions;
-  const session = recordStore.get(sessionId) as {
-    reviewState?: Record<string, unknown>;
-  } | undefined;
-  if (!session?.reviewState) {
-    throw new Error("test setup requires review state");
-  }
-  const committed = recordStore.commitReviewSessionTransition(sessionId, session, {
-    ...session,
-    reviewState: {
-      ...session.reviewState,
-      walletReviewAdapterContract: { transactionMaterialCommitment }
-    }
-  });
-  if (!committed) {
-    throw new Error("test setup could not attach reviewed commitment");
-  }
-}
-
 function textPayload(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
   return JSON.parse((result.content as Array<{ text?: string }>)[0]?.text ?? "");
 }
@@ -456,14 +424,10 @@ describe("MCP discoverability", () => {
     try {
       expect(client.getInstructions()).toBe(SERVER_INSTRUCTIONS);
       expect(client.getInstructions()).toContain("mainnet-only");
-      expect(client.getInstructions()).toMatch(
-        /MCP (?:layer )?is a session gateway[\s\S]*local review[\s\S]*wallet identity[\s\S]*settings/i
-      );
-      expect(client.getInstructions()).toMatch(
-        /does not execute[\s\S]*request wallet signatures[\s\S]*return transaction bytes/i
-      );
-      expect(client.getInstructions()).toContain("server re-reads Sui mainnet and records chain receipt evidence");
-      expect(client.getInstructions()).toContain("Chain receipts are not execution guarantees");
+      expect(client.getInstructions()).toContain("Ordinary MCP tools return evidence or internal cards");
+      expect(client.getInstructions()).toContain("never signing authority, bytes or signatures");
+      expect(client.getInstructions()).toContain("Only user card selection and wallet approval");
+      expect(client.getInstructions()).toContain("Request status is separate from chain success/failure");
       expect(client.getInstructions()).toContain("toolAvailability.requiredToolsAvailable");
       expect(client.getInstructions()).toContain("userAnswerUse.answerFields");
       expect(client.getInstructions()).toContain("active account context");
@@ -496,12 +460,14 @@ describe("MCP discoverability", () => {
         "sayurintent://docs/mcp-setup",
         "sayurintent://docs/mcp-tools",
         "sayurintent://docs/readme",
-        "sayurintent://docs/wallet-identity",
+        "sayurintent://docs/wallet-connection",
         "sayurintent://protocols/deepbook-margin",
         "sayurintent://protocols/deepbook-v3",
         "ui://say-ur-intent/account.html",
         "ui://say-ur-intent/chart.html",
-        "ui://say-ur-intent/receipt.html"
+        "ui://say-ur-intent/connect.html",
+        "ui://say-ur-intent/receipt.html",
+        "ui://say-ur-intent/review.html"
       ]);
 
       for (const expectedResource of MCP_RESOURCES) {
@@ -561,14 +527,14 @@ describe("MCP discoverability", () => {
       expect(surfaceText).toContain('intent: "10 sui to usdc"');
       expect(surfaceText).toContain("action.prepare_sui_action_review");
       expect(surfaceText).toContain("never contains signing data, transaction bytes, or signing readiness");
-      expect(surfaceText).toContain("chain receipts are server-read execution facts");
+      expect(surfaceText).toContain("request status is separate from server-verified chain execution facts");
 
       const prompt = await client.getPrompt({ name: "prepare-reviewable-sui-action" });
       const text = prompt.messages
         .map((message) => (message.content.type === "text" ? message.content.text : ""))
         .join("\n");
       expect(text).toContain("never contains signing data, transaction bytes, or signing readiness");
-      expect(text).toContain("chain receipts are server-read execution facts");
+      expect(text).toContain("request status is separate from server-verified chain execution facts");
       expect(text).toContain("read-only local review and never become signing material");
       expect(text).not.toContain("Safe to sign");
     } finally {
@@ -662,7 +628,7 @@ describe("MCP discoverability", () => {
           TOOL_NAMES.readPreviewIntentEvidence,
           TOOL_NAMES.settingsCreateLocalSettingsSession,
           TOOL_NAMES.settingsGetLocalSettings,
-          TOOL_NAMES.sessionWaitWalletIdentity,
+          TOOL_NAMES.sessionWaitWalletConnection,
           TOOL_NAMES.sessionGetInteractionStatus,
           TOOL_NAMES.sessionWaitExecutionResult,
         ])
@@ -703,9 +669,9 @@ describe("MCP discoverability", () => {
       const toolsByName = new Map(tools.tools.map((tool) => [tool.name, tool]));
 
       for (const toolName of [
-        TOOL_NAMES.sessionCreateWalletIdentity,
-        TOOL_NAMES.sessionGetWalletIdentity,
-        TOOL_NAMES.sessionWaitWalletIdentity,
+        TOOL_NAMES.sessionCreateWalletConnection,
+        TOOL_NAMES.sessionGetWalletConnection,
+        TOOL_NAMES.sessionWaitWalletConnection,
         TOOL_NAMES.sessionGetInteractionStatus,
         TOOL_NAMES.sessionGetReviewStatus,
         TOOL_NAMES.sessionGetExecutionResult,
@@ -899,7 +865,7 @@ describe("MCP discoverability", () => {
   });
 
   it("exposes live read-only tools through MCP", async () => {
-    const { client, server, sessions } = await connectTestClient();
+    const { client, server, activityStore } = await connectTestClient();
     try {
       const tools = await client.listTools();
       const deepbookReadToolNames = new Set<string>([
@@ -924,7 +890,7 @@ describe("MCP discoverability", () => {
         ok: false,
         error: {
           kind: "active_account_not_set",
-          details: { action: "connect_wallet_identity" }
+          details: { action: "connect_wallet_connection" }
         }
       });
       const pendingClassification = await client.callTool({
@@ -935,7 +901,7 @@ describe("MCP discoverability", () => {
         ok: false,
         error: {
           kind: "active_account_not_set",
-          details: { action: "connect_wallet_identity" }
+          details: { action: "connect_wallet_connection" }
         }
       });
       const explicitWallet = await client.callTool({
@@ -1009,7 +975,7 @@ describe("MCP discoverability", () => {
         ok: false,
         error: {
           kind: "active_account_not_set",
-          details: { action: "connect_wallet_identity" }
+          details: { action: "connect_wallet_connection" }
         }
       });
       const pendingDeepbookAccount = await client.callTool({
@@ -1020,16 +986,10 @@ describe("MCP discoverability", () => {
         ok: false,
         error: {
           kind: "active_account_not_set",
-          details: { action: "connect_wallet_identity" }
+          details: { action: "connect_wallet_connection" }
         }
       });
-      const { session } = await sessions.createWalletIdentitySession();
-      await sessions.recordWalletIdentityOpened(session.id);
-      await sessions.recordWalletIdentityConnecting(session.id);
-      await sessions.recordWalletIdentityResult(
-        session.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" }
-      );
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection");
       const wallet = await client.callTool({
         name: TOOL_NAMES.readSummarizeWalletAssets,
         arguments: {}
@@ -1915,7 +1875,7 @@ describe("MCP discoverability", () => {
   });
 
   it("exposes local review activity read tools through MCP", async () => {
-    const { client, server, sessions } = await connectTestClient();
+    const { client, server, sessions, activityStore } = await connectTestClient();
     try {
       const tools = await client.listTools();
       const toolNames = tools.tools.map((tool) => tool.name);
@@ -1940,17 +1900,8 @@ describe("MCP discoverability", () => {
         ok: false,
         error: { kind: "active_account_not_set" }
       });
-
-      const { session: walletSession } = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(walletSession.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(walletSession.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        walletSession.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
       const { session: reviewSession } = await sessions.createReviewSession([reviewPlan], new Date("2026-05-11T00:01:00.000Z"));
-      await sessions.recordReviewPageOpened(reviewSession.id, new Date("2026-05-11T00:01:01.000Z"));
       await sessions.recordWalletConnected(reviewSession.id, walletAccount, new Date("2026-05-11T00:01:02.000Z"));
       const reviewState: ReviewState = {
         reviewSessionId: reviewSession.id,
@@ -1974,11 +1925,11 @@ describe("MCP discoverability", () => {
           userAnswerUse: {
             canAnswer: expect.arrayContaining(["local_review_session_rows_for_the_selected_account"]),
             cannotAnswer: expect.arrayContaining(["sui_wallet_transaction_history", "signing_data_or_readiness"]),
-            answerFields: expect.arrayContaining(["activities[].currentStatus"]),
+            answerFields: expect.arrayContaining(["activities[].reviewStatus"]),
             followUp: {
               tool: TOOL_NAMES.readGetReviewSessionDetail,
               inputFields: ["activities[].reviewSessionId"],
-              answerFields: ["session", "planJson", "intentJson", "stateSnapshots", "transitions", "execution"]
+              answerFields: ["session", "planJson", "intentJson", "stateSnapshots", "transitions", "requests"]
             }
           },
           lowSampleWarning: true,
@@ -1986,7 +1937,7 @@ describe("MCP discoverability", () => {
           activities: [
             {
               reviewSessionId: reviewSession.id,
-              currentStatus: "ready_for_wallet_review",
+              reviewStatus: "ready_for_wallet_review",
               snapshotCount: 1
             }
           ]
@@ -2011,7 +1962,7 @@ describe("MCP discoverability", () => {
           },
           summary: {
             total: 1,
-            opened: 1,
+            opened: 0,
             walletConnected: 1,
             stateComputed: 1
           }
@@ -2033,7 +1984,7 @@ describe("MCP discoverability", () => {
           userAnswerUse: {
             canAnswer: expect.arrayContaining(["stored_local_review_session_plan_and_lifecycle_detail"]),
             cannotAnswer: expect.arrayContaining([
-              "stored_review_execution_result_without_execution_field",
+              "chain_execution_result_without_execution_field",
               "transaction_execution_guarantee",
               "signing_data_or_readiness"
             ]),
@@ -2041,7 +1992,7 @@ describe("MCP discoverability", () => {
             followUp: {
               tool: TOOL_NAMES.sessionGetReviewStatus,
               inputFields: ["session.reviewSessionId"],
-              answerFields: ["pollingStatus", "reviewState"]
+              answerFields: ["status", "pollingStatus", "reviewState"]
             }
           },
           session: {
@@ -2101,7 +2052,7 @@ describe("MCP discoverability", () => {
       expect(tools.tools.find((tool) => tool.name === TOOL_NAMES.readSummarizeSuiActivityScan)?.description)
         .toMatch(/requested-account facts/);
 
-      await activityStore.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       const digestLookup = await client.callTool({
         name: TOOL_NAMES.readInspectSuiTransaction,
         arguments: { digest: "5".repeat(44) }
@@ -2714,7 +2665,7 @@ describe("MCP discoverability", () => {
   it("returns stored account asset timeline evidence without claiming balances or complete wallet history", async () => {
     const { client, server, activityStore } = await connectTestClient();
     try {
-      await activityStore.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-06-26T19:40:00.000Z"));
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-06-26T19:40:00.000Z"));
 
       const scanNeeded = await client.callTool({
         name: TOOL_NAMES.readGetAccountAssetTimeline,
@@ -2939,7 +2890,7 @@ describe("MCP discoverability", () => {
       transactionActivitySource: mixedDetailsSource
     });
     try {
-      await activityStore.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       await client.callTool({
         name: TOOL_NAMES.readScanSuiAccountActivity,
         arguments: { relationship: "sent" }
@@ -3006,250 +2957,18 @@ describe("MCP discoverability", () => {
       // refuse instead of creating a hollow proposal that can never compute.
       expect(textPayload(result)).toMatchObject({
         ok: false,
-        error: { kind: "active_account_not_set", details: { action: "connect_wallet_identity" } }
+        error: { kind: "active_account_not_set", details: { action: "connect_wallet_connection" } }
       });
     } finally {
       await Promise.allSettled([client.close(), server.close()]);
     }
   });
 
-  it("exposes lifecycle timestamps and polling hints through session tools", async () => {
-    const { client, server, activityStore } = await connectTestClient();
-    try {
-      // Swap review is account-bound: prepare requires a connected account.
-      await activityStore.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
-      const prepared = await client.callTool({
-        name: TOOL_NAMES.actionPrepareSuiActionReview,
-        arguments: {
-          intent: {
-            type: "swap",
-            from: { symbol: "SUI", amount: "1" },
-            to: { symbol: "USDC" },
-            maxSlippageBps: 50,
-            protocol: "deep"
-          }
-        }
-      });
-      const preparedPayload = JSON.parse((prepared.content as Array<{ text?: string }>)[0]?.text ?? "") as {
-        data: {
-          reviewSessionId: string;
-          plans: Array<{
-            assetFlowPreview: {
-              outgoing: Array<{ amountKind?: string }>;
-              expectedIncoming: Array<{ amountKind?: string }>;
-            };
-            adapterData: {
-              requestedIntent?: {
-                from?: { amountDisplay?: string };
-              };
-            };
-          }>;
-        };
-      };
-      expect(preparedPayload.data.plans[0]?.assetFlowPreview.outgoing[0]).toMatchObject({
-        amountKind: "display_intent"
-      });
-      expect(preparedPayload.data.plans[0]?.assetFlowPreview.expectedIncoming[0]).toMatchObject({
-        amountKind: "display_intent"
-      });
-      expect(preparedPayload.data.plans[0]?.adapterData.requestedIntent).toMatchObject({
-        from: { amountDisplay: "1" },
-        maxSlippageBps: 50
-      });
-      expect(preparedPayload.data.plans[0]?.adapterData.requestedIntent?.from).not.toHaveProperty("amount");
-
-      const lowercasePrepared = await client.callTool({
-        name: TOOL_NAMES.actionPrepareSuiActionReview,
-        arguments: {
-          intent: {
-            type: "swap",
-            from: { symbol: "sui", amount: "1" },
-            to: { symbol: "usdc" },
-            maxSlippageBps: 50,
-            protocol: "deep"
-          }
-        }
-      });
-      const lowercasePayload = JSON.parse((lowercasePrepared.content as Array<{ text?: string }>)[0]?.text ?? "") as {
-        data: {
-          plans: Array<{
-            assetFlowPreview: {
-              outgoing: Array<{ symbol?: string }>;
-              expectedIncoming: Array<{ symbol?: string }>;
-            };
-            adapterData: {
-              requestedIntent?: {
-                from?: { symbol?: string };
-                to?: { symbol?: string };
-              };
-            };
-          }>;
-        };
-      };
-      expect(lowercasePayload.data.plans[0]?.adapterData.requestedIntent).toMatchObject({
-        from: { symbol: "SUI" },
-        to: { symbol: "USDC" }
-      });
-      expect(lowercasePayload.data.plans[0]?.assetFlowPreview.outgoing[0]).toMatchObject({ symbol: "SUI" });
-      expect(lowercasePayload.data.plans[0]?.assetFlowPreview.expectedIncoming[0]).toMatchObject({ symbol: "USDC" });
-
-      const externalPrepared = await client.callTool({
-        name: TOOL_NAMES.actionPrepareExternalProposalReview,
-        arguments: {
-          proposal: {
-            type: "payment",
-            id: "payment_1",
-            source: { kind: "mcp_server", name: "external-payments" },
-            network: "sui:mainnet",
-            createdAt: "2026-05-24T23:59:00.000Z",
-            expiresAt: "2026-05-25T00:10:00.000Z",
-            purpose: "Pay invoice 42",
-            payment: {
-              amount: { amountDisplay: "100", denomination: "USD" },
-              recipient: { address: walletAccount },
-              target: "invoice_42"
-            }
-          }
-        }
-      });
-      expect(textPayload(externalPrepared)).toMatchObject({
-        ok: true,
-        data: {
-          reviewSessionId: expect.any(String),
-          reviewUrl: expect.stringContaining("/review/"),
-          plans: [
-            expect.objectContaining({
-              adapterId: "external-proposal-review",
-              reviewModel: expect.objectContaining({
-                proposalId: "payment_1",
-                proposedAction: expect.objectContaining({
-                  purpose: "Pay invoice 42",
-                  target: "invoice_42"
-                }),
-                nonSignableReason: expect.objectContaining({
-                  code: "external_proposal_review_only"
-                })
-              })
-            })
-          ],
-          userAnswerUse: {
-            answerFields: expect.arrayContaining([
-              "plans[].reviewModel.proposedAction",
-              "plans[].reviewModel.missingEvidence",
-              "plans[].reviewModel.nonSignableReason"
-            ]),
-            cannotAnswer: expect.arrayContaining(["transaction_building", "signing_data_or_readiness"])
-          }
-        }
-      });
-
-      const status = await client.callTool({
-        name: TOOL_NAMES.sessionGetReviewStatus,
-        arguments: { reviewSessionId: preparedPayload.data.reviewSessionId }
-      });
-      expect(JSON.parse((status.content as Array<{ text?: string }>)[0]?.text ?? "")).toMatchObject({
-        ok: true,
-        data: {
-          internalStatus: "proposed",
-          pollingStatus: "pending",
-          statusCategory: "non_terminal",
-          lastActivityAt: expect.any(String),
-          userAnswerUse: {
-            canAnswer: expect.arrayContaining(["current_local_review_session_status"]),
-            cannotAnswer: expect.arrayContaining(["transaction_execution_guarantee", "signing_data_or_readiness"]),
-            answerFields: expect.arrayContaining(["internalStatus", "pollingStatus", "statusCategory"]),
-            followUp: {
-              tool: TOOL_NAMES.sessionGetExecutionResult,
-              inputFields: ["reviewSessionId"],
-              answerFields: ["executionResult"]
-            }
-          }
-        }
-      });
-
-      const result = await client.callTool({
-        name: TOOL_NAMES.sessionGetExecutionResult,
-        arguments: { reviewSessionId: preparedPayload.data.reviewSessionId }
-      });
-      const resultPayload = JSON.parse((result.content as Array<{ text?: string }>)[0]?.text ?? "") as {
-        data: {
-          statusCategory: string;
-          pollingHint: {
-            nonTerminalStatuses: string[];
-            waitStoppingStatuses: string[];
-            finalStatuses: string[];
-            userActionRequiredStatuses: string[];
-            recommendedIntervalSeconds: number;
-          };
-          lastActivityAt: string;
-          userAnswerUse: {
-            cannotAnswer: string[];
-            answerFields: string[];
-            followUp: { tool: string; answerFields: string[] };
-          };
-        };
-      };
-      expect(resultPayload.data.lastActivityAt).toEqual(expect.any(String));
-      expect(resultPayload.data.statusCategory).toBe("non_terminal");
-      expect(resultPayload.data.pollingHint.nonTerminalStatuses).toContain("awaiting_wallet");
-      expect(resultPayload.data.pollingHint.waitStoppingStatuses).toEqual(
-        expect.arrayContaining(["success", "failure", "refresh_required", "blocked", "expired"])
-      );
-      expect(resultPayload.data.pollingHint.finalStatuses).toEqual(["success", "failure", "expired"]);
-      expect(resultPayload.data.pollingHint.userActionRequiredStatuses).toEqual(["refresh_required", "blocked"]);
-      expect(resultPayload.data.pollingHint).not.toHaveProperty("terminalStatuses");
-      expect(resultPayload.data.pollingHint.recommendedIntervalSeconds).toBe(3);
-      expect(resultPayload.data.userAnswerUse).toMatchObject({
-        cannotAnswer: expect.arrayContaining(["transaction_execution_guarantee", "signing_data_or_readiness"]),
-        answerFields: expect.arrayContaining(["reviewSessionId", "status", "statusCategory", "pollingHint"]),
-        followUp: {
-          tool: TOOL_NAMES.sessionGetReviewStatus,
-          answerFields: expect.arrayContaining(["pollingStatus", "statusCategory", "reviewState"])
-        }
-      });
-
-      const waited = await client.callTool({
-        name: TOOL_NAMES.sessionWaitExecutionResult,
-        arguments: { reviewSessionId: preparedPayload.data.reviewSessionId, timeoutMs: 1 }
-      });
-      expect(textPayload(waited)).toMatchObject({
-        ok: true,
-        data: {
-          waitOutcome: "timed_out",
-          reviewSessionId: preparedPayload.data.reviewSessionId,
-          status: "pending",
-          statusCategory: "non_terminal",
-          userAnswerUse: {
-            cannotAnswer: expect.arrayContaining(["transaction_execution_guarantee", "signing_data_or_readiness"]),
-            answerFields: expect.arrayContaining(["waitOutcome", "status", "statusCategory"])
-          }
-        }
-      });
-
-      const invalidExecutionTimeout = await client.callTool({
-        name: TOOL_NAMES.sessionWaitExecutionResult,
-        arguments: { reviewSessionId: preparedPayload.data.reviewSessionId, timeoutMs: 55_001 }
-      });
-      expect(invalidExecutionTimeout.isError).toBe(true);
-      expect((invalidExecutionTimeout.content as Array<{ text?: string }>)[0]?.text).toContain("too_big");
-    } finally {
-      await server.close();
-    }
-  });
-
   it("reports blocked execution waits as user action required through MCP", async () => {
-    const { client, server, sessions } = await connectTestClient({ sessionTtlMs: durableFixtureSessionTtlMs });
+    const { client, server, sessions, activityStore } = await connectTestClient({ sessionTtlMs: durableFixtureSessionTtlMs });
     try {
-      const { session: walletSession } = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(walletSession.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(walletSession.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        walletSession.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
       const { session: reviewSession } = await sessions.createReviewSession([reviewPlan], new Date("2026-05-11T00:01:00.000Z"));
-      await sessions.recordReviewPageOpened(reviewSession.id, new Date("2026-05-11T00:01:01.000Z"));
       await sessions.recordWalletConnected(reviewSession.id, walletAccount, new Date("2026-05-11T00:01:02.000Z"));
       await sessions.recordReviewState(
         reviewSession.id,
@@ -3295,699 +3014,6 @@ describe("MCP discoverability", () => {
           reviewSessionId: reviewSession.id,
           status: "blocked",
           statusCategory: "user_action_required"
-        }
-      });
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("lists user-action-required review sessions as pending interactions through MCP", async () => {
-    const { client, server, sessions } = await connectTestClient({ sessionTtlMs: durableFixtureSessionTtlMs });
-    try {
-      const { session: walletSession } = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(walletSession.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(walletSession.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        walletSession.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
-
-      const { session: blockedSession } = await sessions.createReviewSession(
-        [reviewPlan],
-        new Date("2026-05-11T00:01:00.000Z")
-      );
-      await sessions.recordReviewPageOpened(blockedSession.id, new Date("2026-05-11T00:01:01.000Z"));
-      await sessions.recordWalletConnected(blockedSession.id, walletAccount, new Date("2026-05-11T00:01:02.000Z"));
-      await sessions.recordReviewState(
-        blockedSession.id,
-        {
-          reviewSessionId: blockedSession.id,
-          planId: reviewPlan.id,
-          account: walletAccount,
-          status: "blocked",
-          blockedReason: "producer_stage_missing",
-          adapterLifecycle: {
-            stageCatalogId: "deepbook_swap_review_v1",
-            adapterId: "deepbook-swap",
-            protocol: "DeepBookV3",
-            actionKind: "swap",
-            completedStages: [
-              "intent_normalized",
-              "pool_resolved",
-              "quote_evidence_fetched",
-              "quote_policy_derived"
-            ],
-            missingStages: [
-              "transaction_material_build_or_verify",
-              "digest_commitment",
-              "object_ownership",
-              "human_readable_review",
-              "review_time_simulation"
-            ]
-          },
-          checks: [],
-          updatedAt: "2026-05-11T00:01:03.000Z"
-        },
-        new Date("2026-05-11T00:01:03.000Z")
-      );
-
-      const { session: refreshSession } = await sessions.createReviewSession(
-        [reviewPlan],
-        new Date("2026-05-11T00:02:00.000Z")
-      );
-      await sessions.recordReviewPageOpened(refreshSession.id, new Date("2026-05-11T00:02:01.000Z"));
-      await sessions.recordWalletConnected(refreshSession.id, walletAccount, new Date("2026-05-11T00:02:02.000Z"));
-      await sessions.recordReviewState(
-        refreshSession.id,
-        {
-          reviewSessionId: refreshSession.id,
-          planId: reviewPlan.id,
-          account: walletAccount,
-          status: "refresh_required",
-          refreshReason: "quote_stale",
-          checks: [],
-          updatedAt: "2026-05-11T00:02:03.000Z"
-        },
-        new Date("2026-05-11T00:02:03.000Z")
-      );
-
-      const { session: successSession } = await sessions.createReviewSession(
-        [reviewPlan],
-        new Date("2026-05-11T00:03:00.000Z")
-      );
-      await sessions.recordReviewPageOpened(successSession.id, new Date("2026-05-11T00:03:01.000Z"));
-      await sessions.recordWalletConnected(successSession.id, walletAccount, new Date("2026-05-11T00:03:02.000Z"));
-      await sessions.recordReviewState(
-        successSession.id,
-        {
-          reviewSessionId: successSession.id,
-          planId: reviewPlan.id,
-          account: walletAccount,
-          status: "ready_for_wallet_review",
-          checks: [],
-          updatedAt: "2026-05-11T00:03:03.000Z"
-        },
-        new Date("2026-05-11T00:03:03.000Z")
-      );
-      await sessions.recordExecutionResult(
-        successSession.id,
-        {
-          reviewSessionId: successSession.id,
-          planId: reviewPlan.id,
-          status: "signed_pending_result",
-          txDigest: chainReceiptDigest,
-          recordedAt: "2026-05-11T00:03:04.000Z"
-        },
-        new Date("2026-05-11T00:03:04.000Z")
-      );
-      await sessions.recordChainExecutionResult(
-        successSession.id,
-        {
-          reviewSessionId: successSession.id,
-          planId: reviewPlan.id,
-          status: "success",
-          txDigest: chainReceiptDigest,
-          chainReceipt: chainReceiptFixture(),
-          recordedAt: "2026-05-11T00:03:05.000Z"
-        },
-        new Date("2026-05-11T00:03:05.000Z")
-      );
-
-      const interactionStatus = textPayload(await client.callTool({ name: TOOL_NAMES.sessionGetInteractionStatus })) as {
-        data: {
-          pendingReviewSessions: {
-            items: Array<{ reviewSessionId: string; status: string; statusCategory: string }>;
-          };
-        };
-      };
-
-      expect(interactionStatus.data.pendingReviewSessions.items).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            reviewSessionId: blockedSession.id,
-            status: "blocked",
-            statusCategory: "user_action_required"
-          }),
-          expect.objectContaining({
-            reviewSessionId: refreshSession.id,
-            status: "refresh_required",
-            statusCategory: "user_action_required"
-          })
-        ])
-      );
-      expect(interactionStatus.data.pendingReviewSessions.items).not.toEqual(
-        expect.arrayContaining([expect.objectContaining({ reviewSessionId: successSession.id })])
-      );
-
-      const blockedStatus = textPayload(
-        await client.callTool({
-          name: TOOL_NAMES.sessionGetReviewStatus,
-          arguments: { reviewSessionId: blockedSession.id }
-        })
-      );
-      expect(blockedStatus).toMatchObject({
-        ok: true,
-        data: {
-          reviewSessionId: blockedSession.id,
-          pollingStatus: "blocked",
-          statusCategory: "user_action_required",
-          userAnswerUse: {
-            canAnswer: expect.arrayContaining(["current_deepbook_review_lifecycle_stage_status"]),
-            answerFields: expect.arrayContaining([
-              "pollingStatus",
-              "statusCategory",
-              "reviewState.adapterLifecycle",
-              "reviewState.adapterLifecycle.stageCatalogId",
-              "reviewState.adapterLifecycle.completedStages",
-              "reviewState.adapterLifecycle.missingStages"
-            ])
-          }
-        }
-      });
-
-      const refreshStatus = textPayload(
-        await client.callTool({
-          name: TOOL_NAMES.sessionGetReviewStatus,
-          arguments: { reviewSessionId: refreshSession.id }
-        })
-      );
-      expect(refreshStatus).toMatchObject({
-        ok: true,
-        data: {
-          reviewSessionId: refreshSession.id,
-          pollingStatus: "refresh_required",
-          statusCategory: "user_action_required"
-        }
-      });
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("reports signed pending execution waits as awaiting chain result through MCP", async () => {
-    const { client, server, sessions } = await connectTestClient({ sessionTtlMs: durableFixtureSessionTtlMs });
-    try {
-      const { session: walletSession } = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(walletSession.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(walletSession.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        walletSession.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
-      const { session: reviewSession } = await sessions.createReviewSession([reviewPlan], new Date("2026-05-11T00:01:00.000Z"));
-      await sessions.recordReviewPageOpened(reviewSession.id, new Date("2026-05-11T00:01:01.000Z"));
-      await sessions.recordWalletConnected(reviewSession.id, walletAccount, new Date("2026-05-11T00:01:02.000Z"));
-      await sessions.recordReviewState(
-        reviewSession.id,
-        {
-          reviewSessionId: reviewSession.id,
-          planId: reviewPlan.id,
-          account: walletAccount,
-          status: "ready_for_wallet_review",
-          checks: [],
-          updatedAt: "2026-05-11T00:01:03.000Z"
-        },
-        new Date("2026-05-11T00:01:03.000Z")
-      );
-      await sessions.recordExecutionResult(
-        reviewSession.id,
-        {
-          reviewSessionId: reviewSession.id,
-          planId: reviewPlan.id,
-          status: "signed_pending_result",
-          txDigest: "digest_1",
-          recordedAt: "2026-05-11T00:01:04.000Z"
-        },
-        new Date("2026-05-11T00:01:04.000Z")
-      );
-
-      const waited = await client.callTool({
-        name: TOOL_NAMES.sessionWaitExecutionResult,
-        arguments: { reviewSessionId: reviewSession.id, timeoutMs: 1 }
-      });
-      expect(textPayload(waited)).toMatchObject({
-        ok: true,
-        data: {
-          waitOutcome: "timed_out",
-          reviewSessionId: reviewSession.id,
-          status: "signed_pending_result",
-          statusCategory: "awaiting_chain_result",
-          executionResult: {
-            status: "signed_pending_result",
-            txDigest: "digest_1"
-          }
-        }
-      });
-
-      const status = textPayload(await client.callTool({ name: TOOL_NAMES.sessionGetInteractionStatus }));
-      expect(status).toMatchObject({
-        ok: true,
-        data: {
-          pendingReviewSessions: {
-            items: [
-              expect.objectContaining({
-                reviewSessionId: reviewSession.id,
-                status: "signed_pending_result",
-                statusCategory: "awaiting_chain_result"
-              })
-            ]
-          }
-        }
-      });
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("lazy-verifies pending execution results through MCP read and wait tools", async () => {
-    const chainReceiptVerifier = vi.fn<ChainReceiptVerifier>().mockResolvedValue({
-      status: "verified_success",
-      receipt: chainReceiptFixture()
-    });
-    const { client, server, sessions } = await connectTestClient({
-      sessionTtlMs: durableFixtureSessionTtlMs,
-      chainReceiptVerifier
-    });
-    try {
-      const { session: walletSession } = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(walletSession.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(walletSession.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        walletSession.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
-      const { session: reviewSession } = await sessions.createReviewSession([reviewPlan], new Date("2026-05-11T00:01:00.000Z"));
-      await sessions.recordReviewPageOpened(reviewSession.id, new Date("2026-05-11T00:01:01.000Z"));
-      await sessions.recordWalletConnected(reviewSession.id, walletAccount, new Date("2026-05-11T00:01:02.000Z"));
-      await sessions.recordReviewState(
-        reviewSession.id,
-        {
-          reviewSessionId: reviewSession.id,
-          planId: reviewPlan.id,
-          account: walletAccount,
-          status: "ready_for_wallet_review",
-          checks: [],
-          updatedAt: "2026-05-11T00:01:03.000Z"
-        },
-        new Date("2026-05-11T00:01:03.000Z")
-      );
-      attachReviewedCommitment(sessions, reviewSession.id);
-      await sessions.recordExecutionResult(
-        reviewSession.id,
-        {
-          reviewSessionId: reviewSession.id,
-          planId: reviewPlan.id,
-          status: "signed_pending_result",
-          txDigest: chainReceiptDigest,
-          recordedAt: "2026-05-11T00:01:04.000Z"
-        },
-        new Date("2026-05-11T00:01:04.000Z")
-      );
-
-      const read = textPayload(await client.callTool({
-        name: TOOL_NAMES.sessionGetExecutionResult,
-        arguments: { reviewSessionId: reviewSession.id }
-      }));
-      expect(read).toMatchObject({
-        ok: true,
-        data: {
-          reviewSessionId: reviewSession.id,
-          status: "success",
-          executionResult: {
-            status: "success",
-            txDigest: chainReceiptDigest,
-            chainReceipt: { kind: "sui_chain_receipt_v1" }
-          }
-        }
-      });
-      expect(chainReceiptVerifier).toHaveBeenCalledTimes(1);
-
-      const waited = textPayload(await client.callTool({
-        name: TOOL_NAMES.sessionWaitExecutionResult,
-        arguments: { reviewSessionId: reviewSession.id, timeoutMs: 1 }
-      }));
-      expect(waited).toMatchObject({
-        ok: true,
-        data: {
-          waitOutcome: "status_reached",
-          reviewSessionId: reviewSession.id,
-          status: "success",
-          executionResult: {
-            status: "success",
-            chainReceipt: { kind: "sui_chain_receipt_v1" }
-          }
-        }
-      });
-      expect(chainReceiptVerifier).toHaveBeenCalledTimes(1);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("creates and polls wallet identity sessions through MCP", async () => {
-    const { client, server, sessions } = await connectTestClient();
-    try {
-      const created = await client.callTool({ name: TOOL_NAMES.sessionCreateWalletIdentity });
-      const createdPayload = JSON.parse((created.content as Array<{ text?: string }>)[0]?.text ?? "") as {
-        data: {
-          walletSessionId: string;
-          walletUrl: string;
-          openTarget: string;
-          accessScope: string;
-          status: string;
-          expiresAt: string;
-          pollingHint: { nonTerminalStatuses: string[]; recommendedIntervalSeconds: number };
-          userAnswerUse: {
-            cannotAnswer: string[];
-            answerFields: string[];
-            followUp: { tool: string; answerFields: string[] };
-          };
-        };
-      };
-      expect(createdPayload.data.status).toBe("pending");
-      expect(createdPayload.data.openTarget).toBe("system_browser");
-      expect(createdPayload.data.accessScope).toBe("same_machine_loopback");
-      expect(createdPayload.data).not.toHaveProperty("requiresExternalWallet");
-      expect(createdPayload.data).not.toHaveProperty("requiresExternalBrowser");
-      expect(createdPayload.data).not.toHaveProperty("requiresBrowserWalletExtension");
-      expect(createdPayload.data).not.toHaveProperty("nextTool");
-      expect(createdPayload.data).not.toHaveProperty("activeAccountSet");
-      expect(createdPayload.data.expiresAt).toEqual(expect.any(String));
-      expect(createdPayload.data.walletUrl).toContain(`/connect/${createdPayload.data.walletSessionId}#`);
-      expect(createdPayload.data.pollingHint.nonTerminalStatuses).toContain("connecting");
-      expect(createdPayload.data.userAnswerUse).toMatchObject({
-        cannotAnswer: expect.arrayContaining(["wallet_login_or_authentication", "signing_data_or_readiness"]),
-        answerFields: expect.arrayContaining(["walletUrl", "openTarget", "accessScope", "status"]),
-        followUp: {
-          tool: TOOL_NAMES.sessionWaitWalletIdentity,
-          answerFields: expect.arrayContaining(["status", "account", "chain", "waitOutcome"])
-        }
-      });
-      // Keep this literal to catch accidental changes to the public wallet polling contract.
-      expect(createdPayload.data.pollingHint.recommendedIntervalSeconds).toBe(5);
-
-      await sessions.recordWalletIdentityOpened(createdPayload.data.walletSessionId);
-      const status = await client.callTool({
-        name: TOOL_NAMES.sessionGetWalletIdentity,
-        arguments: { walletSessionId: createdPayload.data.walletSessionId }
-      });
-      const statusPayload = JSON.parse((status.content as Array<{ text?: string }>)[0]?.text ?? "") as {
-        data: { pollingHint: { recommendedIntervalSeconds: number } };
-      };
-      expect(statusPayload).toMatchObject({
-        ok: true,
-        data: {
-          status: "opened",
-          walletSessionId: createdPayload.data.walletSessionId,
-          expiresAt: expect.any(String),
-          lastActivityAt: expect.any(String),
-          userAnswerUse: {
-            cannotAnswer: expect.arrayContaining(["wallet_login_or_authentication", "signing_data_or_readiness"]),
-            answerFields: expect.arrayContaining(["walletSessionId", "status", "pollingHint"]),
-            followUp: {
-              tool: TOOL_NAMES.sessionWaitWalletIdentity,
-              answerFields: expect.arrayContaining(["status", "account", "chain", "waitOutcome"])
-            }
-          }
-        }
-      });
-      // Keep this literal to catch accidental changes to the public wallet polling contract.
-      expect(statusPayload.data.pollingHint.recommendedIntervalSeconds).toBe(5);
-
-      const waited = await client.callTool({
-        name: TOOL_NAMES.sessionWaitWalletIdentity,
-        arguments: { walletSessionId: createdPayload.data.walletSessionId, timeoutMs: 1 }
-      });
-      expect(textPayload(waited)).toMatchObject({
-        ok: true,
-        data: {
-          waitOutcome: "timed_out",
-          walletSessionId: createdPayload.data.walletSessionId,
-          status: "opened",
-          statusCategory: "non_terminal",
-          userAnswerUse: {
-            cannotAnswer: expect.arrayContaining(["wallet_login_or_authentication", "signing_data_or_readiness"]),
-            answerFields: expect.arrayContaining(["waitOutcome", "walletSessionId", "status", "pollingHint"])
-          }
-        }
-      });
-
-      const missing = await client.callTool({
-        name: TOOL_NAMES.sessionWaitWalletIdentity,
-        arguments: { walletSessionId: "missing_wallet_session", timeoutMs: 1 }
-      });
-      expect(textPayload(missing)).toMatchObject({
-        ok: false,
-        error: {
-          kind: "session_not_found",
-          details: { reason: "missing" }
-        }
-      });
-
-      const invalidWalletTimeout = await client.callTool({
-        name: TOOL_NAMES.sessionWaitWalletIdentity,
-        arguments: { walletSessionId: createdPayload.data.walletSessionId, timeoutMs: 55_001 }
-      });
-      expect(invalidWalletTimeout.isError).toBe(true);
-      expect((invalidWalletTimeout.content as Array<{ text?: string }>)[0]?.text).toContain("too_big");
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("summarizes active account and pending in-memory interactions through MCP", async () => {
-    const { client, server, sessions } = await connectTestClient({ sessionTtlMs: durableFixtureSessionTtlMs });
-    try {
-      const first = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(first.session.id, new Date("2026-05-11T00:00:01.000Z"));
-      const second = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityOpened(second.session.id, new Date("2026-05-11T00:00:03.000Z"));
-      await sessions.recordWalletIdentityConnecting(second.session.id, new Date("2026-05-11T00:00:04.000Z"));
-      await sessions.recordWalletIdentityResult(
-        second.session.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:05.000Z")
-      );
-
-      const { session: reviewSession } = await sessions.createReviewSession([reviewPlan], new Date("2026-05-11T00:01:00.000Z"));
-      await sessions.recordReviewPageOpened(reviewSession.id, new Date("2026-05-11T00:01:01.000Z"));
-
-      const status = textPayload(await client.callTool({ name: TOOL_NAMES.sessionGetInteractionStatus }));
-      expect(status).toMatchObject({
-        ok: true,
-        data: {
-          activeAccount: {
-            status: "set",
-            account: walletAccount,
-            source: "wallet_identity",
-            setAt: "2026-05-11T00:00:05.000Z",
-            boundary: "read_context_only_not_signing_authorization"
-          },
-          pendingWalletIdentitySessions: {
-            limit: 5,
-            items: [
-              {
-                walletSessionId: first.session.id,
-                status: "opened",
-                statusCategory: "non_terminal"
-              }
-            ],
-            truncated: false
-          },
-          pendingReviewSessions: {
-            limit: 5,
-            items: [
-              {
-                reviewSessionId: reviewSession.id,
-                internalStatus: "awaiting_wallet",
-                status: "awaiting_wallet",
-                statusCategory: "non_terminal"
-              }
-            ],
-            truncated: false
-          },
-          userAnswerUse: {
-            canAnswer: expect.arrayContaining(["current_active_account_read_context"]),
-            cannotAnswer: expect.arrayContaining(["wallet_login_or_authentication", "signing_data_or_readiness"]),
-            answerFields: expect.arrayContaining(["activeAccount", "pendingWalletIdentitySessions", "pendingReviewSessions"])
-          }
-        }
-      });
-      expect(status).not.toHaveProperty("data.displayState");
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("caps pending interaction lists and reports truncation", async () => {
-    const { client, server, sessions } = await connectTestClient({ sessionTtlMs: durableFixtureSessionTtlMs });
-    try {
-      for (let index = 0; index < 6; index += 1) {
-        const created = await sessions.createWalletIdentitySession(
-          new Date(`2026-05-11T00:00:0${index}.000Z`)
-        );
-        await sessions.recordWalletIdentityOpened(
-          created.session.id,
-          new Date(`2026-05-11T00:00:1${index}.000Z`)
-        );
-      }
-
-      const status = textPayload(await client.callTool({ name: TOOL_NAMES.sessionGetInteractionStatus })) as {
-        data: {
-          pendingWalletIdentitySessions: {
-            limit: number;
-            items: Array<{ walletSessionId: string }>;
-            truncated: boolean;
-          };
-        };
-      };
-      expect(status.data.pendingWalletIdentitySessions.items).toHaveLength(5);
-      expect(status.data.pendingWalletIdentitySessions.limit).toBe(5);
-      expect(status.data.pendingWalletIdentitySessions.truncated).toBe(true);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it("maps invalidated wallet waits to session_not_found through MCP", async () => {
-    const { client, server, sessions } = await connectTestClient({ sessionTtlMs: durableFixtureSessionTtlMs });
-    vi.useFakeTimers();
-    try {
-      const created = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(created.session.id, new Date("2026-05-11T00:00:01.000Z"));
-
-      const wait = client.callTool({
-        name: TOOL_NAMES.sessionWaitWalletIdentity,
-        arguments: { walletSessionId: created.session.id, timeoutMs: 1_000 }
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      await sessions.invalidateAllLocalSessions("test_invalidation", new Date("2026-05-11T00:00:02.000Z"));
-      await vi.advanceTimersByTimeAsync(1_000);
-
-      expect(textPayload(await wait)).toMatchObject({
-        ok: false,
-        error: {
-          kind: "session_not_found",
-          details: { reason: "session_removed_during_wait" }
-        }
-      });
-    } finally {
-      vi.useRealTimers();
-      await server.close();
-    }
-  });
-
-  it("keeps durable active account while pending interactions disappear with a fresh session store", async () => {
-    const activityStore = new InMemoryActivityStore();
-    const firstConnection = await connectTestClient({
-      activityStore,
-      sessionTtlMs: durableFixtureSessionTtlMs
-    });
-    try {
-      const { sessions } = firstConnection;
-      const connected = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(connected.session.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(connected.session.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        connected.session.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
-      const pending = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:04.000Z"));
-      await sessions.recordWalletIdentityOpened(pending.session.id, new Date("2026-05-11T00:00:05.000Z"));
-    } finally {
-      await firstConnection.server.close();
-    }
-
-    const afterRestart = await connectTestClient({ activityStore });
-    try {
-      const status = textPayload(await afterRestart.client.callTool({ name: TOOL_NAMES.sessionGetInteractionStatus }));
-      expect(status).toMatchObject({
-        ok: true,
-        data: {
-          activeAccount: {
-            status: "set",
-            account: walletAccount,
-            source: "wallet_identity",
-            setAt: "2026-05-11T00:00:03.000Z"
-          },
-          pendingWalletIdentitySessions: { items: [], truncated: false },
-          pendingReviewSessions: { items: [], truncated: false }
-        }
-      });
-    } finally {
-      await afterRestart.server.close();
-    }
-  });
-
-  it("keeps wallet identity status separate from current active account context", async () => {
-    const { client, server, sessions } = await connectTestClient();
-    try {
-      const first = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(first.session.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(first.session.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        first.session.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
-
-      await client.callTool({ name: TOOL_NAMES.accountClearActiveAccount });
-
-      const firstAfterClear = textPayload(
-        await client.callTool({
-          name: TOOL_NAMES.sessionGetWalletIdentity,
-          arguments: { walletSessionId: first.session.id }
-        })
-      );
-      expect(firstAfterClear).toMatchObject({
-        ok: true,
-        data: {
-          status: "connected",
-          account: walletAccount,
-          chain: "sui:mainnet"
-        }
-      });
-      expect(firstAfterClear).not.toHaveProperty("data.activeAccountSet");
-      expect(textPayload(await client.callTool({ name: TOOL_NAMES.accountGetActiveAccount }))).toMatchObject({
-        ok: true,
-        data: { status: "none" }
-      });
-
-      const second = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:04.000Z"));
-      await sessions.recordWalletIdentityOpened(second.session.id, new Date("2026-05-11T00:00:05.000Z"));
-      await sessions.recordWalletIdentityConnecting(second.session.id, new Date("2026-05-11T00:00:06.000Z"));
-      await sessions.recordWalletIdentityResult(
-        second.session.id,
-        { status: "connected", account: replacementWalletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:07.000Z")
-      );
-
-      const firstAfterReplacement = textPayload(
-        await client.callTool({
-          name: TOOL_NAMES.sessionGetWalletIdentity,
-          arguments: { walletSessionId: first.session.id }
-        })
-      );
-      expect(firstAfterReplacement).toMatchObject({
-        ok: true,
-        data: {
-          status: "connected",
-          account: walletAccount,
-          chain: "sui:mainnet"
-        }
-      });
-      expect(firstAfterReplacement).not.toHaveProperty("data.activeAccountSet");
-      expect(textPayload(await client.callTool({ name: TOOL_NAMES.accountGetActiveAccount }))).toMatchObject({
-        ok: true,
-        data: {
-          status: "set",
-          account: replacementWalletAccount,
-          source: "wallet_identity"
         }
       });
     } finally {
@@ -3996,22 +3022,14 @@ describe("MCP discoverability", () => {
   });
 
   it("exposes active account tools through MCP", async () => {
-    const { client, server, sessions } = await connectTestClient();
+    const { client, server, activityStore } = await connectTestClient();
     try {
       const empty = await client.callTool({ name: TOOL_NAMES.accountGetActiveAccount });
       expect(JSON.parse((empty.content as Array<{ text?: string }>)[0]?.text ?? "")).toMatchObject({
         ok: true,
         data: { status: "none" }
       });
-
-      const { session } = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(session.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(session.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        session.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
 
       const active = await client.callTool({ name: TOOL_NAMES.accountGetActiveAccount });
       expect(JSON.parse((active.content as Array<{ text?: string }>)[0]?.text ?? "")).toMatchObject({
@@ -4019,7 +3037,7 @@ describe("MCP discoverability", () => {
         data: {
           status: "set",
           account: walletAccount,
-          source: "wallet_identity",
+          source: "wallet_connection",
           setAt: "2026-05-11T00:00:03.000Z",
           boundary: "read_context_only_not_signing_authorization"
         }
@@ -4073,18 +3091,11 @@ describe("MCP discoverability", () => {
         source: createTestTransactionActivitySource()
       })
     });
-    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const client = new Client({ name: "test-client", version: "0.0.0" }, { capabilities: { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } } });
 
     try {
       await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-      const { session } = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(session.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(session.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        session.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
       const result = await client.callTool({
         name: TOOL_NAMES.readSummarizeWalletAssets,
         arguments: {}
@@ -4142,17 +3153,10 @@ describe("MCP discoverability", () => {
         }
       }
     });
-    const { client, server, sessions } = await connectTestClient({ readService });
+    const { client, server, activityStore } = await connectTestClient({ readService });
 
     try {
-      const { session } = await sessions.createWalletIdentitySession(new Date("2026-05-11T00:00:00.000Z"));
-      await sessions.recordWalletIdentityOpened(session.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(session.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        session.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
       const result = await client.callTool({
         name: TOOL_NAMES.readSummarizeWalletAssets,
         arguments: {}
@@ -4197,7 +3201,7 @@ describe("MCP discoverability", () => {
     });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const replacementClient = new Client({ name: "test-client", version: "0.0.0" });
+    const replacementClient = new Client({ name: "test-client", version: "0.0.0" }, { capabilities: { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } } });
     try {
       await Promise.all([serverWithLogger.connect(serverTransport), replacementClient.connect(clientTransport)]);
 
@@ -4251,27 +3255,21 @@ describe("MCP discoverability", () => {
     const activityStore = new InMemoryActivityStore();
     // Account-bound prepare needs an active account to reach the (mocked)
     // session store call this test exercises.
-    await activityStore.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+    await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
     const sessions = new InMemorySessionStore({
       activityStore,
       logger,
       validateAdapterLifecycle: validateSupportedAdapterLifecycle
     });
-    const createWalletIdentity = vi
-      .spyOn(sessions, "createWalletIdentitySession")
-      .mockRejectedValue(new Error("session database unavailable"));
-    const getWalletIdentity = vi
-      .spyOn(sessions, "getWalletIdentitySession")
-      .mockRejectedValue(new Error("session database unavailable"));
+
+
     const getReview = vi
       .spyOn(sessions, "getReviewSession")
       .mockRejectedValue(new Error("session database unavailable"));
-    const listWalletIdentities = vi
-      .spyOn(sessions, "listWalletIdentitySessions")
-      .mockRejectedValue(new Error("session database unavailable"));
+
     const listReviews = vi
-      .spyOn(sessions, "listReviewSessions")
-      .mockRejectedValue(new Error("session database unavailable"));
+      .spyOn(sessions, "reviewSessionIds")
+      .mockImplementation(() => { throw new Error("session database unavailable"); });
     const createReview = vi
       .spyOn(sessions, "createReviewSession")
       .mockRejectedValue(new Error("session database unavailable"));
@@ -4288,18 +3286,12 @@ describe("MCP discoverability", () => {
       })
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const client = new Client({ name: "test-client", version: "0.0.0" }, { capabilities: { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } } });
 
     try {
       await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
       for (const call of [
-        { name: TOOL_NAMES.sessionCreateWalletIdentity, arguments: {} },
-        { name: TOOL_NAMES.sessionGetWalletIdentity, arguments: { walletSessionId: "wallet" } },
-        {
-          name: TOOL_NAMES.sessionWaitWalletIdentity,
-          arguments: { walletSessionId: "wallet", timeoutMs: 1 }
-        },
         { name: TOOL_NAMES.sessionGetInteractionStatus, arguments: {} },
         { name: TOOL_NAMES.sessionGetReviewStatus, arguments: { reviewSessionId: "review" } },
         { name: TOOL_NAMES.sessionGetExecutionResult, arguments: { reviewSessionId: "review" } },
@@ -4343,14 +3335,9 @@ describe("MCP discoverability", () => {
           error: { kind: "internal_error", details: { message: "Session store call failed" } }
         });
       }
-      expect(logger.error).toHaveBeenCalledWith("session store call failed", {
-        error: "session database unavailable"
-      });
+      expect(logger.error).toHaveBeenCalledWith("session store call failed");
     } finally {
-      createWalletIdentity.mockRestore();
-      getWalletIdentity.mockRestore();
       getReview.mockRestore();
-      listWalletIdentities.mockRestore();
       listReviews.mockRestore();
       createReview.mockRestore();
       await Promise.allSettled([server.close(), client.close()]);

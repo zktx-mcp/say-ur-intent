@@ -434,7 +434,7 @@ input.ui-input {
   background: var(--ui-surface);
   border: 0.5px solid var(--ui-border);
   border-radius: 12px;
-  padding: 16px 18px;
+  padding: var(--ui-card-padding-block, 16px) var(--ui-card-padding-inline, 18px);
   margin: 0 0 14px;
 }
 
@@ -453,8 +453,8 @@ input.ui-input {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: -16px -18px 14px;
-  padding: 9px 18px;
+  margin: calc(-1 * var(--ui-card-padding-block, 16px)) calc(-1 * var(--ui-card-padding-inline, 18px)) 14px;
+  padding: 9px var(--ui-card-padding-inline, 18px);
   background: var(--ui-surface-2);
   border-bottom: 0.5px solid var(--ui-border);
   border-radius: 12px 12px 0 0;
@@ -1120,13 +1120,13 @@ input.ui-input {
    card's left/right/bottom edges (offset the card's 18px side / 16px bottom
    padding), so the graph fills the card body edge-to-edge. */
 .ui-chain-receipt-ptb {
-  margin: -14px -18px -16px;
+  margin: -14px calc(-1 * var(--ui-card-padding-inline, 18px)) calc(-1 * var(--ui-card-padding-block, 16px));
   background: var(--ui-surface);
   border-radius: 0 0 12px 12px;
   overflow: hidden;
 }
 
-/* Copy + eye action icons in the shared transaction-graph card's title bar. */
+/* Name/address toggle in the shared transaction-graph card's title bar. */
 .ui-ptb-actions {
   display: flex;
   align-items: center;
@@ -1261,4 +1261,24 @@ input.ui-input {
 .ui-card .ui-accordion-summary:focus-visible,
 .ui-card .ui-accordion[open] .ui-accordion-summary {
   border-radius: 0;
+}
+
+/* Respond to the embedded card's available width, not the desktop window.
+   Below 28rem, the 140px label column plus a readable value column and card
+   gutters no longer fit comfortably. Keep full values in a stacked layout. */
+@container mcp-card (max-width: 28rem) {
+  .ui-card {
+    --ui-card-padding-block: 12px;
+    --ui-card-padding-inline: 12px;
+  }
+  .ui-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .ui-row-value { text-align: left; }
+  .ui-detail-meta { flex-wrap: wrap; }
+}
+
+@container mcp-card (min-width: 0px) {
+  .ui-card, .ui-card-head > :first-child, .ui-detail-head > *, .ui-detail-meta > * { min-width: 0; }
+  .ui-ptb-actions { flex: none; }
+  /* Retain room for the controls without a tall empty graph on narrow cards. */
+  .ui-ptb-graph--interactive { height: clamp(280px, 75cqi, 420px); }
 }

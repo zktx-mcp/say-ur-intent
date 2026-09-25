@@ -57,14 +57,9 @@ export type ComposeRuntimeConfigInput = {
   defaultSuiGraphqlUrl?: string | undefined;
 };
 
-// Fixed default so the loopback review origin (scheme://127.0.0.1:port) stays
-// stable across server restarts, which is what lets the browser wallet
-// autoconnect silently instead of prompting again. Override per MCP
-// registration with SAY_UR_INTENT_REVIEW_PORT. The port is never silently
-// reassigned to a random port (that would break origin continuity); instead,
-// when a newer instance finds the port held by a healthy Say Ur Intent review
-// server on the same machine, it defers instead of starting a second HTTP
-// backend for the same review origin (see reviewServerAcquire.ts).
+// Existing shared-backend port: clients using the same data directory must
+// agree on this port and configuration. It is not browser-wallet authority.
+
 export const DEFAULT_REVIEW_PORT = 8765;
 
 function parseReviewPort(value: string | undefined): number {

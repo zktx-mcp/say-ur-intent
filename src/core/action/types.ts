@@ -1,8 +1,8 @@
 import type { UserAnswerUse } from "../evidence/userAnswerUse.js";
 import type { ProposalReviewModel } from "../proposal/types.js";
 import type { LocalSessionBase } from "../session/localSession.js";
-import type { PtbVisualizationArtifact, WalletReviewAdapterContract } from "./signableAdapterContract.js";
-import type { SuiChainReceiptEvidence } from "./suiChainReceiptEvidence.js";
+import type { PtbVisualizationArtifact, TransactionReviewData } from "./signableAdapterContract.js";
+export type { TransactionExecutionSummary } from "../session/transactionRequest.js";
 export {
   SUI_CHAIN_RECEIPT_REQUIRED_INCLUDE,
   type SuiChainReceiptAccountBalanceChange,
@@ -15,26 +15,10 @@ export {
 
 export type UnknownRecord = Record<string, unknown>;
 
-export const FAILURE_REASONS = [
-  "wallet_rejected",
-  "wallet_provider_error",
-  "signing_disconnected",
-  "network_error",
-  "transaction_submit_failed",
-  "execution_result_unavailable",
-  "chain_receipt_unavailable",
-  "receipt_verification_failed",
-  "chain_execution_failed",
-  "unknown_failure"
-] as const;
-
-export type FailureReason = (typeof FAILURE_REASONS)[number];
-
 export const BLOCKED_REASONS = [
   "adapter_not_implemented",
   "producer_stage_missing",
   "wallet_review_contract_emit_missing",
-  "wallet_handoff_not_implemented",
   "network_mismatch",
   "insufficient_balance",
   "insufficient_gas",
@@ -52,7 +36,9 @@ export type BlockedReason = (typeof BLOCKED_REASONS)[number];
 export const REFRESH_REASONS = [
   "quote_stale",
   "quote_unavailable",
-  "simulation_transient_failure"
+  "simulation_transient_failure",
+  "review_update_failed",
+  "wallet_connection_changed"
 ] as const;
 
 export type RefreshReason = (typeof REFRESH_REASONS)[number];
@@ -62,25 +48,8 @@ export type ReviewStatus =
   | "refresh_required"
   | "blocked";
 
-export type InternalSessionStatus =
-  | "proposed"
-  | "awaiting_wallet"
-  | "wallet_connected"
-  | ReviewStatus
-  | "signed_pending_result"
-  | "success"
-  | "failure"
-  | "expired";
-
-export type ExecutionStatus =
-  | "pending"
-  | "awaiting_wallet"
-  | "awaiting_signature"
-  | "refresh_required"
-  | "signed_pending_result"
-  | "success"
-  | "failure"
-  | "expired";
+export const REVIEW_PREPARATION_STATUSES = ["proposed", "awaiting_wallet", "wallet_connected", "ready_for_wallet_review", "refresh_required", "blocked", "expired"] as const;
+export type InternalSessionStatus = (typeof REVIEW_PREPARATION_STATUSES)[number];
 
 export type ReviewCheckSource =
   | "registry"
@@ -286,7 +255,7 @@ type ReviewStateBase = {
   beforeAfterBalance?: BalanceChange;
   simulation?: TransactionSimulationSummary;
   humanReadableReview?: HumanReadableReviewSummary;
-  walletReviewAdapterContract?: WalletReviewAdapterContract;
+  transactionReviewData?: TransactionReviewData;
   ptbVisualization?: PtbVisualizationArtifact;
   adapterLifecycle?: AdapterLifecycle;
   updatedAt: string;
@@ -309,44 +278,22 @@ export type ReviewState =
       refreshReason?: never;
     });
 
-type ExecutionResultBase = {
-  reviewSessionId: string;
-  planId: string;
-  explorerUrl?: string;
-  summary?: UnknownRecord;
-  recordedAt: string;
-};
-
-export type ExecutionResult =
-  | (ExecutionResultBase & {
-      status: "signed_pending_result";
-      txDigest: string;
-      failureReason?: never;
-      chainReceipt?: never;
-    })
-  | (ExecutionResultBase & {
-      status: "success";
-      txDigest: string;
-      chainReceipt: SuiChainReceiptEvidence;
-      failureReason?: never;
-    })
-  | (ExecutionResultBase & {
-      status: "failure";
-      txDigest?: string;
-      failureReason: FailureReason;
-      chainReceipt?: SuiChainReceiptEvidence;
-    });
-
 export type ReviewSession = LocalSessionBase & {
-  pendingHandoffDigest?: string;
+  ownerId: string;
+  reviewRevision: number;
+  preparationId?: string;
+  preparationError?: string;
+  walletConnectionId?: string;
+  walletConnectionRevision?: number;
+  currentAttemptId?: string;
   status: InternalSessionStatus;
   plans: ActionPlan[];
   account?: string;
   reviewState?: ReviewState;
-  executionResult?: ExecutionResult;
 };
 
 export type ToolErrorKind =
+  | "wallet_unavailable"
   | "ui_unavailable"
   | "input_invalid"
   | "registry_miss"
@@ -358,8 +305,6 @@ export type ToolErrorKind =
   | "active_account_not_set"
   | "session_expired"
   | "invalid_session_transition"
-  | "execution_result_finalized"
-  | "signed_pending_result_conflict"
   | "plan_not_in_session"
   | "session_mismatch"
   | "handoff_unavailable"
@@ -375,7 +320,7 @@ export type ToolError = {
 
 export type McpActionResponse = {
   reviewSessionId: string;
-  reviewUrl: string;
+  card: import("../session/cardSession.js").CardSnapshot;
   plans: ActionPlan[];
   preliminaryChecks: ReviewCheck[];
   userAnswerUse: UserAnswerUse;

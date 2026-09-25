@@ -209,6 +209,7 @@ async function mapLocalDataError<T extends LocalDataImportPreview | LocalDataMut
     return await operation();
   } catch (error) {
     if (error instanceof LocalDataError) {
+      if (error.details.reason === "wallet_request_unsettled") throw new HttpError(409, "wallet_request_unsettled");
       throw new HttpError(statusForLocalDataError(error), error.kind);
     }
     throw error;

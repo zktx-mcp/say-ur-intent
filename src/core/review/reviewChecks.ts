@@ -27,7 +27,7 @@ export function signingViaLocalReviewOnlyCheck(): ReviewCheck {
     label: "Wallet signing",
     status: "warning",
     message:
-      "Wallet signing happens only on the local review page after every review evidence stage completes and the digest-gated handoff succeeds. MCP responses never contain signing data, transaction bytes, or signing readiness.",
+      "Wallet signing requires completed review evidence, an explicit user action in the internal Review card and approval in the wallet; the backend verifies the returned transaction digest and signer. MCP responses never contain signing data, transaction bytes, or signing readiness.",
     source: "adapter"
   };
 }

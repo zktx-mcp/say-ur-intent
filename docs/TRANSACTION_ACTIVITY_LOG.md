@@ -13,28 +13,33 @@ It does not run a background indexer and does not claim complete wallet history.
 
 ## Stored By Default
 
-When Say Ur Intent records an execution result for an account-bound review, the runtime stores a `review_executions` row. That row can include:
+Each review session stores its plan, optional sanitized requested intent,
+preparation snapshots with review revision, and append-only transitions. The
+first authenticated Review-card state read records opened once. Frame count or
+model gateway creation does not establish user observation or approval.
 
-- review session id
-- plan id
-- normalized account
-- execution status
-- transaction digest when available
-- explorer URL when available
-- failure reason when the result failed
-- full execution result JSON after forbidden-field validation
-- recorded and updated timestamps
+Each final signature selection atomically records a `review_requests` attempt,
+review/account/digest binding, immutable reviewed evidence, local request status,
+timestamps and the session's explicit current-attempt reference. A subsequent
+valid review revision can have another attempt; it does not overwrite history.
+`review_executions` contains only a verified chain result for an exact attempt.
+Its success/failure is distinct from request rejection, stopping or uncertainty.
+Neither a lost submit reply nor a missing receipt is stored as chain failure.
 
-This is review evidence for a Say Ur Intent flow. It is not a complete wallet transaction history.
+The three review activity tools use that same distinction for filters, counts,
+timing and detail. Totals count sessions; request and execution distributions
+use the current referenced attempt. Historical stages are distinct-session
+ever counts. First backend signature verification supplies timing, not request
+start or RPC submission. Missing result/time remains absent or null. Repeated
+reads, duplicate admission and same-state no-ops do not create new attempts or
+new funnel events. Detail exposes current request plus capped earlier requests
+and explicitly reports truncation. See [MCP Tools](MCP_TOOLS.md#stored-review-activity).
 
-The runtime also stores local review evidence that cannot be reconstructed from chain data:
-
-- review session header and full action plan JSON
-- materialized requested intent JSON when the adapter provides `ActionPlan.adapterData.requestedIntent`
-- append-only review state snapshots
-- append-only review lifecycle transitions
-
-Lifecycle transition reads mark repeated observations with no stored status change as `isNoOp`. These rows preserve audit detail without changing funnel progress counts.
+Current-format public backups retain these facts and validate account, plan,
+review revision, attempt, digest, time and result relationships. They exclude
+private card permissions, SDK secrets, submission authority, raw bytes and
+signatures. Imported history is never a live request or management capability.
+This is evidence about local Say Ur Intent reviews, not complete wallet history.
 
 ## Stored When Requested
 

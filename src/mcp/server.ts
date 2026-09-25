@@ -1,12 +1,12 @@
 import { registerReadCards } from "../mcp-ui/tools.js";
 import type { CardStore } from "../core/session/cardSessionStore.js";
+import type { WalletWorkflow } from "../core/session/walletWorkflow.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { SuiReadService } from "../core/read/readService.js";
 import type { TransactionActivityService } from "../core/activity/transactionActivityService.js";
 import type { ActivityStore } from "../core/activity/activityStore.js";
 import type { LocalSettingsService } from "../core/preferences/preferencesStore.js";
-import type { ChainReceiptVerifier } from "../core/session/chainReceiptFinalization.js";
 import type { SessionStore } from "../core/session/sessionStore.js";
 import { registerMcpPrompts } from "./prompts.js";
 import type { AdapterPromptSurface } from "../adapters/adapterPromptSurfaces.js";
@@ -21,14 +21,14 @@ import { registerSessionTools } from "./tools/session/index.js";
 
 export type McpServerDeps = {
   cards?: { store: CardStore } | undefined;
+  workflow?: WalletWorkflow | undefined;
   promptSurfaces?: readonly AdapterPromptSurface[];
   sessions: SessionStore;
   activityStore: ActivityStore;
   localSettings: LocalSettingsService;
-  reviewBaseUrl: string;
+  reviewBaseUrl?: string | undefined;
   readService: SuiReadService;
   transactionActivityService: TransactionActivityService;
-  chainReceiptVerifier?: ChainReceiptVerifier | undefined;
   logger: {
     error(message: string, meta?: Record<string, unknown>): void;
   };

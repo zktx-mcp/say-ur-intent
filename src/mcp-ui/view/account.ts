@@ -6,7 +6,7 @@ import { t } from "../../../review-app/src/i18n/i18n.js";
 import type { CardRenderer } from "./lifecycle.js";
 import "../../../review-app/src/account.css";
 
-export const accountRenderer: CardRenderer = {
+export const accountRenderer = {
   title: "Account assets",
   controls(snapshot, submit) {
     const form = document.createElement("form");
@@ -27,7 +27,7 @@ export const accountRenderer: CardRenderer = {
     node.append(identityCard(payload.account, payload), balanceCard(payload), nftCard(payload), objectsCard(payload));
     return { node };
   }
-};
+} satisfies CardRenderer;
 
 function identityCard(address: string, payload: Record<string, unknown>): HTMLElement {
   const node = card(t.account.identity);

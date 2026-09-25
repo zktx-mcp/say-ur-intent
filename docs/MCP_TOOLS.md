@@ -43,9 +43,9 @@ Tool names use dot prefixes and avoid arbitrary shell, arbitrary Move calls, and
 
 Read-only tools split by address requirement.
 
-Address-free reads do not need wallet identity. Examples include DeepBook pool lists, orderbook snapshots, mid price, and quote facts.
+Address-free reads do not need wallet connection. Examples include DeepBook pool lists, orderbook snapshots, mid price, and quote facts.
 
-Address-scoped reads need either an explicit public Sui address supplied by the user or active account context from wallet identity.
+Address-scoped reads need either an explicit public Sui address supplied by the user or active account context from wallet connection.
 
 An explicit public-address read does not prove ownership, create active account context, or authorize active-account-only tools.
 
@@ -53,7 +53,7 @@ Live read results include `fetchedAt` as an ISO 8601 UTC string. `fetchedAt` is 
 
 ## API Response Guidance
 
-High-risk read, review, wallet identity, and execution-status responses include `userAnswerUse` when the response needs answer guidance.
+High-risk read, review, wallet connection, and execution-status responses include `userAnswerUse` when the response needs answer guidance.
 
 USD-denominated settlement-asset responses also include `toolAvailability`.
 This object repeats the current package version, evidence policy version, network, implemented tool count, and required tool availability for that response.
@@ -628,16 +628,16 @@ This tool does not run scans, start a background indexer, create a price cache, 
 
 | Tool | Status | Purpose |
 | --- | --- | --- |
-| `action.prepare_sui_action_review` | Signable local review page | Creates a local review session and review URL for a supported swap action proposal. Account-bound DeepBook and FlowX reviews may build local unsigned transaction material inside the review server, internally bind a Sui transaction digest to it, and derive object ownership, quote/policy, human-readable review, review-time simulation, and PTB visualization evidence. When every required evidence stage completes, the local review page can request the digest-gated byte handoff for user-controlled wallet signing. The MCP tool does not return transaction bytes, signing data, or signing readiness. |
-| `action.prepare_external_proposal_review` | Non-signable review | Creates a local review session and review URL from an untrusted structured external proposal. It does not return transaction bytes. |
+| `action.prepare_sui_action_review` | Signable internal Review card | Creates a local review session and internal Review card for a supported swap action proposal. Account-bound DeepBook and FlowX reviews may build local unsigned transaction material inside the review server, internally bind a Sui transaction digest to it, and derive object ownership, quote/policy, human-readable review, review-time simulation, and PTB visualization evidence. When every required evidence stage completes, an explicit Review card selection can admit backend-mediated WalletConnect approval for that exact transaction. The MCP tool does not return transaction bytes, signing data, or signing readiness. |
+| `action.prepare_external_proposal_review` | Non-signable review | Creates a local review session and internal Review card from an untrusted structured external proposal. It does not return transaction bytes. |
 
 `action.prepare_sui_action_review` is account-bound: a swap review computes
 its evidence (balances, transaction material, digest, simulation) for a
 specific sender, so the tool requires an active wallet account. Connect first
-with `session.create_wallet_identity`; with no active account the tool returns
-`active_account_not_set` with `details.action: "connect_wallet_identity"`
+with `session.create_wallet_connection`; with no active account the tool returns
+`active_account_not_set` with `details.action: "connect_wallet_connection"`
 instead of creating a proposal that can never be computed or signed. The
-review page reads that account from the server as the single source of truth
+Review card reads that account from the server as the single source of truth
 and never connects a wallet itself.
 
 `action.prepare_sui_action_review` accepts a protocol-neutral swap `intent`
@@ -703,22 +703,16 @@ Account-bound review computation for external proposals returns `blocked` with
 recorded the proposal facts but did not build, regenerate, simulate, or verify
 transaction material.
 
-When every review evidence stage completes, a supported account-bound DeepBook
-or FlowX swap review reaches `ready_for_wallet_review` and the local review
-page offers a digest-gated byte handoff, user-controlled wallet signing, and
-signed-digest reporting. After the page reports the signed transaction digest,
-the review server re-reads Sui mainnet and records normalized chain receipt
-evidence. The local review page shows server-read chain receipt facts inline,
-and a internal Receipt card reads on-chain receipt facts for any
-transaction digest; both display server-read receipt facts only, not transaction
-bytes or MCP execution authority.
-
-The MCP layer never signs, executes, or returns transaction bytes; the
-digest-verified bytes stay in the local review-server session and reach the
-user's wallet only on the page.
+Complete supported DeepBook/FlowX review reaches ready_for_wallet_review. This
+is review evidence, not transaction authority. A scoped user selection admits
+one request; the backend sends the stored bytes through WalletConnect, verifies
+the returned digest and signer, and submits once. It independently reads chain
+effects and records them separately from request status. The Review and Receipt
+cards display those facts; neither the model nor the card receives bytes or
+signatures. Ordinary MCP calls cannot authorize signing or submission.
 
 After the wallet account is bound to a supported swap review session, the
-review page and `session.get_review_status` may show protocol-specific quote
+Review card and `session.get_review_status` may show protocol-specific quote
 evidence and review-state checks for:
 
 - resolved DeepBook direct pool or FlowX pinned pair;
@@ -749,11 +743,10 @@ server built unsigned transaction material and kept the bytes internal. If
 transaction digest from that stored material; the digest value and transaction
 bytes are not MCP or review-app outputs. Missing stages explain why the review
 remains blocked. This lifecycle covers review evidence producer stages through
-review-time simulation. Wallet handoff, wallet signing, signed-digest
-reporting, and server-read chain receipt recording are not adapter lifecycle
-stages; they happen after the lifecycle completes, through the digest-gated
-handoff, user-controlled signing on the local review page, and server re-read
-of Sui mainnet for the signed transaction digest.
+review-time simulation. Wallet requests, signature verification, submission and
+chain observation are platform responsibilities after review, separate from
+adapter lifecycle stages. Only a user selection and wallet approval admit that
+backend path; ordinary model calls do not authorize it.
 Public producer projections are tied to those stage states:
 `reviewState.humanReadableReview` is valid only after `human_readable_review`
 is completed and not listed as missing, and `reviewState.simulation` is valid
@@ -780,7 +773,7 @@ readiness, and not proof that a wallet has signed or submitted anything.
 If the lifecycle runs through review-time simulation and every required
 evidence artifact passes contract assembly, account-bound review returns
 `ready_for_wallet_review` and records the schema-validated contract in
-`reviewState.walletReviewAdapterContract`.
+`reviewState.transactionReviewData`.
 The contract carries the transaction commitment hash only; it is not
 transaction bytes, not signing data, not signing readiness, and not
 execution readiness.
@@ -792,23 +785,15 @@ the contract-missing blocked state, wallet signature requests and execution
 remain unavailable. In the `ready_for_wallet_review` state,
 `reviewState.adapterLifecycle.missingStages` is empty and the human-readable
 review plus simulation public summaries are present as pre-signing review
-evidence. The local review page can request the byte handoff, which is refused
-unless the recomputed digest of the stored bytes equals the reviewed
-commitment. The
-`producer_stage_missing` reason applies only when
-`reviewState.adapterLifecycle.missingStages` lists at least one missing review
-evidence producer stage, and public projections for missing stages must not be
-present.
-If transaction material cannot be built, the review fails closed with a concrete
-blocked or refresh reason. The fallback
-`adapter_not_implemented` state still applies when no review evidence source is
-available.
+evidence. The backend verifies stored bytes against that digest before requesting
+a wallet signature, then checks returned bytes and signer before submission.
+The card never receives the bytes.
 
 Those checks and lifecycle stages are pre-signing review evidence only. They do
 not expose transaction bytes, signing data, signing readiness, route
 recommendations, funding readiness, or execution readiness. Only a
 `ready_for_wallet_review` state with an emitted wallet review contract lets the
-local review page request the digest-gated byte handoff, and that handoff is
+backend admit a user-selected WalletConnect request; its byte transfer is
 not an MCP response.
 
 Do not describe those checks as wallet readiness, signing readiness, route quality, or execution safety. Mention local transaction material only when `transaction_material_build_or_verify` is completed, and state that bytes remain internal. Mention digest commitment only when `digest_commitment` is completed, and state that it is an internal binding to stored material, not a public signing artifact.
@@ -858,100 +843,186 @@ addresses for independent cross-check.
 The review layer renders the artifact when an account-bound review emits the
 wallet review contract and the pinned renderer succeeds. The artifact is
 returned as `reviewState.ptbVisualization` next to
-`reviewState.walletReviewAdapterContract`. A renderer failure adds a warning
+`reviewState.transactionReviewData`. A renderer failure adds a warning
 `deepbook_ptb_visualization_unavailable` check instead and does not invalidate
 the emitted contract. PTB visualization is not a transaction builder,
 not wallet handoff, and not a signing data source.
-It is not a signing readiness signal. Review-state checks are pre-signing review evidence; wallet signing happens afterward on the local review page under the user's control.
+It is not a signing readiness signal. Review-state checks are pre-signing review evidence; wallet signing happens afterward on the internal Review card under the user's control.
 
 ## Session Tools
 
-| Tool | Status | Purpose |
-| --- | --- | --- |
-| `session.create_wallet_identity` | Implemented | Creates a local wallet identity session and wallet URL for the same machine's system browser. |
-| `session.get_wallet_identity` | Implemented | Polls a wallet identity session status; use `account.get_active_account` to confirm current active account context. |
-| `session.wait_wallet_identity` | Implemented | Waits briefly for a wallet identity session to reach a terminal status. |
-| `session.get_interaction_status` | Implemented | Reads active account context and pending shared wallet or review interactions. |
-| `session.get_review_status` | Implemented | Reads internal and public review status for a `reviewSessionId`. |
-| `session.get_execution_result` | Implemented | Reads public execution polling status and any recorded result for a `reviewSessionId`. |
-| `session.wait_execution_result` | Implemented | Waits briefly for execution polling status to reach a wait-stopping status. |
+| Tool | Input and result |
+| --- | --- |
+| `session.create_wallet_connection` | Opens an internal Connect card. No pairing starts until an explicit app action. |
+| `session.get_wallet_connection` | Reads one `cardId`; public response excludes pairing and permission. |
+| `session.wait_wallet_connection` | Waits on one `cardId`, with an optional timeout up to 55 seconds; stops when user input is needed or the admitted connection/disconnection operation ends. |
+| `session.open_review_management` | Opens management for exact `reviewSessionId` + `attemptId`; no refresh or signing authority. |
+| `session.get_interaction_status` | Active read account and bounded pending connection/review lists, with IDs and truncation. |
+| `session.get_review_status` | Current preparation status, review revision, optional current request and chain execution. |
+| `session.get_execution_result` | Observes the current explicitly referenced attempt and may read its known digest; never submits again. |
+| `session.wait_execution_result` | Bounded wait on the same request, separate from its signing and chain-observation deadlines. |
 
-Wallet identity URLs include a short-lived fragment token and are scoped to the local loopback review server.
+`pendingWalletConnections.items[].status` is `input_required`,
+`awaiting_approval`, or `disconnect_pending`. The last value describes an
+admitted, running disconnect card, not a new wallet connection state. In card
+workflow data, a connection's optional `pendingAction: "disconnect"` is derived
+from that stored card operation. Its `status` remains the last confirmed
+connection fact. Such a connection is unavailable for a new account selection,
+review or signature request. `observe` remains true while disconnection can be
+observed, and becomes false on completion or unavailable wallet progress.
+While its SDK callback remains pending, unavailable progress preserves the
+operation and its last recorded connection state. Repeating the same selection
+does not send another SDK request.
 
-Open them in the same machine's system browser, not in an MCP client sidebar or webview.
+When a disconnect callback ended but its completion write failed, current reads
+reconcile that stored operation without another SDK disconnect. If the SDK is
+unavailable, an unconfirmed failure is distinct from verified disconnection.
+`pendingReviewSessions` includes live Review input or ongoing preparation,
+request or explicit result observation. Cancelled/expired input alone is not a
+pending interaction, even when the stored review is proposed or ready. Closing
+the original input does not remove an admitted request that is still waiting.
+`submitting` permits observation of the admitted digest during the same initial
+window as `awaiting_chain_result`, without waiting for the submission response.
+A stored chain result can therefore precede that response.
 
-Wallet identity polling uses a 5 second interval because it waits on user wallet interaction. Execution polling remains separate.
+An unadmitted ready Review may include `nextStateReadAfterMs`, a server-computed
+interval until its verified review material must be checked again. A positive
+value schedules a same-card state read; an absent or zero value schedules no
+additional wake-up. It is separate from `actionRemainingMs` (card authority),
+the signing wait and the chain observation window. Only the backend changes
+the stored review to `refresh_required`; the hint never authorizes a request,
+extends validity or refreshes a quote. Admitted requests and their management
+views do not use it to expire historical review facts.
 
-Wait tools keep pending state in memory only. They return `timed_out` when the user has not finished yet and do not provide push notifications.
+Current card and session responses describe one backend evaluation of stored
+facts. Their action choices and remaining times do not authorize a later
+command: admission rechecks the selected account, revision, material and expiry
+against current stored data. If review data changes during verification and
+requires a new verification, the read returns `invalid_session_transition` with
+`details.reason: "review_changed_during_verification"` and a safe message.
+Read the same state again; do not resend a financial action. This conflict is
+neither a completed result nor a wait timeout. A command already committed
+before its response fails remains recorded and is recovered by reading it.
 
-If the host forwards cancellation, wait tools return `request_aborted`. A local MCP server restart interrupts pending waits.
+Unavailable wallet setup distinguishes missing configuration, invalid project
+ID format, and backend initialization failure. A failed Connect card preserves
+its safe reason on subsequent reads. Connection-restoration or event-subscription
+failure disables wallet operations and returns a restart explanation. Neither
+failure starts a pairing or signature request, and ordinary evidence reads
+remain available. SDK error bodies and configuration values are not returned.
 
-`session.get_interaction_status` returns active account context plus the latest five pending wallet and review interactions by `lastActivityAt`, with `limit` and `truncated` fields for each list.
+Review status is preparation state (`proposed`, `awaiting_wallet`,
+`wallet_connected`, `ready_for_wallet_review`, `blocked`, `refresh_required`,
+`expired`). `requestStatus`, when present, is `awaiting_signature`, `submitting`,
+`awaiting_chain_result`, `stopped`, `request_failed`, `outcome_unknown`, or
+`completed`. `pollingStatus` uses the current request when there is one and
+otherwise the preparation state. Preparation needs user action; it is not an
+already pending wallet signature.
 
-For review interactions, pending means the review session is not in a final execution status. `pendingReviewSessions.items[].statusCategory` may be `non_terminal`, `awaiting_chain_result`, or `user_action_required`. Final statuses `success`, `failure`, and `expired` are excluded from `pendingReviewSessions`.
+A review's bound account is fixed; changing the active read account does not
+rebind it. Preparation choices and final admission use the same account rule.
+To update a review bound to A, select A again in a new Connect card. To review
+for B, request a new Review. An absent or incompatible read account removes the
+preparation choice without recording a preparation failure. The existing
+`review.error` card text distinguishes `Current account selection` guidance from
+a stored `Previous review update` error. It does not decide permissions. Changing
+read context alone does not revoke an already valid A review's signing choice.
+Once a signing request consumes its card, retrying needs a new Review; a
+management card only refers to its existing exact attempt.
 
-`session.get_review_status` returns both `pollingStatus` and `statusCategory` for the requested review session, so a client can distinguish final results from statuses that still require user or review-flow action.
+Only `completed` has `executionResult`, with `attemptId`, review/plan IDs,
+`status: success | failure`, the exact digest, verified `chainReceipt` and time.
+Only failed chain effects have `failureReason: chain_execution_failed`. Wallet
+rejection, local timeout, unavailable receipts and lost submission responses
+never fabricate a chain failure. An unknown result retains the digest for later
+reads. An explicit user stop after submission stops observation, not an on-chain
+transaction. Wallet connection changes or a requested disconnect stop pending
+submission permission with their own recorded reason; they do not claim that the
+user stopped waiting or that disconnection already succeeded. After submission,
+those connection events preserve independent observation of the same digest,
+including the first lookup after the submit response. They neither stop that
+observation nor resume observation the user explicitly stopped.
 
-For execution waits, use `statusCategory` and the execution `pollingHint` fields instead of treating every wait stop as a final result.
+The original request's stored deadlines are unchanged by a management card.
+A new signature requires a newly reviewed revision and explicit selection.
+Identical duplicate selections return the admitted attempt; no response-loss
+path replays a financial request. Model tools may open/read cards; only scoped
+app-only `ui.act_card` performs a user selection. UI permission and pairing QR
+travel in private metadata. Bytes/signatures never reach the card or model.
 
-`pollingHint.waitStoppingStatuses` lists statuses where wait tools may stop returning `timed_out`.
+Connection observation uses 5 seconds and request observation 3 seconds.
+Session responses and workflow card data expose `walletAvailability` separately
+from stored review, request and chain facts. It is either `{status: "available"}`
+or `{status: "unavailable", reason, message}`. Reasons are
+`configuration_missing`, `configuration_invalid`, `initialization_failed`,
+`restoration_failed`, and `wallet_state_unavailable`. Availability describes the
+backend dependency, not account ownership, wallet approval or signing readiness.
 
-`pollingHint.finalStatuses` lists final result statuses: `success`, `failure`, and `expired`.
+Target-specific `progress.status` is `idle`, `waiting`, or `unavailable`. The last
+includes `reason: "wallet_unavailable"` and a safe message. A wait returns
+`unavailable` when a nonterminal wallet operation cannot be observed; it retains
+the saved facts. Completed requests return `status_reached` immediately, even
+when the wallet dependency is unavailable. Already submitted requests can still
+be observed by their exact digest independently of WalletConnect. These runtime
+fields do not change request states or activity counts.
 
-`pollingHint.userActionRequiredStatuses` lists statuses that require user or review-flow action: `refresh_required` and `blocked`.
+Wallet-dependent commands rejected for dependency failure use the error kind
+`wallet_unavailable`, with a safe reason and message. Invalid input and domain
+conflicts retain their own meaning. Validated app actions can also return a
+current snapshot with `error.code: "wallet_unavailable"`; invalid permissions
+and storage failures do not receive a success snapshot. Review creation can
+still display non-signable proposal facts and stored request management.
 
-For execution waits, `signed_pending_result` is categorized as `awaiting_chain_result`.
+Wait `timed_out` is only a local wait outcome. Reads may update stored expiry or
+receipt facts, so these session tools are annotated `readOnlyHint: false`.
+Their effects do not include signing or submission. The returned `pollingHint`
+and `statusCategory` distinguish required user action, pending observation and
+local request closure; closure alone does not prove chain success or failure.
 
-That means signing has already happened and the local server is waiting for
-the server re-read of the signed transaction digest from Sui mainnet. Result
-reads and waits may lazily retry that read while the session remains pending.
+A request's `reason` distinguishes a directly confirmed transaction-digest
+mismatch from submission checks that could not be completed. Incomplete SDK,
+network or storage checks do not prove a wrong signer, wallet rejection or chain
+failure. Backend-authored domain reasons remain specific; raw SDK/RPC/database
+errors are not exposed. Already committed signature-verification facts are
+retained when a later submission-admission check fails.
 
-When the server verifies a chain receipt with successful effects, execution
-polling can return `success` with `executionResult.chainReceipt`. When Sui
-mainnet reports failed effects, execution polling can return `failure` with
-`failureReason: "chain_execution_failed"` and a chain receipt. When the digest
-cannot be found before the local lookup window ends, execution polling can
-return `failure` with `failureReason: "chain_receipt_unavailable"`. When the
-chain transaction fails digest, sender, or receipt validation checks, execution
-polling can return `failure` with
-`failureReason: "receipt_verification_failed"`.
+### Stored review activity
 
-The local review page shows server-read receipt facts inline on terminal
-sessions, and a internal Receipt card reads on-chain receipt facts by
-transaction digest for browser inspection of server-read receipt facts. Neither
-is a wallet action, MCP execution path, route verdict, or signing-readiness
-signal.
+`read.list_review_activity` accepts account/time/limit and independent ANDed
+`reviewStatus`, `requestStatus`, `executionStatus` filters. One row represents
+one review session and its explicit current attempt, including optional
+`currentAttemptId`, `reviewRevision`, `transactionDigest`, request and chain
+status. `dataScope.recordCount` counts the complete filtered scope before limit.
 
-`executionResult.chainReceipt` is a server-read execution fact for the reported
-transaction digest. It is not transaction bytes, not raw BCS, not wallet
-signatures, not signing data, not signing readiness, not an execution
-guarantee, not route quality, not fiat value, not P&L, not tax evidence, not
-best-price evidence, and not peg evidence.
+`read.summarize_review_funnel` keeps the session denominator. `reviewStatusCounts`
+is the preparation distribution; `requestStatusCounts` is a list of
+`{ requestStatus, count }` entries (including zero counts); `executionStatusCounts`
+has success/failure counts. Status strings are data values, not secret-like JSON
+field names. Request counts plus `withoutRequest` equal total. Chain counts plus
+`withoutExecutionResult` equal total. Wallet rejection is not chain failure.
 
-`blocked` and `refresh_required` are wait-stopping statuses, but they are not final success or failure.
+`opened` counts first authenticated normal Review-card state reads, not frames,
+model creation or wallet approval. walletConnected/stateComputed and review
+states reached are distinct-session history. `everAwaitedChainResult` counts
+sessions that reached that request stage; `expiredWithoutExecutionResult` counts
+expired reviews with no result in any attempt. Timing fields
+`avgCreatedToSignatureVerifiedSeconds` and `avgOpenedToSignatureVerifiedSeconds`
+use each review's first backend-verified signature time, or null when absent.
+Overlapping history stages must not be summed as a denominator.
+A request can move directly from `submitting` to `completed` when its receipt is
+observed before the submission response or after a failed follow-up write. That
+result counts as completed and as its verified chain outcome, but does not count
+as `everAwaitedChainResult` unless the session actually reached that stage in an
+attempt. This metric is neither a submission total nor a mandatory funnel step.
 
-Execution result transitions are owned by the local review server. The browser
-reports only signed pending digests or local pre-chain failures; MCP wait tools
-observe stored transitions and may trigger the same lazy server re-read path,
-but they do not sign, submit, or produce signing results.
-
-Session status and wait tools may lazily mark expired local sessions while reading, so session lifecycle tools are annotated `readOnlyHint: false`.
-
-`read.summarize_wallet_assets` and `read.classify_wallet_assets` may populate the local positive coin metadata cache while reading balances, so they are also annotated `readOnlyHint: false`.
-
-These tools still do not execute transactions, sign, create custody, or produce signing material.
-
-Wallet identity, interaction status, review status, and execution polling responses expose `userAnswerUse` when the response needs user-answer guidance. For those responses, use status and polling fields only for local read-context or review-flow state. Do not turn them into login, wallet authorization, execution guarantees, signing data, or signing readiness.
-
-The following remain read-only product evidence tools:
-
-- `read.preview_intent_evidence`;
-- `read.list_settlement_asset_groups`;
-- `read.quote_deepbook_display_amount`;
-- `read.summarize_deepbook_account_inventory`;
-- `account.get_active_account`.
-
-They only expose current read evidence, active account context, static SDK registry metadata, or pinned SDK simulation facts. Any metadata-cache population is implementation-local and does not expand product authority.
+`read.get_review_session_detail` returns the current `request`, full
+`requestCount`, capped `requests`, revision-bound state snapshots and transitions
+with `domain` and optional attemptId. Each request may contain a verified
+`execution`; absent execution does not imply failure. Current request is returned
+even if the history list is truncated. Historical attempts remain evidence after
+live cleanup or public backup import, never authority to manage or sign.
+Response-local `userAnswerUse` only enables execution answers where execution
+facts actually exist.
 
 ## Account Tools
 
@@ -991,7 +1062,7 @@ Custom providers can affect read data quality, so use trusted mainnet providers.
 | `sayurintent://docs/readme` | Public entry document: product purpose, current release boundary, setup path, and documentation map. |
 | `sayurintent://docs/mcp-setup` | Setup guide: installation, MCP client connection, first-use flow, settings, and troubleshooting. |
 | `sayurintent://docs/mcp-tools` | API reference: tool contracts, response fields, statuses, follow-up fields, and output boundaries. |
-| `sayurintent://docs/wallet-identity` | Wallet identity reference: active-account read context and same-machine capture boundaries. |
+| `sayurintent://docs/wallet-connection` | Wallet connection reference: active read context, private SDK ownership and user-approved transaction requests. |
 | `sayurintent://docs/agent-behavior` | Answer playbook: user-question flows, tool selection, and response wording boundaries. |
 | `sayurintent://protocols/deepbook-v3` | Protocol reference only; use MCP tool responses and `read.list_supported_protocols` for current support. |
 | `sayurintent://protocols/deepbook-margin` | Protocol reference only; no margin MCP read tools or signable actions are exposed in this release. |

@@ -52,15 +52,7 @@ async function readyReviewSession() {
     validateAdapterLifecycle: validateSupportedAdapterLifecycle
   });
   const { session } = await store.createReviewSession([plan], computeNow);
-  const { session: walletSession } = await store.createWalletIdentitySession(computeNow);
-  await store.recordWalletIdentityOpened(walletSession.id, computeNow);
-  await store.recordWalletIdentityConnecting(walletSession.id, computeNow);
-  await store.recordWalletIdentityResult(
-    walletSession.id,
-    { status: "connected", account: walletAccount, chain: "sui:mainnet", walletName: "Test Wallet" },
-    computeNow
-  );
-  await store.recordReviewPageOpened(session.id, computeNow);
+  await activityStore.setActiveAccount(walletAccount, "wallet_connection", computeNow);
   await store.recordWalletConnected(session.id, walletAccount, computeNow);
 
   let materialDigest: Awaited<ReturnType<typeof recordTestTransactionMaterial>>["digest"] | undefined;
@@ -166,24 +158,24 @@ async function readyReviewSession() {
   return { store, materialStore, session, computed };
 }
 
-describe("prepareWalletHandoff", () => {
-  it("hands over bytes whose recomputed digest equals the reviewed contract commitment", async () => {
+describe("prepareReviewedTransaction", () => {
+  it("prepares backend-only bytes whose recomputed digest equals the reviewed contract commitment", async () => {
     const { store, session, computed } = await readyReviewSession();
     expect(computed.state.status).toBe("ready_for_wallet_review");
 
-    const handoff = await store.prepareWalletHandoff(session.id, plan.id, walletAccount, computeNow);
+    const handoff = await store.prepareReviewedTransaction(session.id, plan.id, walletAccount, computeNow);
 
-    const contract = computed.state.walletReviewAdapterContract;
+    const contract = computed.state.transactionReviewData;
     expect(contract).toBeDefined();
-    expect(handoff.transactionMaterialCommitment).toBe(contract?.transactionMaterialCommitment);
+    expect(handoff.reviewedTransactionDigest).toBe(contract?.reviewedTransactionDigest);
     const bytes = Uint8Array.from(Buffer.from(handoff.transactionBytesBase64, "base64"));
     const recomputed = await Transaction.from(bytes).getDigest();
-    expect(recomputed).toBe(handoff.transactionMaterialCommitment);
+    expect(recomputed).toBe(handoff.reviewedTransactionDigest);
     expect(handoff.account).toBe(walletAccount);
     expect(handoff.planId).toBe(plan.id);
   });
 
-  it("refuses handoff when the session has no ready_for_wallet_review state", async () => {
+  it("refuses backend preparation when the session has no ready_for_wallet_review state", async () => {
     const activityStore = new InMemoryActivityStore();
     const store = new InMemorySessionStore({
       activityStore,
@@ -192,139 +184,12 @@ describe("prepareWalletHandoff", () => {
     });
     const { session } = await store.createReviewSession([plan], computeNow);
 
-    await expect(store.prepareWalletHandoff(session.id, plan.id, walletAccount, computeNow)).rejects.toMatchObject({
+    await expect(store.prepareReviewedTransaction(session.id, plan.id, walletAccount, computeNow)).rejects.toMatchObject({
       code: "invalid_session_transition"
     });
   });
 
-  it("locks the session against recomputes while a handoff is outstanding and releases on result", async () => {
-    const { store, session, computed } = await readyReviewSession();
-    await store.prepareWalletHandoff(session.id, plan.id, walletAccount, computeNow);
-
-    await expect(
-      store.recordReviewStateWithArtifacts(session.id, computed.state, computed.privateArtifacts, computeNow)
-    ).rejects.toMatchObject({ code: "invalid_session_transition" });
-
-    await store.recordExecutionResult(
-      session.id,
-      {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "signed_pending_result",
-        txDigest: computed.state.walletReviewAdapterContract!.transactionMaterialCommitment,
-        recordedAt: computeNow.toISOString()
-      },
-      computeNow
-    );
-    const after = await store.getReviewSession(session.id);
-    expect(after?.pendingHandoffDigest).toBeUndefined();
-  });
-
-  it("rejects signed pending results that do not match the reviewed contract commitment", async () => {
-    const { store, session, computed } = await readyReviewSession();
-    const commitment = computed.state.walletReviewAdapterContract?.transactionMaterialCommitment;
-    if (!commitment) {
-      throw new Error("expected wallet review adapter contract");
-    }
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "signed_pending_result",
-          txDigest: "8yFN1xzFyVHwF4aXJQzLb2Xdh4avWcXWJ4qJGnYSC8kq",
-          recordedAt: computeNow.toISOString()
-        },
-        computeNow
-      )
-    ).rejects.toMatchObject({ code: "handoff_commitment_mismatch" });
-    const afterMismatch = await store.getReviewSession(session.id, computeNow);
-    expect(afterMismatch?.status).toBe("ready_for_wallet_review");
-    expect(afterMismatch).not.toHaveProperty("executionResult");
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "signed_pending_result",
-          txDigest: commitment,
-          recordedAt: computeNow.toISOString()
-        },
-        computeNow
-      )
-    ).resolves.toMatchObject({
-      status: "signed_pending_result",
-      executionResult: { status: "signed_pending_result", txDigest: commitment }
-    });
-  });
-
-  it("releases the handoff lock on explicit cancel", async () => {
-    const { store, session, computed } = await readyReviewSession();
-    await store.prepareWalletHandoff(session.id, plan.id, walletAccount, computeNow);
-    await store.cancelWalletHandoff(session.id, computeNow);
-    await expect(
-      store.recordReviewStateWithArtifacts(session.id, computed.state, computed.privateArtifacts, computeNow)
-    ).resolves.toMatchObject({ id: session.id });
-  });
-
-  it("self-heals the handoff lock when the handed-off material expired", async () => {
-    const { store, session } = await readyReviewSession();
-    await store.prepareWalletHandoff(session.id, plan.id, walletAccount, computeNow);
-    const afterExpiry = new Date("2026-05-15T00:00:31.000Z");
-    // After expiry the lock must release; recording a fresh non-derived
-    // refresh state (the real recompute outcome) must succeed.
-    const refreshState = {
-      planId: plan.id,
-      reviewSessionId: session.id,
-      account: walletAccount,
-      checks: [
-        {
-          id: "deepbook_quote_policy_refresh_required",
-          label: "Quote policy",
-          status: "fail" as const,
-          message: "Quote policy requires refresh: quote_stale.",
-          source: "quote" as const
-        }
-      ],
-      status: "refresh_required" as const,
-      refreshReason: "quote_stale" as const,
-      updatedAt: afterExpiry.toISOString()
-    };
-    await expect(
-      store.recordReviewStateWithArtifacts(session.id, refreshState, undefined, afterExpiry)
-    ).resolves.toMatchObject({ id: session.id });
-  });
-
-  it("keeps the session signable when material expires during an outstanding handoff", async () => {
-    const { store, session, computed } = await readyReviewSession();
-    await store.prepareWalletHandoff(session.id, plan.id, walletAccount, computeNow);
-    const afterExpiry = new Date("2026-05-15T00:00:31.000Z");
-    // Reading the session after material expiry must not demote it while the
-    // handoff is outstanding (a slow hardware wallet is still signing).
-    const read = await store.getReviewSession(session.id, afterExpiry);
-    expect(read?.reviewState?.status).toBe("ready_for_wallet_review");
-    // A late wallet failure must still be recordable.
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "failure",
-          failureReason: "wallet_provider_error",
-          recordedAt: afterExpiry.toISOString()
-        },
-        afterExpiry
-      )
-    ).resolves.toMatchObject({ status: "failure" });
-    expect(computed.state.status).toBe("ready_for_wallet_review");
-  });
-
-  it("refuses handoff when the stored digest does not match the reviewed contract commitment", async () => {
+  it("refuses backend preparation when the stored digest does not match the reviewed contract commitment", async () => {
     const { store, materialStore, session, computed } = await readyReviewSession();
     const other = await recordTestTransactionMaterial({
       materialStore,
@@ -336,24 +201,24 @@ describe("prepareWalletHandoff", () => {
       includeSharedObject: false
     });
     const skewed = JSON.parse(JSON.stringify(computed.state)) as typeof computed.state;
-    const contract = skewed.walletReviewAdapterContract;
+    const contract = skewed.transactionReviewData;
     if (!contract) {
       throw new Error("expected contract on the ready state");
     }
-    contract.transactionMaterialCommitment = other.digest.transactionDigest;
-    contract.humanReadableReview.boundToCommitment = other.digest.transactionDigest;
-    contract.simulation.boundToCommitment = other.digest.transactionDigest;
+    contract.reviewedTransactionDigest = other.digest.transactionDigest;
+    contract.humanReadableReview.transactionDigest = other.digest.transactionDigest;
+    contract.simulation.transactionDigest = other.digest.transactionDigest;
     if (!computed.privateArtifacts) {
       throw new Error("expected private artifacts");
     }
     await store.recordReviewStateWithArtifacts(session.id, skewed, computed.privateArtifacts, computeNow);
 
     await expect(
-      store.prepareWalletHandoff(session.id, plan.id, walletAccount, computeNow)
+      store.prepareReviewedTransaction(session.id, plan.id, walletAccount, computeNow)
     ).rejects.toMatchObject({ code: "handoff_commitment_mismatch" });
 
     try {
-      await store.prepareWalletHandoff(session.id, plan.id, walletAccount, computeNow);
+      await store.prepareReviewedTransaction(session.id, plan.id, walletAccount, computeNow);
     } catch (error) {
       expect(error).toBeInstanceOf(SessionStoreError);
       expect(JSON.stringify(error)).not.toContain("transactionBytesBase64");

@@ -6,12 +6,12 @@ import {
   PTB_VISUALIZATION_REQUIRED_UNSUPPORTED_USES,
   SAFETY_CRITICAL_FACT_MATRIX,
   SUI_GAS_COIN_TYPE,
-  WALLET_REVIEW_ADAPTER_CONTRACT_VERSION,
+  TRANSACTION_REVIEW_SCHEMA_VERSION,
   WALLET_REVIEW_REQUIRED_HUMAN_FIELDS,
   WALLET_REVIEW_REQUIRED_PROHIBITED_OUTPUTS,
   WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS,
   ptbVisualizationArtifactSchema,
-  walletReviewAdapterContractSchema
+  transactionReviewDataSchema
 } from "../src/core/action/signableAdapterContract.js";
 
 const now = "2026-05-25T00:00:00.000Z";
@@ -25,8 +25,8 @@ const gasObjectId = `0x${"d".repeat(64)}`;
 const commitmentDigest = "4btiuiMPvEENsttpZC7CZ53DruC3MAgfznDbASZ7DR6S";
 const otherCommitmentDigest = "5SFrTF3U5AYyoj234cVqN2sqJh2EUvUgKz1hgYqxqvXF";
 
-function sourceOfTruthById(candidate: any, id: string) {
-  return candidate.sourceOfTruth.find((source: { id: string }) => source.id === id);
+function sourceReferencesById(candidate: any, id: string) {
+  return candidate.sourceReferences.find((source: { id: string }) => source.id === id);
 }
 
 function evidenceClaimById(candidate: any, id: string) {
@@ -35,7 +35,7 @@ function evidenceClaimById(candidate: any, id: string) {
 
 function walletReviewContractFixture() {
   return {
-    contractVersion: WALLET_REVIEW_ADAPTER_CONTRACT_VERSION,
+    schemaVersion: TRANSACTION_REVIEW_SCHEMA_VERSION,
     adapterId: "deepbook-swap",
     protocol: "DeepBookV3",
     actionKind: "swap",
@@ -47,7 +47,7 @@ function walletReviewContractFixture() {
       authority: "untrusted_until_review_regenerates_and_verifies",
       userSelectionSource: "user_explicit"
     },
-    sourceOfTruth: [
+    sourceReferences: [
       {
         id: "coin_metadata",
         kind: "pinned_sdk_registry",
@@ -302,7 +302,7 @@ function walletReviewContractFixture() {
     },
     simulation: {
       evidenceClaimId: "simulation_claim",
-      boundToCommitment: commitmentDigest,
+      transactionDigest: commitmentDigest,
       provider: "client.core.simulateTransaction",
       checksEnabled: true,
       simulatedAt: now,
@@ -312,7 +312,7 @@ function walletReviewContractFixture() {
     },
     humanReadableReview: {
       fields: [...WALLET_REVIEW_REQUIRED_HUMAN_FIELDS],
-      boundToCommitment: commitmentDigest,
+      transactionDigest: commitmentDigest,
       source: "review_model_or_adapter_equivalent",
       purpose: "human_review_before_wallet_authorization"
     },
@@ -328,7 +328,7 @@ function walletReviewContractFixture() {
         ...WALLET_REVIEW_REQUIRED_PROHIBITED_OUTPUTS
       ]
     },
-    transactionMaterialCommitment: commitmentDigest
+    reviewedTransactionDigest: commitmentDigest
   };
 }
 
@@ -373,49 +373,49 @@ function ptbVisualizationFixture() {
 
 describe("signable adapter and PTB visualization contract", () => {
   it("accepts a contract whose review, simulation, and handoff commitments are equal", () => {
-    expect(walletReviewAdapterContractSchema.safeParse(walletReviewContractFixture()).success).toBe(true);
+    expect(transactionReviewDataSchema.safeParse(walletReviewContractFixture()).success).toBe(true);
   });
 
   it("rejects a contract missing the transaction material commitment", () => {
     const missingCommitment = walletReviewContractFixture();
-    delete (missingCommitment as { transactionMaterialCommitment?: unknown }).transactionMaterialCommitment;
-    const result = walletReviewAdapterContractSchema.safeParse(missingCommitment);
+    delete (missingCommitment as { reviewedTransactionDigest?: unknown }).reviewedTransactionDigest;
+    const result = transactionReviewDataSchema.safeParse(missingCommitment);
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.some((issue) => issue.path.join(".") === "transactionMaterialCommitment")).toBe(true);
+      expect(result.error.issues.some((issue) => issue.path.join(".") === "reviewedTransactionDigest")).toBe(true);
     }
   });
 
   it("rejects a contract whose commitment is not a valid Sui transaction digest", () => {
     const invalidDigest = walletReviewContractFixture();
-    invalidDigest.transactionMaterialCommitment = "e".repeat(64);
-    invalidDigest.simulation.boundToCommitment = "e".repeat(64);
-    invalidDigest.humanReadableReview.boundToCommitment = "e".repeat(64);
-    expect(walletReviewAdapterContractSchema.safeParse(invalidDigest).success).toBe(false);
+    invalidDigest.reviewedTransactionDigest = "e".repeat(64);
+    invalidDigest.simulation.transactionDigest = "e".repeat(64);
+    invalidDigest.humanReadableReview.transactionDigest = "e".repeat(64);
+    expect(transactionReviewDataSchema.safeParse(invalidDigest).success).toBe(false);
   });
 
   it("rejects a contract whose simulation commitment differs from the handoff commitment", () => {
     const mismatch = walletReviewContractFixture();
-    mismatch.simulation.boundToCommitment = otherCommitmentDigest;
-    const result = walletReviewAdapterContractSchema.safeParse(mismatch);
+    mismatch.simulation.transactionDigest = otherCommitmentDigest;
+    const result = transactionReviewDataSchema.safeParse(mismatch);
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.some((issue) => issue.path.join(".") === "simulation.boundToCommitment")).toBe(true);
+      expect(result.error.issues.some((issue) => issue.path.join(".") === "simulation.transactionDigest")).toBe(true);
     }
   });
 
   it("rejects a contract whose human-readable review commitment differs from the handoff commitment", () => {
     const mismatch = walletReviewContractFixture();
-    mismatch.humanReadableReview.boundToCommitment = otherCommitmentDigest;
-    const result = walletReviewAdapterContractSchema.safeParse(mismatch);
+    mismatch.humanReadableReview.transactionDigest = otherCommitmentDigest;
+    const result = transactionReviewDataSchema.safeParse(mismatch);
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.some((issue) => issue.path.join(".") === "humanReadableReview.boundToCommitment")).toBe(true);
+      expect(result.error.issues.some((issue) => issue.path.join(".") === "humanReadableReview.transactionDigest")).toBe(true);
     }
   });
 
   it("defines a contract-only wallet-review evidence shape without forbidden MCP field names", () => {
-    const contract = walletReviewAdapterContractSchema.parse(walletReviewContractFixture());
+    const contract = transactionReviewDataSchema.parse(walletReviewContractFixture());
 
     expect(contract.outputBoundary.runtimeStatus).toBe("emitted_pre_handoff");
     expect(contract.outputBoundary.prohibited).toEqual(
@@ -454,19 +454,19 @@ describe("signable adapter and PTB visualization contract", () => {
         rawAmount
       }, ...candidate.rawQuantities.slice(1)];
 
-      expect(walletReviewAdapterContractSchema.safeParse(candidate).success).toBe(false);
+      expect(transactionReviewDataSchema.safeParse(candidate).success).toBe(false);
     }
 
     const symbolOnlyAsset = walletReviewContractFixture() as any;
     delete symbolOnlyAsset.rawQuantities[0].asset.coinType;
-    expect(walletReviewAdapterContractSchema.safeParse(symbolOnlyAsset).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(symbolOnlyAsset).success).toBe(false);
 
     for (const invalidCoinType of ["USDC", "0x2::sui::SUI", "not-a-coin-type"]) {
       const invalidSourceCoinType = walletReviewContractFixture() as any;
       invalidSourceCoinType.rawQuantities[0].asset.coinType = invalidCoinType;
       evidenceClaimById(invalidSourceCoinType, "source_amount_claim").asset.coinType = invalidCoinType;
       evidenceClaimById(invalidSourceCoinType, "source_unit_claim").coinType = invalidCoinType;
-      expect(walletReviewAdapterContractSchema.safeParse(invalidSourceCoinType).success).toBe(false);
+      expect(transactionReviewDataSchema.safeParse(invalidSourceCoinType).success).toBe(false);
     }
   });
 
@@ -478,21 +478,21 @@ describe("signable adapter and PTB visualization contract", () => {
       quoteEvidenceClaimId: "quote_min_out_claim",
       maxSlippageBps: 50
     };
-    expect(walletReviewAdapterContractSchema.safeParse(missingMinOut).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(missingMinOut).success).toBe(false);
 
     const missingSimulationField = walletReviewContractFixture() as any;
     missingSimulationField.simulation = {
       ...missingSimulationField.simulation,
       requiredFields: ["effects", "balanceChanges", "transaction"]
     };
-    expect(walletReviewAdapterContractSchema.safeParse(missingSimulationField).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(missingSimulationField).success).toBe(false);
 
     const missingHumanField = walletReviewContractFixture() as any;
     missingHumanField.humanReadableReview = {
       ...missingHumanField.humanReadableReview,
       fields: WALLET_REVIEW_REQUIRED_HUMAN_FIELDS.filter((field) => field !== "unsupportedClaims")
     };
-    expect(walletReviewAdapterContractSchema.safeParse(missingHumanField).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(missingHumanField).success).toBe(false);
   });
 
   it("rejects slippage and min-out scalars without typed evidence claims", () => {
@@ -500,19 +500,19 @@ describe("signable adapter and PTB visualization contract", () => {
     delete minOutWithoutClaim.slippageOrMinOut.quoteEvidenceId;
     delete minOutWithoutClaim.slippageOrMinOut.quoteEvidenceClaimId;
     minOutWithoutClaim.slippageOrMinOut.status = "stale";
-    expect(walletReviewAdapterContractSchema.safeParse(minOutWithoutClaim).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(minOutWithoutClaim).success).toBe(false);
 
     const slippageWithoutClaim = walletReviewContractFixture() as any;
     delete slippageWithoutClaim.slippageOrMinOut.policySource;
     delete slippageWithoutClaim.slippageOrMinOut.policyEvidenceClaimId;
     slippageWithoutClaim.slippageOrMinOut.status = "stale";
-    expect(walletReviewAdapterContractSchema.safeParse(slippageWithoutClaim).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(slippageWithoutClaim).success).toBe(false);
 
     const minOutWithoutRawQuantity = walletReviewContractFixture() as any;
     minOutWithoutRawQuantity.rawQuantities = minOutWithoutRawQuantity.rawQuantities.filter(
       (quantity: { role: string }) => quantity.role !== "minimum_output"
     );
-    expect(walletReviewAdapterContractSchema.safeParse(minOutWithoutRawQuantity).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(minOutWithoutRawQuantity).success).toBe(false);
   });
 
   it("requires all evidence claim ids to resolve to typed evidence claims", () => {
@@ -552,50 +552,50 @@ describe("signable adapter and PTB visualization contract", () => {
     for (const [, mutate] of cases) {
       const candidate = walletReviewContractFixture() as any;
       mutate(candidate);
-      expect(walletReviewAdapterContractSchema.safeParse(candidate).success).toBe(false);
+      expect(transactionReviewDataSchema.safeParse(candidate).success).toBe(false);
     }
   });
 
-  it("requires every evidence claim to resolve to sourceOfTruth", () => {
+  it("requires every evidence claim to resolve to sourceReferences", () => {
     const missingClaimSource = walletReviewContractFixture() as any;
     evidenceClaimById(missingClaimSource, "source_amount_claim").sourceEvidenceId = "missing_source";
 
-    expect(walletReviewAdapterContractSchema.safeParse(missingClaimSource).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(missingClaimSource).success).toBe(false);
   });
 
   it("requires source evidence kind and fields to match each safety-critical fact", () => {
     const rawAmountFromMetadata = walletReviewContractFixture() as any;
     evidenceClaimById(rawAmountFromMetadata, "source_amount_claim").sourceEvidenceId = "coin_metadata";
-    expect(walletReviewAdapterContractSchema.safeParse(rawAmountFromMetadata).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(rawAmountFromMetadata).success).toBe(false);
 
     const rawAmountMissingFields = walletReviewContractFixture() as any;
-    sourceOfTruthById(rawAmountMissingFields, "requested_source_amount").fields = ["asset", "amountRole"];
-    expect(walletReviewAdapterContractSchema.safeParse(rawAmountMissingFields).success).toBe(false);
+    sourceReferencesById(rawAmountMissingFields, "requested_source_amount").fields = ["asset", "amountRole"];
+    expect(transactionReviewDataSchema.safeParse(rawAmountMissingFields).success).toBe(false);
 
     const unitFromUserChoice = walletReviewContractFixture() as any;
     evidenceClaimById(unitFromUserChoice, "source_unit_claim").sourceEvidenceId = "requested_source_amount";
-    expect(walletReviewAdapterContractSchema.safeParse(unitFromUserChoice).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(unitFromUserChoice).success).toBe(false);
 
     const minOutFromMetadata = walletReviewContractFixture() as any;
     evidenceClaimById(minOutFromMetadata, "min_out_claim").sourceEvidenceId = "coin_metadata";
-    expect(walletReviewAdapterContractSchema.safeParse(minOutFromMetadata).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(minOutFromMetadata).success).toBe(false);
 
     const gasBudgetMissingFields = walletReviewContractFixture() as any;
-    sourceOfTruthById(gasBudgetMissingFields, "simulation").fields = [
+    sourceReferencesById(gasBudgetMissingFields, "simulation").fields = [
       ...WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS,
       "gasUsedRaw",
       "asset",
       "amountRole"
     ];
-    expect(walletReviewAdapterContractSchema.safeParse(gasBudgetMissingFields).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(gasBudgetMissingFields).success).toBe(false);
 
     const userPolicyFromQuoteEvidence = walletReviewContractFixture() as any;
     evidenceClaimById(userPolicyFromQuoteEvidence, "user_slippage_policy_claim").sourceEvidenceId = "quote_policy";
-    expect(walletReviewAdapterContractSchema.safeParse(userPolicyFromQuoteEvidence).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(userPolicyFromQuoteEvidence).success).toBe(false);
 
     const userPolicyMissingChoice = walletReviewContractFixture() as any;
-    sourceOfTruthById(userPolicyMissingChoice, "user_slippage_policy").fields = ["maxSlippageBps"];
-    expect(walletReviewAdapterContractSchema.safeParse(userPolicyMissingChoice).success).toBe(false);
+    sourceReferencesById(userPolicyMissingChoice, "user_slippage_policy").fields = ["maxSlippageBps"];
+    expect(transactionReviewDataSchema.safeParse(userPolicyMissingChoice).success).toBe(false);
 
     const adapterPolicyFromQuoteEvidence = walletReviewContractFixture() as any;
     adapterPolicyFromQuoteEvidence.slippageOrMinOut = {
@@ -605,7 +605,7 @@ describe("signable adapter and PTB visualization contract", () => {
     evidenceClaimById(adapterPolicyFromQuoteEvidence, "user_slippage_policy_claim").sourceEvidenceId = "quote_policy";
     evidenceClaimById(adapterPolicyFromQuoteEvidence, "user_slippage_policy_claim").policySource = "adapter_policy_from_quote_evidence";
     evidenceClaimById(adapterPolicyFromQuoteEvidence, "user_slippage_policy_claim").minOutRaw = "1000";
-    expect(walletReviewAdapterContractSchema.safeParse(adapterPolicyFromQuoteEvidence).success).toBe(true);
+    expect(transactionReviewDataSchema.safeParse(adapterPolicyFromQuoteEvidence).success).toBe(true);
   });
 
   it("rejects payload values that do not match their typed evidence claims", () => {
@@ -646,21 +646,21 @@ describe("signable adapter and PTB visualization contract", () => {
     for (const [, mutate] of cases) {
       const candidate = walletReviewContractFixture() as any;
       mutate(candidate);
-      expect(walletReviewAdapterContractSchema.safeParse(candidate).success).toBe(false);
+      expect(transactionReviewDataSchema.safeParse(candidate).success).toBe(false);
     }
   });
 
   it("requires gas quantities to pass the raw amount claim matrix", () => {
     const missingGasClaim = walletReviewContractFixture() as any;
     delete missingGasClaim.gas.gasBudgetClaimId;
-    expect(walletReviewAdapterContractSchema.safeParse(missingGasClaim).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(missingGasClaim).success).toBe(false);
 
     const wrongGasClaimRole = walletReviewContractFixture() as any;
     wrongGasClaimRole.gas.gasBudgetClaimId = "min_out_claim";
-    expect(walletReviewAdapterContractSchema.safeParse(wrongGasClaimRole).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(wrongGasClaimRole).success).toBe(false);
 
     const unresolved = walletReviewContractFixture() as any;
-    sourceOfTruthById(unresolved, "simulation").fields = [
+    sourceReferencesById(unresolved, "simulation").fields = [
       ...WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS,
       "checkedAt",
       "gasResolutionStatus",
@@ -683,35 +683,35 @@ describe("signable adapter and PTB visualization contract", () => {
       unresolvedReason: "Review-time simulation did not return gas quantities.",
       unresolvedClaimId: "gas_unresolved_claim"
     };
-    expect(walletReviewAdapterContractSchema.safeParse(unresolved).success).toBe(true);
+    expect(transactionReviewDataSchema.safeParse(unresolved).success).toBe(true);
   });
 
   it("requires gas consumer claims to use SUI gas assets and owned gas objects", () => {
     const wrongBudgetAsset = walletReviewContractFixture() as any;
     evidenceClaimById(wrongBudgetAsset, "gas_budget_claim").asset = { symbol: "USDC", coinType };
-    expect(walletReviewAdapterContractSchema.safeParse(wrongBudgetAsset).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(wrongBudgetAsset).success).toBe(false);
 
     const wrongUsedAsset = walletReviewContractFixture() as any;
     evidenceClaimById(wrongUsedAsset, "gas_used_claim").asset = { symbol: "USDC", coinType };
-    expect(walletReviewAdapterContractSchema.safeParse(wrongUsedAsset).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(wrongUsedAsset).success).toBe(false);
 
     const nonOwnedGasObject = walletReviewContractFixture() as any;
     evidenceClaimById(nonOwnedGasObject, "gas_ownership_claim").ownership = "not_owned_by_account";
-    expect(walletReviewAdapterContractSchema.safeParse(nonOwnedGasObject).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(nonOwnedGasObject).success).toBe(false);
   });
 
   it("requires status-specific expiry evidence and source fields", () => {
     const missingExpiresAt = walletReviewContractFixture() as any;
     delete missingExpiresAt.expiry.expiresAt;
-    expect(walletReviewAdapterContractSchema.safeParse(missingExpiresAt).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(missingExpiresAt).success).toBe(false);
 
     const missingClaim = walletReviewContractFixture() as any;
     delete missingClaim.expiry.evidenceClaimId;
-    expect(walletReviewAdapterContractSchema.safeParse(missingClaim).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(missingClaim).success).toBe(false);
 
     const currentAlreadyExpired = walletReviewContractFixture() as any;
     currentAlreadyExpired.expiry.expiresAt = now;
-    expect(walletReviewAdapterContractSchema.safeParse(currentAlreadyExpired).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(currentAlreadyExpired).success).toBe(false);
 
     const expiredInFuture = walletReviewContractFixture() as any;
     expiredInFuture.expiry = {
@@ -719,15 +719,15 @@ describe("signable adapter and PTB visualization contract", () => {
       status: "expired",
       expiresAt: "2026-05-25T00:10:00.000Z"
     };
-    expect(walletReviewAdapterContractSchema.safeParse(expiredInFuture).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(expiredInFuture).success).toBe(false);
 
     const sourceMissingRequiredField = walletReviewContractFixture() as any;
-    sourceOfTruthById(sourceMissingRequiredField, "proposal_freshness").fields = ["checkedAt"];
-    expect(walletReviewAdapterContractSchema.safeParse(sourceMissingRequiredField).success).toBe(false);
+    sourceReferencesById(sourceMissingRequiredField, "proposal_freshness").fields = ["checkedAt"];
+    expect(transactionReviewDataSchema.safeParse(sourceMissingRequiredField).success).toBe(false);
 
     for (const status of ["not_provided", "not_applicable"]) {
       const unavailableWithExpiresAt = walletReviewContractFixture() as any;
-      sourceOfTruthById(unavailableWithExpiresAt, "proposal_freshness").fields = ["checkedAt", "expiryStatus"];
+      sourceReferencesById(unavailableWithExpiresAt, "proposal_freshness").fields = ["checkedAt", "expiryStatus"];
       unavailableWithExpiresAt.expiry = {
         checkedAt: now,
         status,
@@ -737,10 +737,10 @@ describe("signable adapter and PTB visualization contract", () => {
       };
       evidenceClaimById(unavailableWithExpiresAt, "expiry_claim").status = status;
       evidenceClaimById(unavailableWithExpiresAt, "expiry_claim").reason = "Expiry timestamp evidence is unavailable for this reviewed request.";
-      expect(walletReviewAdapterContractSchema.safeParse(unavailableWithExpiresAt).success).toBe(false);
+      expect(transactionReviewDataSchema.safeParse(unavailableWithExpiresAt).success).toBe(false);
 
       const unavailableWithoutReason = walletReviewContractFixture() as any;
-      sourceOfTruthById(unavailableWithoutReason, "proposal_freshness").fields = ["checkedAt", "expiryStatus"];
+      sourceReferencesById(unavailableWithoutReason, "proposal_freshness").fields = ["checkedAt", "expiryStatus"];
       unavailableWithoutReason.expiry = {
         checkedAt: now,
         status,
@@ -748,10 +748,10 @@ describe("signable adapter and PTB visualization contract", () => {
       };
       evidenceClaimById(unavailableWithoutReason, "expiry_claim").status = status;
       delete evidenceClaimById(unavailableWithoutReason, "expiry_claim").expiresAt;
-      expect(walletReviewAdapterContractSchema.safeParse(unavailableWithoutReason).success).toBe(false);
+      expect(transactionReviewDataSchema.safeParse(unavailableWithoutReason).success).toBe(false);
 
       const unavailable = walletReviewContractFixture() as any;
-      sourceOfTruthById(unavailable, "proposal_freshness").fields = ["checkedAt", "expiryStatus"];
+      sourceReferencesById(unavailable, "proposal_freshness").fields = ["checkedAt", "expiryStatus"];
       unavailable.expiry = {
         checkedAt: now,
         status,
@@ -761,18 +761,18 @@ describe("signable adapter and PTB visualization contract", () => {
       evidenceClaimById(unavailable, "expiry_claim").status = status;
       evidenceClaimById(unavailable, "expiry_claim").reason = "Expiry timestamp evidence is unavailable for this reviewed request.";
       delete evidenceClaimById(unavailable, "expiry_claim").expiresAt;
-      expect(walletReviewAdapterContractSchema.safeParse(unavailable).success).toBe(true);
+      expect(transactionReviewDataSchema.safeParse(unavailable).success).toBe(true);
     }
   });
 
-  it("requires sourceOfTruth and evidence claim ids to be unique", () => {
+  it("requires sourceReferences and evidence claim ids to be unique", () => {
     const duplicateSource = walletReviewContractFixture() as any;
-    duplicateSource.sourceOfTruth[1].id = duplicateSource.sourceOfTruth[0].id;
-    expect(walletReviewAdapterContractSchema.safeParse(duplicateSource).success).toBe(false);
+    duplicateSource.sourceReferences[1].id = duplicateSource.sourceReferences[0].id;
+    expect(transactionReviewDataSchema.safeParse(duplicateSource).success).toBe(false);
 
     const duplicateClaim = walletReviewContractFixture() as any;
     duplicateClaim.evidenceClaims[1].id = duplicateClaim.evidenceClaims[0].id;
-    expect(walletReviewAdapterContractSchema.safeParse(duplicateClaim).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(duplicateClaim).success).toBe(false);
   });
 
   it("requires every prohibited output boundary to be present", () => {
@@ -781,7 +781,7 @@ describe("signable adapter and PTB visualization contract", () => {
       (value) => value !== "signing_readiness"
     );
 
-    expect(walletReviewAdapterContractSchema.safeParse(candidate).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(candidate).success).toBe(false);
   });
 
   it("requires failed or unavailable simulation evidence to explain why it blocks review", () => {
@@ -792,7 +792,7 @@ describe("signable adapter and PTB visualization contract", () => {
         status
       };
 
-      expect(walletReviewAdapterContractSchema.safeParse(candidate).success).toBe(false);
+      expect(transactionReviewDataSchema.safeParse(candidate).success).toBe(false);
     }
 
     const successWithReason = walletReviewContractFixture() as any;
@@ -801,11 +801,11 @@ describe("signable adapter and PTB visualization contract", () => {
       failureReason: "should not be present on a successful simulation"
     };
 
-    expect(walletReviewAdapterContractSchema.safeParse(successWithReason).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(successWithReason).success).toBe(false);
 
     const claimWithoutReason = walletReviewContractFixture() as any;
     evidenceClaimById(claimWithoutReason, "simulation_claim").status = "failed";
-    expect(walletReviewAdapterContractSchema.safeParse(claimWithoutReason).success).toBe(false);
+    expect(transactionReviewDataSchema.safeParse(claimWithoutReason).success).toBe(false);
   });
 
   it("defines PTB visualization as Mermaid diagnostics only, not executable material", () => {

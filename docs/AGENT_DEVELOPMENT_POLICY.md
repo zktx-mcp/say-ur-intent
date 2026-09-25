@@ -22,8 +22,9 @@ Target repository structure:
   custom-only product path.
 - `src/mcp/`: MCP server and tool definitions.
 - `src/review-server/`: local review HTTP server and session APIs.
-- `review-app/`: Connect, Review and Settings pages and shared display helpers.
-- `src/mcp-ui/`: internal read cards, their common lifecycle and view code.
+- `review-app/`: the Settings page and shared display helpers/styles.
+- `src/mcp-ui/`: internal Account, Receipt, Chart, Connect and Review cards, their
+  common lifecycle and view code.
 - `src/runtime/shared/`: authenticated server ownership and MCP forwarding.
 - `registry/`: local policy, allowlists, aliases, and generated mainnet metadata.
 - `protocols/`: AI-readable protocol notes.
@@ -137,7 +138,7 @@ Use this single responsibility schema when editing documentation:
 | `docs/MCP_SETUP.md` | Installation, MCP client connection, first-use flow, local settings, and troubleshooting. | Long API behavior rules, field contracts, response wording rules, or user-question playbooks. |
 | `docs/MCP_TOOLS.md` | MCP API reference for tool contracts, response fields, statuses, follow-up fields, and output boundaries. | Installation procedures or user-question playbooks. |
 | `docs/AGENT_BEHAVIOR.md` | Answer playbook for user-question flows, tool selection, and response wording. | Tool schemas, field contracts, response-field definitions, or install procedures. |
-| `docs/WALLET_IDENTITY.md` | Wallet identity boundary for active-account read context, same-machine capture, state transitions, and non-authorization limits. | Login, authentication, signing authorization, custody, transaction review, or setup ownership. |
+| `docs/WALLET_CONNECTION.md` | Approved wallet connections, active-account read context, private SDK persistence and the distinction between connection and per-transaction approval. | Login, authentication, custody, authority to approve a transaction, full review/API contracts or setup ownership. |
 | `docs/TRANSACTION_ACTIVITY_LOG.md` | Local transaction activity storage, scan, and summary boundaries. | Complete wallet history, P&L, route recommendations, transaction-building input, signing data, or signing readiness. |
 | `docs/UTILITY_INDEX.md` | Manual utility and source-checkout script boundaries, including the distinction between utilities, MCP tools, and packaged product commands. | Promotion of utility scripts as MCP tools, review-time simulation, packaged product commands, transaction builders, signing-readiness signals, or wallet authorization evidence. |
 | `docs/LOCAL_DB_ARCHITECTURE.md`, `docs/SDK_API.md`, and other architecture or evidence notes | Specific implementation boundaries, pinned source facts, storage facts, and source-verification notes. | Future support presented as current product functionality. |
@@ -201,7 +202,7 @@ Runtime-facing resources currently include:
 - `README.md`;
 - `docs/MCP_SETUP.md`;
 - `docs/MCP_TOOLS.md`;
-- `docs/WALLET_IDENTITY.md`;
+- `docs/WALLET_CONNECTION.md`;
 - `docs/AGENT_BEHAVIOR.md`;
 - `protocols/deepbook-v3.md`;
 - `protocols/deepbook-margin.md`.
@@ -499,8 +500,10 @@ other boundaries, define the equivalent negative combinations before editing.
   AI-client guidance exposed through MCP instructions, resources, prompts, and
   tests must require `read.get_server_status` before USD-denominated coverage,
   balance-total, or shortfall answers.
-- The MCP layer is a session gateway. It may create review sessions and return
-  review URLs, but it must not act as a transaction executor.
+- Ordinary MCP tools are evidence and card gateways. They may create review
+  sessions and return internal cards, but model calls must not authorize
+  signing or execution. Scoped app-only actions admit an exact user selection;
+  the backend performs wallet I/O and verifies each resulting signature.
 - The local settings control panel is a review-server frontend mutator. MCP may
   create a settings session URL and read current settings, but settings
   mutations must happen through the local settings page after Host/Origin checks
@@ -607,13 +610,15 @@ In-memory fixtures may model external dependencies in tests, but do not prove
 SQLite admission, rollback or restart guarantees. Frame recreation and chat
 navigation are not state transitions.
 
-Execution results must be keyed by `reviewSessionId`. Do not use ambiguous
-"latest result" semantics.
+Execution results belong to an exact `reviewSessionId` and `attemptId`. A
+review explicitly references its current attempt, and earlier attempts remain
+readable history. Do not use ambiguous global "latest result" semantics.
 
-Review URLs should use an unguessable session id plus a short-lived token in the
-URL fragment, for example `/review/:id#token`. The fragment token must not be
-logged and must be supplied explicitly by the browser to state-changing review
-APIs.
+Card permissions are short-lived, scoped to the card and target, and carried
+only in host UI metadata. Reads never create approval, pairing or a signature
+request. Frame recreation does not change DB state. Only the backend owns
+admission, request deadlines and chain observation. Settings page tokens remain
+in URL fragments and authenticated HTTP headers, never query strings or logs.
 
 ## Utility Script Rule
 
@@ -725,8 +730,8 @@ For API review work, block or fix the change when:
 - Bind the local review server to `127.0.0.1`.
 - Use a dynamic port unless a fixed port is explicitly required.
 - Implement Host and Origin checks in the review server itself.
-- Do not treat Host or Origin checks as authentication. State-changing review
-  APIs must also validate the review token.
+- Do not treat Host or Origin checks as authentication. Settings APIs must validate their session token; internal app actions
+  must validate their scoped UI permission and stored target/revision.
 - Do not use MCP SDK host validation helpers as a substitute for review server
   authentication.
 
@@ -788,6 +793,6 @@ only one in isolation:
   asks the user to choose a venue instead of routing silently.
 - Execution-trust foundation: what the user reviewed is exactly what gets
   signed, under any wallet and any signing speed — the review-session state
-  machine, the one-transaction-per-session handoff lock, sign-only wallets and
-  slow hardware signers, review-page security headers, runtime lifecycle
+  machine, atomic per-review-revision admission, verified sign-only wallet
+  responses, bounded local waits with late-callback guards, scoped UI permission, runtime lifecycle
   stability, and packaging and runtime operability.

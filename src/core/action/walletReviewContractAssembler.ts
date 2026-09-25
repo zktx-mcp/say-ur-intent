@@ -4,8 +4,8 @@ import {
   adapterOutputBoundarySchema,
   adapterSimulationEvidenceSchema,
   adapterSourceOfTruthSchema,
-  walletReviewAdapterContractSchema,
-  WALLET_REVIEW_ADAPTER_CONTRACT_VERSION,
+  transactionReviewDataSchema,
+  TRANSACTION_REVIEW_SCHEMA_VERSION,
   WALLET_REVIEW_REQUIRED_PROHIBITED_OUTPUTS,
   WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS,
   WALLET_REVIEW_REQUIRED_HUMAN_FIELDS,
@@ -76,7 +76,7 @@ export type WalletReviewContractAssemblyDecline = {
 
 export type WalletReviewContractEvidencePool = {
   status: "drafted";
-  sourceOfTruth: AdapterSourceOfTruth[];
+  sourceReferences: AdapterSourceOfTruth[];
   evidenceClaims: AdapterEvidenceClaim[];
   rawQuantities: AdapterRawQuantity[];
   objectOwnership: AdapterObjectOwnershipEvidence;
@@ -97,11 +97,11 @@ export function draftWalletReviewContractEvidencePool(input: {
     return { status: "declined", reason: `object ownership draft unsupported: ${ownership.reason}` };
   }
 
-  const sourceOfTruth = [...quote.sourceOfTruth, ownership.sourceOfTruth];
+  const sourceReferences = [...quote.sourceReferences, ownership.sourceReferences];
   const sourceIds = new Set<string>();
-  for (const record of sourceOfTruth) {
+  for (const record of sourceReferences) {
     if (sourceIds.has(record.id)) {
-      return { status: "declined", reason: `duplicate sourceOfTruth id: ${record.id}` };
+      return { status: "declined", reason: `duplicate sourceReferences id: ${record.id}` };
     }
     sourceIds.add(record.id);
   }
@@ -117,7 +117,7 @@ export function draftWalletReviewContractEvidencePool(input: {
 
   return {
     status: "drafted",
-    sourceOfTruth,
+    sourceReferences,
     evidenceClaims,
     rawQuantities: quote.rawQuantities,
     objectOwnership: ownership.objectOwnership,
@@ -129,7 +129,7 @@ export type WalletReviewSimulationEvidence = z.infer<typeof adapterSimulationEvi
 
 export type ReviewTimeSimulationContractMapping = {
   status: "mapped";
-  sourceOfTruth: AdapterSourceOfTruth;
+  sourceReferences: AdapterSourceOfTruth;
   evidenceClaim: Extract<AdapterEvidenceClaim, { factKind: "simulation_result" }>;
   simulation: WalletReviewSimulationEvidence;
 };
@@ -140,7 +140,7 @@ export function mapReviewTimeSimulationEvidenceToContractDraft(
   const evidence = parseReviewTimeSimulationEvidence(evidenceInput);
   const sourceId = "review_time_simulation_source";
   const claimId = "review_time_simulation_claim";
-  const sourceOfTruth = adapterSourceOfTruthSchema.parse({
+  const sourceReferences = adapterSourceOfTruthSchema.parse({
     id: sourceId,
     kind: "review_time_simulation",
     network: "sui:mainnet",
@@ -161,7 +161,7 @@ export function mapReviewTimeSimulationEvidenceToContractDraft(
   }) as Extract<AdapterEvidenceClaim, { factKind: "simulation_result" }>;
   const simulation = adapterSimulationEvidenceSchema.parse({
     evidenceClaimId: claimId,
-    boundToCommitment: evidence.transactionDigest,
+    transactionDigest: evidence.transactionDigest,
     provider: evidence.provider,
     checksEnabled: evidence.checksEnabled,
     simulatedAt: evidence.simulatedAt,
@@ -169,7 +169,7 @@ export function mapReviewTimeSimulationEvidenceToContractDraft(
     requiredFields: [...evidence.requiredFields],
     missingFields: [...evidence.missingFields]
   });
-  return { status: "mapped", sourceOfTruth, evidenceClaim, simulation };
+  return { status: "mapped", sourceReferences, evidenceClaim, simulation };
 }
 
 export type WalletReviewGasEvidence = z.infer<typeof adapterGasEvidenceSchema>;
@@ -177,7 +177,7 @@ export type WalletReviewGasEvidence = z.infer<typeof adapterGasEvidenceSchema>;
 export type ReviewTimeSimulationGasContractMapping =
   | {
       status: "mapped";
-      sourceOfTruth: AdapterSourceOfTruth[];
+      sourceReferences: AdapterSourceOfTruth[];
       evidenceClaims: Array<Extract<AdapterEvidenceClaim, { factKind: "raw_quantity_amount" }>>;
       gas: WalletReviewGasEvidence;
     }
@@ -200,13 +200,13 @@ export function mapReviewTimeSimulationGasToContractDraft(
     };
   }
 
-  const sourceOfTruth: AdapterSourceOfTruth[] = [];
+  const sourceReferences: AdapterSourceOfTruth[] = [];
   const evidenceClaims: Array<Extract<AdapterEvidenceClaim, { factKind: "raw_quantity_amount" }>> = [];
   const gasAsset = { coinType: SUI_GAS_COIN_TYPE };
 
   const gasUsedSourceId = "review_time_simulation_gas_used_source";
   const gasUsedClaimId = "review_time_simulation_gas_used_claim";
-  sourceOfTruth.push(adapterSourceOfTruthSchema.parse({
+  sourceReferences.push(adapterSourceOfTruthSchema.parse({
     id: gasUsedSourceId,
     kind: "review_time_simulation",
     network: "sui:mainnet",
@@ -228,7 +228,7 @@ export function mapReviewTimeSimulationGasToContractDraft(
   if (gasBudgetRaw !== undefined) {
     const gasBudgetSourceId = "review_time_simulation_gas_budget_source";
     gasBudgetClaimId = "review_time_simulation_gas_budget_claim";
-    sourceOfTruth.push(adapterSourceOfTruthSchema.parse({
+    sourceReferences.push(adapterSourceOfTruthSchema.parse({
       id: gasBudgetSourceId,
       kind: "review_time_simulation",
       network: "sui:mainnet",
@@ -257,14 +257,14 @@ export function mapReviewTimeSimulationGasToContractDraft(
     ...(gasObjects.length > 0 ? { gasObjects } : {})
   });
 
-  return { status: "mapped", sourceOfTruth, evidenceClaims, gas };
+  return { status: "mapped", sourceReferences, evidenceClaims, gas };
 }
 
 export type WalletReviewExpiryEvidence = z.infer<typeof adapterExpiryEvidenceSchema>;
 
 export type SwapQuotePolicyExpiryContractMapping = {
   status: "mapped";
-  sourceOfTruth: AdapterSourceOfTruth;
+  sourceReferences: AdapterSourceOfTruth;
   evidenceClaim: Extract<AdapterEvidenceClaim, { factKind: "expiry_status" }>;
   expiry: WalletReviewExpiryEvidence;
 };
@@ -278,7 +278,7 @@ export function mapSwapQuotePolicyExpiryToContractDraft(
   const status = Date.parse(evidence.expiresAt) > now.getTime() ? "current" : "expired";
   const sourceId = "swap_quote_policy_expiry_source";
   const claimId = "swap_quote_policy_expiry_claim";
-  const sourceOfTruth = adapterSourceOfTruthSchema.parse({
+  const sourceReferences = adapterSourceOfTruthSchema.parse({
     id: sourceId,
     kind: "validated_request_fact",
     network: "sui:mainnet",
@@ -300,7 +300,7 @@ export function mapSwapQuotePolicyExpiryToContractDraft(
     expiresAt: evidence.expiresAt,
     evidenceClaimId: claimId
   });
-  return { status: "mapped", sourceOfTruth, evidenceClaim, expiry };
+  return { status: "mapped", sourceReferences, evidenceClaim, expiry };
 }
 
 export type WalletReviewHumanReadableReview = z.infer<typeof adapterHumanReadableReviewSchema>;
@@ -311,14 +311,14 @@ export function mapHumanReadableReviewEvidenceToContractDraft(
   const evidence = parseHumanReadableReviewEvidence(evidenceInput);
   const humanReadableReview = adapterHumanReadableReviewSchema.parse({
     fields: [...WALLET_REVIEW_REQUIRED_HUMAN_FIELDS],
-    boundToCommitment: evidence.boundToCommitment,
+    transactionDigest: evidence.transactionDigest,
     source: "review_model_or_adapter_equivalent",
     purpose: "human_review_before_wallet_authorization"
   });
   return { status: "mapped", humanReadableReview };
 }
 
-export type WalletReviewAdapterContract = z.infer<typeof walletReviewAdapterContractSchema>;
+export type TransactionReviewData = z.infer<typeof transactionReviewDataSchema>;
 
 export type WalletReviewContractAssemblyInput = {
   adapterId: string;
@@ -329,15 +329,15 @@ export type WalletReviewContractAssemblyInput = {
   objectOwnership: TransactionObjectOwnershipEvidence;
   humanReadableReview: HumanReadableReviewEvidence;
   reviewTimeSimulation: ReviewTimeSimulationEvidence;
-  transactionMaterialCommitment: string;
+  reviewedTransactionDigest: string;
   now: Date;
 };
 
 export type WalletReviewContractAssemblyOutcome =
-  | { status: "emitted"; contract: WalletReviewAdapterContract }
+  | { status: "emitted"; contract: TransactionReviewData }
   | WalletReviewContractAssemblyDecline;
 
-export function assembleWalletReviewAdapterContract(
+export function assembleTransactionReviewData(
   input: WalletReviewContractAssemblyInput
 ): WalletReviewContractAssemblyOutcome {
   const pool = draftWalletReviewContractEvidencePool({
@@ -359,16 +359,16 @@ export function assembleWalletReviewAdapterContract(
   const expiry = mapSwapQuotePolicyExpiryToContractDraft(input.quotePolicy, input.now);
   const human = mapHumanReadableReviewEvidenceToContractDraft(input.humanReadableReview);
 
-  const sourceOfTruth = [
-    ...pool.sourceOfTruth,
-    simulation.sourceOfTruth,
-    ...gas.sourceOfTruth,
-    expiry.sourceOfTruth
+  const sourceReferences = [
+    ...pool.sourceReferences,
+    simulation.sourceReferences,
+    ...gas.sourceReferences,
+    expiry.sourceReferences
   ];
   const sourceIds = new Set<string>();
-  for (const record of sourceOfTruth) {
+  for (const record of sourceReferences) {
     if (sourceIds.has(record.id)) {
-      return { status: "declined", reason: `duplicate sourceOfTruth id: ${record.id}` };
+      return { status: "declined", reason: `duplicate sourceReferences id: ${record.id}` };
     }
     sourceIds.add(record.id);
   }
@@ -389,13 +389,13 @@ export function assembleWalletReviewAdapterContract(
 
   const quote = parseSwapQuotePolicyEvidence(input.quotePolicy);
   const candidate = {
-    contractVersion: WALLET_REVIEW_ADAPTER_CONTRACT_VERSION,
+    schemaVersion: TRANSACTION_REVIEW_SCHEMA_VERSION,
     adapterId: input.adapterId,
     protocol: input.protocol,
     actionKind: input.actionKind,
     network: "sui:mainnet",
     inputProvenance: buildWalletReviewInputProvenance(input.provenance),
-    sourceOfTruth,
+    sourceReferences,
     evidenceClaims,
     rawQuantities: pool.rawQuantities,
     gas: gas.gas,
@@ -413,10 +413,10 @@ export function assembleWalletReviewAdapterContract(
     simulation: simulation.simulation,
     humanReadableReview: human.humanReadableReview,
     outputBoundary: buildWalletReviewOutputBoundary(),
-    transactionMaterialCommitment: input.transactionMaterialCommitment
+    reviewedTransactionDigest: input.reviewedTransactionDigest
   };
 
-  const parsed = walletReviewAdapterContractSchema.safeParse(candidate);
+  const parsed = transactionReviewDataSchema.safeParse(candidate);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const path = issue?.path.join(".") ?? "";

@@ -25,8 +25,8 @@ export const MCP_PROMPTS = [
     text: [
       "Prepare a reviewable Sui action only through Say Ur Intent's review-session flow.",
       "Use action.prepare_external_proposal_review when the input is a structured external payment or Sui action proposal.",
-      "External proposals get read-only local review and never become signing material. Use action.prepare_sui_action_review for a natural-language swap intent; after a wallet account is connected, account-bound review can reach ready_for_wallet_review, where the local review page offers digest-gated, user-controlled wallet signing.",
-      "Show the reviewUrl and summarize the review checks. This MCP response never contains signing data, transaction bytes, or signing readiness; wallet signing happens on the local review page, and chain receipts are server-read execution facts after the signed digest is reported."
+      "External proposals get read-only local review and never become signing material. Use action.prepare_sui_action_review for a natural-language swap intent; after a wallet account is connected, account-bound review can reach ready_for_wallet_review, where an explicit Review card action can request approval in the user’s wallet through the backend.",
+      "Present the internal Review card and summarize the returned review checks. This MCP response never contains signing data, transaction bytes, or signing readiness; only an explicit UI action and wallet approval authorize the backend request; request status is separate from server-verified chain execution facts."
     ].join("\n")
   }
 ] as const;
@@ -35,8 +35,8 @@ export const MCP_PROMPTS = [
 // Adapters contribute copy about their own action only; they cannot weaken
 // or omit these lines.
 const PLATFORM_PROMPT_BOUNDARY_LINES = [
-  "Show the reviewUrl and summarize the review checks.",
-  "This MCP response never contains signing data, transaction bytes, or signing readiness; wallet signing happens on the local review page, and chain receipts are server-read execution facts after the signed digest is reported."
+  "Present the internal Review card and summarize the returned review checks.",
+  "This MCP response never contains signing data, transaction bytes, or signing readiness; only an explicit UI action and wallet approval authorize the backend request; request status is separate from server-verified chain execution facts."
 ];
 
 function surfacePromptText(surface: AdapterPromptSurface, intent: string): string {

@@ -20,7 +20,6 @@ import {
 } from "../src/adapters/deepbook/deepbookReviewLifecycle.js";
 import { validateSupportedAdapterLifecycle } from "../src/adapters/adapterLifecycleValidators.js";
 import type { ActionPlan, ReviewState } from "../src/core/action/types.js";
-import type { EventLogRecord } from "../src/core/eventlog/sink.js";
 import {
   InMemorySessionStore,
   LocalSessionStore,
@@ -36,21 +35,14 @@ import {
 import {
   SqlitePrivateReviewArtifactStore,
   SqliteSessionRecordStore,
-  createSqliteWalletIdentityRecordStore,
   createSqliteSettingsRecordStore
 } from "../src/core/session/sqliteSessionStore.js";
 import type { SessionRecordStore } from "../src/core/session/sessionRecordStore.js";
 import type { PrivateReviewArtifactStore } from "../src/core/session/privateReviewArtifacts.js";
 import type { KeyedRecordStore } from "../src/core/session/keyedRecordStore.js";
-import type { WalletIdentitySession } from "../src/core/session/walletIdentity.js";
 import type { SettingsSession } from "../src/core/session/settingsSession.js";
 import { InMemoryActivityStore } from "./fixtures/inMemoryActivityStore.js";
 import { deepbookDisplayQuote } from "./fixtures/deepbookQuote.js";
-import {
-  chainReceiptDigest,
-  chainReceiptFixture,
-  otherChainReceiptDigest
-} from "./fixtures/chainReceipt.js";
 import { createTestSwapHumanReadableReviewEvidence } from "./fixtures/humanReadableReview.js";
 import { recordTestTransactionMaterial } from "./fixtures/transactionMaterial.js";
 import { createSuccessfulReviewTimeSimulationClient } from "./fixtures/reviewTimeSimulation.js";
@@ -75,10 +67,10 @@ const suiCoinObjectType = "0x2::coin::Coin<0x2::sui::SUI>";
 const nonCoinObjectType = "0x2::object::UID";
 const sharedObjectType = "0x2::clock::Clock";
 const testLogger = { error() {} };
+const activities = new WeakMap<LocalSessionStore, InMemorySessionStoreOptions["activityStore"]>();
 type SessionRecordStores = {
   sessions: SessionRecordStore;
   artifacts: PrivateReviewArtifactStore;
-  walletIdentityStore: KeyedRecordStore<WalletIdentitySession>;
   settingsStore: KeyedRecordStore<SettingsSession>;
 };
 
@@ -96,7 +88,6 @@ const SESSION_STORE_BACKENDS: Array<[string, () => SessionRecordStores | undefin
       return {
         sessions: new SqliteSessionRecordStore(db),
         artifacts: new SqlitePrivateReviewArtifactStore(db),
-        walletIdentityStore: createSqliteWalletIdentityRecordStore(db),
         settingsStore: createSqliteSettingsRecordStore(db)
       };
     }
@@ -120,24 +111,16 @@ async function openAndConnectReview(
   account = walletAccount,
   now = new Date()
 ) {
-  await connectWalletIdentity(store, account, now);
-  await store.recordReviewPageOpened(sessionId, now);
+  await setReadAccountFixture(store, account, now);
   return store.recordWalletConnected(sessionId, account, now);
 }
 
-async function connectWalletIdentity(
+async function setReadAccountFixture(
   store: LocalSessionStore,
   account = walletAccount,
   now = new Date()
 ) {
-  const { session } = await store.createWalletIdentitySession(now);
-  await store.recordWalletIdentityOpened(session.id, now);
-  await store.recordWalletIdentityConnecting(session.id, now);
-  return store.recordWalletIdentityResult(
-    session.id,
-    { status: "connected", account, chain: "sui:mainnet", walletName: "Test Wallet" },
-    now
-  );
+  return activities.get(store)!.setActiveAccount(account, "wallet_connection", now);
 }
 
 async function recordReadyReviewStateWithPrivateMaterial(input: {
@@ -319,15 +302,16 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       validateAdapterLifecycle: options.validateAdapterLifecycle ?? validateSupportedAdapterLifecycle
     };
     const recordStores = makeRecordStores();
-    return recordStores
+    const store = recordStores
       ? new LocalSessionStore({
           ...base,
           sessions: recordStores.sessions,
           artifacts: recordStores.artifacts,
-          walletIdentityStore: recordStores.walletIdentityStore,
           settingsStore: recordStores.settingsStore
         })
       : new InMemorySessionStore(base);
+    activities.set(store, base.activityStore);
+    return store;
   }
 
   it("creates sessions with token validation", async () => {
@@ -346,52 +330,27 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     const { session } = await store.createReviewSession([plan], new Date(0));
 
     await expect(store.validateReviewToken(session.id, "wrong", new Date(5))).resolves.toBe(false);
-    await expect(store.getReviewSession(session.id, new Date(0))).resolves.toMatchObject({
+    await expect(store.getReviewSession(session.id, () => new Date(0))).resolves.toMatchObject({
       status: "proposed"
     });
 
-    const { session: walletSession } = await store.createWalletIdentitySession(new Date(0));
-    await expect(store.validateWalletIdentityToken(walletSession.id, "wrong", new Date(5))).resolves.toBe(false);
-    await expect(store.getWalletIdentitySession(walletSession.id, new Date(0))).resolves.toMatchObject({
-      status: "pending"
-    });
+
   });
 
-  it("records review page opening before wallet connection", async () => {
+  it("binds the account directly from proposed when the read account is already persisted", async () => {
+    // The read-account context is a fixture; this does not prove wallet approval.
     const store = createSessionStore();
     const { session } = await store.createReviewSession([plan], new Date(0));
-
-    const opened = await store.recordReviewPageOpened(session.id, new Date(1));
-    expect(opened.status).toBe("awaiting_wallet");
-    expect(opened.lastActivityAt).toBe(new Date(1).toISOString());
-
-    const reopened = await store.recordReviewPageOpened(session.id, new Date(2));
-    expect(reopened.status).toBe("awaiting_wallet");
-    expect(reopened.lastActivityAt).toBe(new Date(2).toISOString());
-
-    await connectWalletIdentity(store, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new Date(3));
-    const connected = await store.recordWalletConnected(session.id, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new Date(3));
-    expect(connected.status).toBe("wallet_connected");
-    expect(connected.lastActivityAt).toBe(new Date(3).toISOString());
-  });
-
-  it("binds the account directly from proposed when wallet identity is already persisted", async () => {
-    // Persisted wallet identity lets the review page skip the wallet prompt, so
-    // the session is still "proposed" (never recordReviewPageOpened) when it
-    // binds the account. This must succeed instead of failing closed.
-    const store = createSessionStore();
-    const { session } = await store.createReviewSession([plan], new Date(0));
-    await connectWalletIdentity(store, walletAccount, new Date(1));
+    await setReadAccountFixture(store, walletAccount, new Date(1));
 
     const connected = await store.recordWalletConnected(session.id, walletAccount, new Date(2));
     expect(connected.status).toBe("wallet_connected");
     expect(connected.account).toBe(walletAccount);
   });
 
-  it("requires active wallet identity before review account binding", async () => {
+  it("requires an active read account before review account binding", async () => {
     const store = createSessionStore();
     const { session } = await store.createReviewSession([plan], new Date(0));
-    await store.recordReviewPageOpened(session.id, new Date(1));
 
     await expect(
       store.recordWalletConnected(session.id, walletAccount, new Date(2))
@@ -402,8 +361,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     const activityStore = new InMemoryActivityStore();
     const store = createSessionStore({ activityStore });
     const { session } = await store.createReviewSession([plan], new Date(0));
-    await store.recordReviewPageOpened(session.id, new Date(1));
-    await connectWalletIdentity(store, walletAccount, new Date(2));
+    await setReadAccountFixture(store, walletAccount, new Date(2));
     const recordReviewTransition = vi
       .spyOn(activityStore, "recordReviewTransition")
       .mockRejectedValueOnce(new Error("review transition store unavailable"));
@@ -411,8 +369,8 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     await expect(
       store.recordWalletConnected(session.id, walletAccount, new Date(3))
     ).rejects.toThrow("review transition store unavailable");
-    await expect(store.getReviewSession(session.id, new Date(3))).resolves.toMatchObject({
-      status: "awaiting_wallet"
+    await expect(store.getReviewSession(session.id, () => new Date(3))).resolves.toMatchObject({
+      status: "proposed"
     });
 
     await expect(
@@ -426,238 +384,28 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     recordReviewTransition.mockRestore();
   });
 
-  it("records wallet identity lifecycle and requires terminal reasons", async () => {
-    const store = createSessionStore();
-    const { session, token } = await store.createWalletIdentitySession(new Date(0));
-
-    expect(session.status).toBe("pending");
-    expect(session.lastActivityAt).toBe(new Date(0).toISOString());
-    await expect(store.validateWalletIdentityToken(session.id, token, new Date(1))).resolves.toBe(true);
-
-    const opened = await store.recordWalletIdentityOpened(session.id, new Date(2));
-    expect(opened.status).toBe("opened");
-    expect(opened.lastActivityAt).toBe(new Date(2).toISOString());
-
-    const connecting = await store.recordWalletIdentityConnecting(session.id, new Date(3));
-    expect(connecting.status).toBe("connecting");
-
-    await expect(
-      store.recordWalletIdentityResult(
-        session.id,
-        { status: "failed", failureReason: "user_rejected" } as never,
-        new Date(4)
-      )
-    ).rejects.toMatchObject({ code: "input_invalid" } satisfies Partial<SessionStoreError>);
-
-    const connected = await store.recordWalletIdentityResult(
-      session.id,
-      { status: "connected", account: walletAccount.toUpperCase(), chain: "sui:mainnet", walletName: "Test Wallet" },
-      new Date(5)
-    );
-    expect(connected).toMatchObject({
-      status: "connected",
-      account: walletAccount,
-      chain: "sui:mainnet",
-      walletName: "Test Wallet",
-      lastActivityAt: new Date(5).toISOString()
-    });
-    await expect(
-      store.recordWalletIdentityConnecting(session.id, new Date(6))
-    ).rejects.toMatchObject({ code: "invalid_session_transition" } satisfies Partial<SessionStoreError>);
-  });
-
-  it("keeps wallet identity session mutable when active account persistence fails", async () => {
-    const activityStore = new InMemoryActivityStore();
-    const setActiveAccount = vi
-      .spyOn(activityStore, "setActiveAccount")
-      .mockRejectedValueOnce(new Error("active account store unavailable"));
-    const store = createSessionStore({ activityStore });
-    const { session } = await store.createWalletIdentitySession(new Date(0));
-    await store.recordWalletIdentityOpened(session.id, new Date(1));
-    await store.recordWalletIdentityConnecting(session.id, new Date(2));
-
-    await expect(
-      store.recordWalletIdentityResult(
-        session.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date(3)
-      )
-    ).rejects.toThrow("active account store unavailable");
-    await expect(store.getWalletIdentitySession(session.id, new Date(3))).resolves.toMatchObject({
-      status: "connecting"
-    });
-    await expect(activityStore.getActiveAccount()).resolves.toBeUndefined();
-
-    await expect(
-      store.recordWalletIdentityResult(
-        session.id,
-        { status: "connected", account: walletAccount, chain: "sui:mainnet" },
-        new Date(4)
-      )
-    ).resolves.toMatchObject({
-      status: "connected",
-      account: walletAccount,
-      lastActivityAt: new Date(4).toISOString()
-    });
-    await expect(activityStore.getActiveAccount()).resolves.toMatchObject({
-      address: walletAccount,
-      setAt: new Date(4).toISOString()
-    });
-
-    setActiveAccount.mockRestore();
-  });
-
-  it("rejects wallet identity connection progress before the wallet page is opened", async () => {
-    const store = createSessionStore();
-    const { session } = await store.createWalletIdentitySession(new Date(0));
-
-    await expect(
-      store.recordWalletIdentityConnecting(session.id, new Date(1))
-    ).rejects.toMatchObject({ code: "invalid_session_transition" } satisfies Partial<SessionStoreError>);
-  });
-
-  it("rejects malformed wallet identity account addresses", async () => {
-    const store = createSessionStore();
-    const { session } = await store.createWalletIdentitySession(new Date(0));
-    await store.recordWalletIdentityOpened(session.id, new Date(1));
-    await store.recordWalletIdentityConnecting(session.id, new Date(2));
-
-    await expect(
-      store.recordWalletIdentityResult(
-        session.id,
-        { status: "connected", account: "not-an-address", chain: "sui:mainnet" },
-        new Date(3)
-      )
-    ).rejects.toMatchObject({ code: "input_invalid" } satisfies Partial<SessionStoreError>);
-  });
-
   it("rejects malformed review wallet addresses before recording review state", async () => {
     const store = createSessionStore();
     const { session } = await store.createReviewSession([plan], new Date(0));
-    await store.recordReviewPageOpened(session.id, new Date(1));
 
     await expect(
       store.recordWalletConnected(session.id, "not-an-address", new Date(2))
     ).rejects.toMatchObject({ code: "input_invalid" } satisfies Partial<SessionStoreError>);
   });
 
-  it("expires non-terminal wallet identity sessions without mutating terminal sessions", async () => {
-    const events: EventLogRecord[] = [];
-    const store = createSessionStore({
-      ttlMs: 1,
-      eventLog: { append: async (record) => { events.push(record); } }
-    });
-    const { session } = await store.createWalletIdentitySession(new Date(0));
-
-    const expired = await store.getWalletIdentitySession(session.id, new Date(2));
-    expect(expired?.status).toBe("expired");
-    expect(expired?.lastActivityAt).toBe(new Date(0).toISOString());
-    expect(events.map((event) => event.type)).toContain("wallet_identity.expired");
-
-    const finalStore = createSessionStore({ ttlMs: 1 });
-    const { session: finalSession } = await finalStore.createWalletIdentitySession(new Date(0));
-    await finalStore.recordWalletIdentityOpened(finalSession.id, new Date(0));
-    await finalStore.recordWalletIdentityConnecting(finalSession.id, new Date(0));
-    await finalStore.recordWalletIdentityResult(
-      finalSession.id,
-      { status: "rejected", failureReason: "user_rejected" },
-      new Date(0)
-    );
-    const finalRead = await finalStore.getWalletIdentitySession(finalSession.id, new Date(2));
-    expect(finalRead?.status).toBe("rejected");
-  });
-
-  it("lists review and wallet identity sessions through lazy expiry", async () => {
+  it("lists review sessions through lazy expiry", async () => {
     const store = createSessionStore({ ttlMs: 1 });
     const { session: reviewSession } = await store.createReviewSession([plan], new Date(0));
-    const { session: walletSession } = await store.createWalletIdentitySession(new Date(0));
 
-    await expect(store.listReviewSessions(new Date(2))).resolves.toEqual([
+    await expect(store.listReviewSessions(() => new Date(2))).resolves.toEqual([
       expect.objectContaining({
         id: reviewSession.id,
         status: "expired"
       })
     ]);
-    await expect(store.listWalletIdentitySessions(new Date(2))).resolves.toEqual([
-      expect.objectContaining({
-        id: walletSession.id,
-        status: "expired"
-      })
-    ]);
 
     const emptyStore = createSessionStore();
-    await expect(emptyStore.listReviewSessions(new Date(0))).resolves.toEqual([]);
-    await expect(emptyStore.listWalletIdentitySessions(new Date(0))).resolves.toEqual([]);
-  });
-
-  it("records wallet identity expiry before rejecting mutable wallet identity operations", async () => {
-    const events: EventLogRecord[] = [];
-    const store = createSessionStore({
-      ttlMs: 1,
-      eventLog: { append: async (record) => { events.push(record); } }
-    });
-    const { session } = await store.createWalletIdentitySession(new Date(0));
-    await store.recordWalletIdentityOpened(session.id, new Date(0));
-
-    await expect(
-      store.recordWalletIdentityConnecting(session.id, new Date(2))
-    ).rejects.toMatchObject({ code: "session_expired" } satisfies Partial<SessionStoreError>);
-
-    const expired = await store.getWalletIdentitySession(session.id, new Date(2));
-    expect(expired?.status).toBe("expired");
-    expect(events.map((event) => event.type)).toContain("wallet_identity.expired");
-  });
-
-  it("keeps review opened reads non-mutating for final and expired sessions", async () => {
-    const store = createSessionStore({ ttlMs: 1 });
-    const { session } = await store.createReviewSession([plan], new Date(0));
-
-    const expired = await store.recordReviewPageOpened(session.id, new Date(2));
-    expect(expired.status).toBe("expired");
-    expect(expired.lastActivityAt).toBe(new Date(0).toISOString());
-
-    const finalStore = createSessionStore();
-    const { session: finalSession } = await finalStore.createReviewSession([plan], new Date(0));
-    await openAndConnectReview(finalStore, finalSession.id, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new Date(1));
-    await finalStore.recordReviewState(
-      finalSession.id,
-      {
-        planId: plan.id,
-        reviewSessionId: finalSession.id,
-        account: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        status: "ready_for_wallet_review",
-        checks: [],
-        updatedAt: new Date(2).toISOString()
-      },
-      new Date(2)
-    );
-    await finalStore.recordExecutionResult(
-      finalSession.id,
-      {
-        reviewSessionId: finalSession.id,
-        planId: plan.id,
-        status: "signed_pending_result",
-        txDigest: chainReceiptDigest,
-        recordedAt: new Date(3).toISOString()
-      },
-      new Date(3)
-    );
-    await finalStore.recordChainExecutionResult(
-      finalSession.id,
-      {
-        reviewSessionId: finalSession.id,
-        planId: plan.id,
-        status: "success",
-        txDigest: chainReceiptDigest,
-        chainReceipt: chainReceiptFixture(),
-        recordedAt: new Date(4).toISOString()
-      },
-      new Date(4)
-    );
-
-    const reopenedFinal = await finalStore.recordReviewPageOpened(finalSession.id, new Date(5));
-    expect(reopenedFinal.status).toBe("success");
-    expect(reopenedFinal.lastActivityAt).toBe(new Date(4).toISOString());
+    await expect(emptyStore.listReviewSessions(() => new Date(0))).resolves.toEqual([]);
   });
 
   it("rejects unsupported multi-plan review sessions", async () => {
@@ -670,21 +418,6 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
   it("enforces state transitions", async () => {
     const store = createSessionStore();
     const { session } = await store.createReviewSession([plan], new Date(0));
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "success",
-          txDigest: chainReceiptDigest,
-          chainReceipt: chainReceiptFixture(),
-          recordedAt: new Date(2).toISOString()
-        },
-        new Date(2)
-      )
-    ).rejects.toMatchObject({ code: "input_invalid" } satisfies Partial<SessionStoreError>);
-
     await openAndConnectReview(store, session.id, walletAccount, new Date(2));
     const reviewState: ReviewState = {
       planId: plan.id,
@@ -785,7 +518,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     );
 
     expect(JSON.stringify(updated)).not.toContain(materialHandle.materialId);
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toMatchObject({
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toMatchObject({
       transactionMaterial: { materialId: materialHandle.materialId },
       transactionMaterialDigest: {
         materialId: materialHandle.materialId,
@@ -813,7 +546,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
 
     await store.recordReviewState(session.id, reviewState, new Date("2026-06-06T00:00:05.000Z"));
 
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:06.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:06.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:01:00.000Z"))).toBeUndefined();
   });
 
@@ -862,7 +595,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     );
 
     expect(JSON.stringify(updated)).not.toContain(materialHandle.materialId);
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toMatchObject({
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toMatchObject({
       transactionMaterial: { materialId: materialHandle.materialId },
       transactionMaterialDigest: { materialId: materialHandle.materialId },
       swapQuotePolicy: {
@@ -930,7 +663,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
         stateRecordedAt
       )
     ).rejects.toMatchObject({ code: "session_mismatch" });
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
   });
 
@@ -981,7 +714,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
         stateRecordedAt
       )
     ).rejects.toMatchObject({ code: "session_mismatch" });
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:01:00.000Z"))).toBeUndefined();
   });
 
@@ -1033,7 +766,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
         stateRecordedAt
       )
     ).rejects.toMatchObject({ code: "session_mismatch" });
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:01:00.000Z"))).toBeUndefined();
   });
 
@@ -1106,11 +839,10 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       proposedAction: { adapterId: "deepbook-swap" },
       missingEvidence: [expect.objectContaining({ id: "review_time_simulation" })]
     });
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toMatchObject({
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toMatchObject({
       humanReadableReview: {
         materialId: materialHandle.materialId,
-        transactionDigest: digest.transactionDigest,
-        boundToCommitment: digest.transactionDigest
+        transactionDigest: digest.transactionDigest
       }
     });
   });
@@ -1191,7 +923,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     expect(JSON.stringify(updated)).not.toContain(materialHandle.materialId);
     expect(JSON.stringify(updated)).not.toContain(digest.transactionDigest);
     expect(JSON.stringify(updated)).not.toContain("transactionBytes");
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:05.000Z"))).toMatchObject({
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:05.000Z"))).toMatchObject({
       reviewTimeSimulation: {
         materialId: materialHandle.materialId,
         transactionDigest: digest.transactionDigest,
@@ -1280,7 +1012,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
         stateRecordedAt
       )
     ).rejects.toMatchObject({ code: "session_mismatch" });
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:05.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:05.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:00:05.000Z"))).toBeUndefined();
   });
 
@@ -1354,7 +1086,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
         stateRecordedAt
       )
     ).rejects.toMatchObject({ code: "session_mismatch" });
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:01:00.000Z"))).toBeUndefined();
   });
 
@@ -1420,7 +1152,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       stateRecordedAt
     );
 
-    const staleSession = await store.getReviewSession(session.id, new Date("2026-06-06T00:00:31.000Z"));
+    const staleSession = await store.getReviewSession(session.id, () => new Date("2026-06-06T00:00:31.000Z"));
 
     expect(staleSession).toMatchObject({
       status: "refresh_required",
@@ -1431,7 +1163,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       }
     });
     expect(staleSession?.reviewState?.humanReadableReview).toBeUndefined();
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:31.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:31.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:00:31.000Z"))).toBeUndefined();
   });
 
@@ -1510,7 +1242,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
         stateRecordedAt
       )
     ).rejects.toMatchObject({ code: "session_mismatch" });
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:01:00.000Z"))).toBeUndefined();
   });
 
@@ -1629,14 +1361,13 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
           transactionObjectOwnership,
           humanReadableReview: {
             ...humanReadableReview,
-            transactionDigest: "1".repeat(32),
-            boundToCommitment: "1".repeat(32)
+            transactionDigest: "1".repeat(32)
           }
         },
         stateRecordedAt
       )
     ).rejects.toMatchObject({ code: "session_mismatch" });
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
   });
 
@@ -1673,149 +1404,9 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       new Date("2026-06-06T00:00:03.000Z")
     );
 
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:09.000Z"))).toBeDefined();
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:10.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:09.000Z"))).toBeDefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:10.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:00:11.000Z"))).toBeUndefined();
-  });
-
-  it("clears private transaction material when execution enters signed pending result", async () => {
-    const materialStore = new InMemoryLocalTransactionMaterialStore();
-    const store = createSessionStore({ transactionMaterialStore: materialStore });
-    const { session } = await store.createReviewSession([plan], new Date("2026-06-06T00:00:00.000Z"));
-    await openAndConnectReview(store, session.id, walletAccount, new Date("2026-06-06T00:00:01.000Z"));
-    const { materialHandle } = await recordReadyReviewStateWithPrivateMaterial({
-      store,
-      materialStore,
-      sessionId: session.id
-    });
-
-    expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:00:04.000Z"))).toBeDefined();
-
-    const updated = await store.recordExecutionResult(
-      session.id,
-      {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "signed_pending_result",
-        txDigest: "digest",
-        recordedAt: "2026-06-06T00:00:04.000Z"
-      },
-      new Date("2026-06-06T00:00:04.000Z")
-    );
-
-    expect(updated.executionResult).toMatchObject({ status: "signed_pending_result", txDigest: "digest" });
-    expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:00:05.000Z"))).toBeUndefined();
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:05.000Z"))).toBeUndefined();
-  });
-
-  it("clears legacy stale private material on duplicate signed pending results", async () => {
-    const materialStore = new InMemoryLocalTransactionMaterialStore();
-    const store = createSessionStore({ transactionMaterialStore: materialStore });
-    const { session } = await store.createReviewSession([plan], new Date("2026-06-06T00:00:00.000Z"));
-    await openAndConnectReview(store, session.id, walletAccount, new Date("2026-06-06T00:00:01.000Z"));
-    await recordReadyReviewStateWithPrivateMaterial({
-      store,
-      materialStore,
-      sessionId: session.id
-    });
-    await store.recordExecutionResult(
-      session.id,
-      {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "signed_pending_result",
-        txDigest: "digest",
-        recordedAt: "2026-06-06T00:00:04.000Z"
-      },
-      new Date("2026-06-06T00:00:04.000Z")
-    );
-    const stale = await recordTestTransactionMaterial({
-      materialStore,
-      reviewSessionId: session.id,
-      planId: plan.id,
-      account: walletAccount,
-      now: new Date("2026-06-06T00:00:05.000Z"),
-      computedAt: new Date("2026-06-06T00:00:05.000Z"),
-      expiresAt: new Date("2026-06-06T00:30:00.000Z")
-    });
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "signed_pending_result",
-          txDigest: "digest",
-          recordedAt: "2026-06-06T00:00:06.000Z"
-        },
-        new Date("2026-06-06T00:00:06.000Z")
-      )
-    ).resolves.toMatchObject({
-      executionResult: { status: "signed_pending_result", txDigest: "digest" },
-      lastActivityAt: "2026-06-06T00:00:04.000Z"
-    });
-    expect(materialStore.getTransactionMaterial(stale.handle, new Date("2026-06-06T00:00:07.000Z"))).toBeUndefined();
-  });
-
-  it("clears legacy stale private material before rejecting finalized execution result writes", async () => {
-    const materialStore = new InMemoryLocalTransactionMaterialStore();
-    const store = createSessionStore({ transactionMaterialStore: materialStore });
-    const { session } = await store.createReviewSession([plan], new Date("2026-06-06T00:00:00.000Z"));
-    await openAndConnectReview(store, session.id, walletAccount, new Date("2026-06-06T00:00:01.000Z"));
-    await recordReadyReviewStateWithPrivateMaterial({
-      store,
-      materialStore,
-      sessionId: session.id
-    });
-    await store.recordExecutionResult(
-      session.id,
-      {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "signed_pending_result",
-        txDigest: chainReceiptDigest,
-        recordedAt: "2026-06-06T00:00:04.000Z"
-      },
-      new Date("2026-06-06T00:00:04.000Z")
-    );
-    await store.recordChainExecutionResult(
-      session.id,
-      {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "success",
-        txDigest: chainReceiptDigest,
-        chainReceipt: chainReceiptFixture(),
-        recordedAt: "2026-06-06T00:00:05.000Z"
-      },
-      new Date("2026-06-06T00:00:05.000Z")
-    );
-    const stale = await recordTestTransactionMaterial({
-      materialStore,
-      reviewSessionId: session.id,
-      planId: plan.id,
-      account: walletAccount,
-      now: new Date("2026-06-06T00:00:06.000Z"),
-      computedAt: new Date("2026-06-06T00:00:06.000Z"),
-      expiresAt: new Date("2026-06-06T00:30:00.000Z")
-    });
-
-    await expect(
-      store.recordChainExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "success",
-          txDigest: otherChainReceiptDigest,
-          chainReceipt: chainReceiptFixture({ txDigest: otherChainReceiptDigest }),
-          recordedAt: "2026-06-06T00:00:07.000Z"
-        },
-        new Date("2026-06-06T00:00:07.000Z")
-      )
-    ).rejects.toThrow("already finalized");
-    expect(materialStore.getTransactionMaterial(stale.handle, new Date("2026-06-06T00:00:08.000Z"))).toBeUndefined();
   });
 
   it("rejects private review artifacts when the local material is missing at storage time", async () => {
@@ -1894,7 +1485,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
         new Date("2026-06-06T00:00:03.000Z")
       )
     ).rejects.toMatchObject({ code: "session_mismatch" } satisfies Partial<SessionStoreError>);
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
   });
 
   it("rejects private digest artifacts that do not match the stored local bytes", async () => {
@@ -1944,7 +1535,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
         new Date("2026-06-06T00:00:03.000Z")
       )
     ).rejects.toMatchObject({ code: "session_mismatch" } satisfies Partial<SessionStoreError>);
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(first.handle, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
   });
 
@@ -2062,7 +1653,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       )
     ).rejects.toMatchObject({ code: "session_mismatch" } satisfies Partial<SessionStoreError>);
 
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:01:00.000Z"))).toBeUndefined();
   });
 
@@ -2071,7 +1662,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     const { session, token } = await store.createReviewSession([plan], new Date(0));
 
     await expect(store.validateReviewToken(session.id, token, new Date(5))).resolves.toBe(true);
-    const afterToken = await store.getReviewSession(session.id, new Date(6));
+    const afterToken = await store.getReviewSession(session.id, () => new Date(6));
     expect(afterToken?.lastActivityAt).toBe(new Date(0).toISOString());
   });
 
@@ -2085,12 +1676,6 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     const { session } = await store.createReviewSession([plan], new Date(0));
     expect(session.status).toBe("proposed");
 
-    const opened = await store.recordReviewPageOpened(session.id, new Date(1));
-    expect(opened.status).toBe("awaiting_wallet");
-
-    const wallet = await store.createWalletIdentitySession(new Date(2));
-    const walletOpened = await store.recordWalletIdentityOpened(wallet.session.id, new Date(3));
-    expect(walletOpened.status).toBe("opened");
     expect(logger.error).toHaveBeenCalledWith("event log append failed", {
       eventType: "session.created",
       error: "event log unavailable"
@@ -2122,44 +1707,11 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     });
     expect(activityStore.reviewTransitions.map((transition) => transition.event)).toEqual([
       "created",
-      "opened",
       "wallet_connected",
       "state_computed"
     ]);
     expect(activityStore.reviewStateSnapshots).toHaveLength(1);
     expect(activityStore.reviewStateSnapshots[0]?.state.status).toBe("ready_for_wallet_review");
-  });
-
-  it("rejects execution results for plans outside the session", async () => {
-    const store = createSessionStore();
-    const { session } = await store.createReviewSession([plan], new Date(0));
-    await openAndConnectReview(store, session.id, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new Date(1));
-    await store.recordReviewState(
-      session.id,
-      {
-        planId: plan.id,
-        reviewSessionId: session.id,
-        account: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        status: "ready_for_wallet_review",
-        checks: [],
-        updatedAt: new Date(2).toISOString()
-      },
-      new Date(2)
-    );
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: "not_in_session",
-          status: "signed_pending_result",
-          txDigest: "digest",
-          recordedAt: new Date(3).toISOString()
-        },
-        new Date(3)
-      )
-    ).rejects.toThrow("Action plan not found");
   });
 
   it("rejects review states for another session or a plan outside the session", async () => {
@@ -2216,39 +1768,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     ).rejects.toMatchObject({ code: "input_invalid" } satisfies Partial<SessionStoreError>);
   });
 
-  it("rejects execution results for another session", async () => {
-    const store = createSessionStore();
-    const { session } = await store.createReviewSession([plan], new Date(0));
-    await openAndConnectReview(store, session.id, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new Date(1));
-    await store.recordReviewState(
-      session.id,
-      {
-        planId: plan.id,
-        reviewSessionId: session.id,
-        account: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        status: "ready_for_wallet_review",
-        checks: [],
-        updatedAt: new Date(2).toISOString()
-      },
-      new Date(2)
-    );
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: "other_session",
-          planId: plan.id,
-          status: "signed_pending_result",
-          txDigest: "digest",
-          recordedAt: new Date(3).toISOString()
-        },
-        new Date(3)
-      )
-    ).rejects.toThrow("Execution result session mismatch");
-  });
-
-  it("requires deterministic reasons for blocked review and failed execution results", async () => {
+  it("requires deterministic reasons for blocked review", async () => {
     const store = createSessionStore();
     const { session } = await store.createReviewSession([plan], new Date(0));
     await openAndConnectReview(store, session.id, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new Date(1));
@@ -2280,45 +1800,6 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       },
       new Date(2)
     );
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "failure",
-          recordedAt: new Date(3).toISOString()
-        } as never,
-        new Date(3)
-      )
-    ).rejects.toMatchObject({ code: "input_invalid" } satisfies Partial<SessionStoreError>);
-  });
-
-  it("rejects execution results when account-bound review state is missing", async () => {
-    const store = createSessionStore();
-    const { session } = await store.createReviewSession([plan], new Date(0));
-    await openAndConnectReview(store, session.id, walletAccount, new Date(1));
-    const sessions = (store as unknown as { sessions: Map<string, { status: string }> }).sessions;
-    const mutableSession = sessions.get(session.id);
-    if (!mutableSession) {
-      throw new Error("test setup failed");
-    }
-    mutableSession.status = "ready_for_wallet_review";
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "signed_pending_result",
-          txDigest: "digest",
-          recordedAt: new Date(2).toISOString()
-        },
-        new Date(2)
-      )
-    ).rejects.toMatchObject({ code: "invalid_session_transition" } satisfies Partial<SessionStoreError>);
   });
 
   it("does not mutate review state when activity evidence persistence fails", async () => {
@@ -2347,7 +1828,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       )
     ).rejects.toThrow("snapshot failed");
 
-    const stored = await store.getReviewSession(session.id, new Date(3));
+    const stored = await store.getReviewSession(session.id, () => new Date(3));
     expect(stored).toMatchObject({
       status: "wallet_connected",
       lastActivityAt: new Date(1).toISOString()
@@ -2400,149 +1881,14 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       )
     ).rejects.toThrow("snapshot failed");
 
-    const stored = await store.getReviewSession(session.id, new Date("2026-06-06T00:00:04.000Z"));
+    const stored = await store.getReviewSession(session.id, () => new Date("2026-06-06T00:00:04.000Z"));
     expect(stored).toMatchObject({
       status: "wallet_connected",
       lastActivityAt: "2026-06-06T00:00:01.000Z"
     });
     expect(stored?.reviewState).toBeUndefined();
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
-  });
-
-  it("does not mutate execution result when activity evidence persistence fails", async () => {
-    class FailingExecutionStore extends InMemoryActivityStore {
-      override async recordReviewExecution(): Promise<never> {
-        throw new Error("execution evidence failed");
-      }
-    }
-
-    const store = createSessionStore({ activityStore: new FailingExecutionStore() });
-    const { session } = await store.createReviewSession([plan], new Date(0));
-    await openAndConnectReview(store, session.id, walletAccount, new Date(1));
-    await store.recordReviewState(
-      session.id,
-      {
-        planId: plan.id,
-        reviewSessionId: session.id,
-        account: walletAccount,
-        status: "ready_for_wallet_review",
-        checks: [],
-        updatedAt: new Date(2).toISOString()
-      },
-      new Date(2)
-    );
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "signed_pending_result",
-          txDigest: "digest",
-          recordedAt: new Date(3).toISOString()
-        },
-        new Date(3)
-      )
-    ).rejects.toThrow("execution evidence failed");
-
-    const stored = await store.getReviewSession(session.id, new Date(4));
-    expect(stored).toMatchObject({
-      status: "ready_for_wallet_review",
-      lastActivityAt: new Date(2).toISOString()
-    });
-    expect(stored?.executionResult).toBeUndefined();
-  });
-
-  it("cleans private transaction material when execution persistence fails after review validation", async () => {
-    class FailingExecutionStore extends InMemoryActivityStore {
-      override async recordReviewExecution(): Promise<never> {
-        throw new Error("execution evidence failed");
-      }
-    }
-
-    const materialStore = new InMemoryLocalTransactionMaterialStore();
-    const store = createSessionStore({
-      activityStore: new FailingExecutionStore(),
-      transactionMaterialStore: materialStore
-    });
-    const { session } = await store.createReviewSession([plan], new Date("2026-06-06T00:00:00.000Z"));
-    await openAndConnectReview(store, session.id, walletAccount, new Date("2026-06-06T00:00:01.000Z"));
-    const { materialHandle } = await recordReadyReviewStateWithPrivateMaterial({
-      store,
-      materialStore,
-      sessionId: session.id
-    });
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "signed_pending_result",
-          txDigest: "digest",
-          recordedAt: "2026-06-06T00:00:04.000Z"
-        },
-        new Date("2026-06-06T00:00:04.000Z")
-      )
-    ).rejects.toThrow("execution evidence failed");
-
-    const stored = await store.getReviewSession(session.id, new Date("2026-06-06T00:00:05.000Z"));
-    expect(stored).toMatchObject({
-      status: "ready_for_wallet_review",
-      lastActivityAt: "2026-06-06T00:00:03.000Z"
-    });
-    expect(stored?.executionResult).toBeUndefined();
-    expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:00:05.000Z"))).toBeUndefined();
-    expect(await store.getReviewSessionPrivateArtifacts(session.id, new Date("2026-06-06T00:00:05.000Z"))).toBeUndefined();
-  });
-
-  it("does not mutate terminal success sessions to expired on read", async () => {
-    const t0 = new Date(0);
-    const tAfterTtl = new Date(10);
-    const store = createSessionStore({ ttlMs: 1 });
-    const { session } = await store.createReviewSession([plan], t0);
-    await openAndConnectReview(store, session.id, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", t0);
-    await store.recordReviewState(
-      session.id,
-      {
-        planId: plan.id,
-        reviewSessionId: session.id,
-        account: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        status: "ready_for_wallet_review",
-        checks: [],
-        updatedAt: t0.toISOString()
-      },
-      t0
-    );
-    await store.recordExecutionResult(
-      session.id,
-      {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "signed_pending_result",
-        txDigest: chainReceiptDigest,
-        recordedAt: t0.toISOString()
-      },
-      t0
-    );
-    await store.recordChainExecutionResult(
-      session.id,
-      {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "success",
-        txDigest: chainReceiptDigest,
-        chainReceipt: chainReceiptFixture(),
-        recordedAt: t0.toISOString()
-      },
-      t0
-    );
-
-    const expiredRead = await store.getReviewSession(session.id, tAfterTtl);
-    expect(expiredRead?.status).toBe("success");
+    expect(await readPrivateArtifacts(store, session.id, new Date("2026-06-06T00:00:04.000Z"))).toBeUndefined();
   });
 
   it("does not append duplicate expired transitions after a review session is already expired", async () => {
@@ -2550,8 +1896,8 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     const store = createSessionStore({ ttlMs: 1, activityStore });
     const { session } = await store.createReviewSession([plan], new Date(0));
 
-    const first = await store.getReviewSession(session.id, new Date(2));
-    const second = await store.getReviewSession(session.id, new Date(3));
+    const first = await store.getReviewSession(session.id, () => new Date(2));
+    const second = await store.getReviewSession(session.id, () => new Date(3));
 
     expect(first?.status).toBe("expired");
     expect(second?.status).toBe("expired");
@@ -2578,184 +1924,11 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
       .mockRejectedValueOnce(new Error("expired transition failed"));
 
     await expect(
-      store.getReviewSession(session.id, new Date("2026-06-06T00:01:00.000Z"))
+      store.getReviewSession(session.id, () => new Date("2026-06-06T00:01:00.000Z"))
     ).rejects.toThrow("expired transition failed");
 
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:01:00.000Z"))).toBeUndefined();
     recordReviewTransition.mockRestore();
-  });
-
-  it("does not allow finalized execution results to be overwritten", async () => {
-    const store = createSessionStore();
-    const { session } = await store.createReviewSession([plan]);
-    await openAndConnectReview(store, session.id);
-    await store.recordReviewState(session.id, {
-      planId: plan.id,
-      reviewSessionId: session.id,
-      account: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      status: "ready_for_wallet_review",
-      checks: [],
-      updatedAt: new Date().toISOString()
-    });
-    await store.recordExecutionResult(session.id, {
-      reviewSessionId: session.id,
-      planId: plan.id,
-      status: "signed_pending_result",
-      txDigest: chainReceiptDigest,
-      recordedAt: new Date().toISOString()
-    });
-    await store.recordChainExecutionResult(session.id, {
-      reviewSessionId: session.id,
-      planId: plan.id,
-      status: "success",
-      txDigest: chainReceiptDigest,
-      chainReceipt: chainReceiptFixture(),
-      recordedAt: new Date().toISOString()
-    });
-
-    await expect(
-      store.recordChainExecutionResult(session.id, {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "success",
-        txDigest: otherChainReceiptDigest,
-        chainReceipt: chainReceiptFixture({ txDigest: otherChainReceiptDigest }),
-        recordedAt: new Date().toISOString()
-      })
-    ).rejects.toThrow("already finalized");
-  });
-
-  it("keeps token validation separate from terminal session lifecycle", async () => {
-    const store = createSessionStore();
-    const { session, token } = await store.createReviewSession([plan]);
-    await openAndConnectReview(store, session.id);
-    await store.recordReviewState(session.id, {
-      planId: plan.id,
-      reviewSessionId: session.id,
-      account: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      status: "ready_for_wallet_review",
-      checks: [],
-      updatedAt: new Date().toISOString()
-    });
-    await store.recordExecutionResult(session.id, {
-      reviewSessionId: session.id,
-      planId: plan.id,
-      status: "signed_pending_result",
-      txDigest: chainReceiptDigest,
-      recordedAt: new Date().toISOString()
-    });
-    await store.recordChainExecutionResult(session.id, {
-      reviewSessionId: session.id,
-      planId: plan.id,
-      status: "success",
-      txDigest: chainReceiptDigest,
-      chainReceipt: chainReceiptFixture(),
-      recordedAt: new Date().toISOString()
-    });
-
-    await expect(store.validateReviewToken(session.id, token)).resolves.toBe(true);
-  });
-
-  it("treats duplicate signed_pending_result as idempotent only for the same digest", async () => {
-    const store = createSessionStore();
-    const { session } = await store.createReviewSession([plan], new Date(0));
-    await openAndConnectReview(store, session.id, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", new Date(1));
-    await store.recordReviewState(session.id, {
-      planId: plan.id,
-      reviewSessionId: session.id,
-      account: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      status: "ready_for_wallet_review",
-      checks: [],
-      updatedAt: new Date(2).toISOString()
-    }, new Date(2));
-    await store.recordExecutionResult(session.id, {
-      reviewSessionId: session.id,
-      planId: plan.id,
-      status: "signed_pending_result",
-      txDigest: "digest",
-      recordedAt: new Date(3).toISOString()
-    }, new Date(3));
-
-    await expect(
-      store.recordExecutionResult(session.id, {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "signed_pending_result",
-        txDigest: "digest",
-        recordedAt: new Date(4).toISOString()
-      }, new Date(4))
-    ).resolves.toMatchObject({
-      executionResult: { txDigest: "digest" },
-      lastActivityAt: new Date(3).toISOString()
-    });
-
-    await expect(
-      store.recordExecutionResult(session.id, {
-        reviewSessionId: session.id,
-        planId: "not_in_session",
-        status: "signed_pending_result",
-        txDigest: "digest",
-        recordedAt: new Date().toISOString()
-      }, new Date(5))
-    ).rejects.toThrow("Action plan not found");
-
-    await expect(
-      store.recordExecutionResult(session.id, {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "signed_pending_result",
-        txDigest: "different",
-        recordedAt: new Date().toISOString()
-      }, new Date(5))
-    ).rejects.toThrow("Signed pending result already recorded");
-  });
-
-  it("cleans legacy private material before rejecting conflicting signed pending results", async () => {
-    const materialStore = new InMemoryLocalTransactionMaterialStore();
-    const store = createSessionStore({ transactionMaterialStore: materialStore });
-    const { session } = await store.createReviewSession([plan], new Date("2026-06-06T00:00:00.000Z"));
-    await openAndConnectReview(store, session.id, walletAccount, new Date("2026-06-06T00:00:01.000Z"));
-    await recordReadyReviewStateWithPrivateMaterial({
-      store,
-      materialStore,
-      sessionId: session.id
-    });
-    await store.recordExecutionResult(
-      session.id,
-      {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        status: "signed_pending_result",
-        txDigest: "digest",
-        recordedAt: "2026-06-06T00:00:04.000Z"
-      },
-      new Date("2026-06-06T00:00:04.000Z")
-    );
-    const stale = await recordTestTransactionMaterial({
-      materialStore,
-      reviewSessionId: session.id,
-      planId: plan.id,
-      account: walletAccount,
-      now: new Date("2026-06-06T00:00:05.000Z"),
-      computedAt: new Date("2026-06-06T00:00:05.000Z"),
-      expiresAt: new Date("2026-06-06T00:30:00.000Z")
-    });
-
-    await expect(
-      store.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "signed_pending_result",
-          txDigest: "different",
-          recordedAt: "2026-06-06T00:00:06.000Z"
-        },
-        new Date("2026-06-06T00:00:06.000Z")
-      )
-    ).rejects.toThrow("Signed pending result already recorded");
-
-    expect(materialStore.getTransactionMaterial(stale.handle, new Date("2026-06-06T00:00:07.000Z"))).toBeUndefined();
   });
 
   it("rejects wallet reconnection to a different account while review state is recomputed", async () => {
@@ -2781,3 +1954,10 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     ).rejects.toMatchObject({ code: "invalid_session_transition" } satisfies Partial<SessionStoreError>);
   });
 });
+
+// Observe private records through the same current-state evaluation used by
+// product readers; private artifacts are never taken from a public response.
+async function readPrivateArtifacts(store: import("../src/core/session/sessionStore.js").SessionStore, id: string, now: Date) {
+  await store.getReviewSession(id, () => now);
+  return (await store.inspectReview(id, now))?.artifacts;
+}

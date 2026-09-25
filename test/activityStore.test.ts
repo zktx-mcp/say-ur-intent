@@ -19,13 +19,10 @@ import {
 } from "../src/core/activity/sqliteActivityStore.js";
 import { DB_USER_VERSION } from "../src/core/activity/schemaVersion.js";
 import { SuiEndpointError } from "../src/core/suiEndpoint.js";
-import { InMemorySessionStore } from "../src/core/session/sessionStore.js";
-import { chainReceiptFixture } from "./fixtures/chainReceipt.js";
 import { InMemoryActivityStore } from "./fixtures/inMemoryActivityStore.js";
 
 const walletAccount = `0x${"a".repeat(64)}`;
 const otherWalletAccount = `0x${"b".repeat(64)}`;
-const testLogger = { error() {} };
 
 const plan: ActionPlan = {
   id: "plan_1",
@@ -113,6 +110,8 @@ function localDataOptions(
   return {
     suiGrpcUrl,
     suiGraphqlUrl,
+    // These local-data fixtures contain stored history, not live wallet authority.
+    advanceRequestDeadlines: (_now: Date) => {},
     verifySuiGrpcUrl: async (_url: string) => {},
     verifySuiGraphqlUrl: async (_url: string) => {}
   };
@@ -139,13 +138,13 @@ function createLegacyExternalActivityTables(
       sui_address TEXT NOT NULL UNIQUE,
       first_seen_at TEXT NOT NULL,
       last_used_at TEXT NOT NULL,
-      first_source TEXT NOT NULL CHECK (first_source IN ('wallet_identity', 'review_execution')),
-      last_source TEXT NOT NULL CHECK (last_source IN ('wallet_identity', 'review_execution'))
+      first_source TEXT NOT NULL CHECK (first_source IN ('wallet_connection', 'review_execution')),
+      last_source TEXT NOT NULL CHECK (last_source IN ('wallet_connection', 'review_execution'))
     );
     INSERT INTO accounts
       (id, sui_address, first_seen_at, last_used_at, first_source, last_source)
     VALUES
-      (1, '${walletAccount}', '2026-05-11T00:00:00.000Z', '2026-05-11T00:00:00.000Z', 'wallet_identity', 'wallet_identity');
+      (1, '${walletAccount}', '2026-05-11T00:00:00.000Z', '2026-05-11T00:00:00.000Z', 'wallet_connection', 'wallet_connection');
 
     CREATE TABLE external_activity_scans (
       scan_id TEXT PRIMARY KEY,
@@ -220,9 +219,7 @@ async function recordConnectedReview(
     account: string;
     createdAtSeconds: number;
     state?: ReviewState["status"] | undefined;
-    execute?: "signed_pending_result" | "success" | undefined;
     requestedIntent?: unknown;
-    txDigest?: string | undefined;
   }
 ): Promise<void> {
   const reviewPlan = planFor(input.planId, input.requestedIntent);
@@ -232,13 +229,7 @@ async function recordConnectedReview(
     currentStatus: "proposed",
     createdAt: iso(input.createdAtSeconds)
   });
-  await store.recordReviewTransition({
-    reviewSessionId: input.reviewSessionId,
-    event: "opened",
-    fromStatus: "proposed",
-    toStatus: "awaiting_wallet",
-    transitionedAt: iso(input.createdAtSeconds + 1)
-  });
+  store.createWalletWorkflowStore("activity-fixture").markReviewOpened(input.reviewSessionId, new Date(iso(input.createdAtSeconds + 1)));
   await store.recordReviewTransition({
     reviewSessionId: input.reviewSessionId,
     event: "wallet_connected",
@@ -249,52 +240,14 @@ async function recordConnectedReview(
   });
   if (input.state) {
     await store.recordReviewStateSnapshot({
+      reviewRevision: 1,
       reviewSessionId: input.reviewSessionId,
       fromStatus: "wallet_connected",
       state: reviewStateFor(input.reviewSessionId, input.planId, input.account, input.state, iso(input.createdAtSeconds + 3)),
       recordedAt: iso(input.createdAtSeconds + 3)
     });
   }
-  if (input.execute) {
-    const txDigest = input.txDigest ?? `${input.reviewSessionId}_digest`;
-    await store.recordReviewExecution({
-      reviewSessionId: input.reviewSessionId,
-      planId: input.planId,
-      account: input.account,
-      fromStatus: input.state ?? "wallet_connected",
-      status: "signed_pending_result",
-      txDigest,
-      result: {
-        reviewSessionId: input.reviewSessionId,
-        planId: input.planId,
-        status: "signed_pending_result",
-        txDigest,
-        recordedAt: iso(input.createdAtSeconds + 4)
-      },
-      recordedAt: iso(input.createdAtSeconds + 4)
-    });
-    if (input.execute === "success") {
-      await store.recordReviewExecution({
-        reviewSessionId: input.reviewSessionId,
-        planId: input.planId,
-        account: input.account,
-        fromStatus: "signed_pending_result",
-        status: "success",
-        txDigest,
-        explorerUrl: `https://suivision.xyz/txblock/${txDigest}`,
-        result: {
-          reviewSessionId: input.reviewSessionId,
-          planId: input.planId,
-          status: "success",
-          txDigest,
-          chainReceipt: chainReceiptFixture({ txDigest }),
-          explorerUrl: `https://suivision.xyz/txblock/${txDigest}`,
-          recordedAt: iso(input.createdAtSeconds + 5)
-        },
-        recordedAt: iso(input.createdAtSeconds + 5)
-      });
-    }
-  }
+
 }
 
 function reviewStateFor(
@@ -603,7 +556,7 @@ describe("SqliteActivityStore", () => {
 
   it("records bounded external activity only for known accounts and deduplicates transactions", async () => {
     await withTempDb(async (store) => {
-      const active = await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      const active = await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       await expect(
         store.recordExternalActivityScan({
           scanId: "unknown_account_scan",
@@ -733,7 +686,7 @@ describe("SqliteActivityStore", () => {
 
   it("summarizes stored external activity over the full scope and orders checkpoints numerically", async () => {
     await withTempDb(async (store) => {
-      const active = await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      const active = await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       await store.recordExternalActivityScan({
         scanId: "scan_summary_scope",
         kind: "account_scan",
@@ -786,7 +739,7 @@ describe("SqliteActivityStore", () => {
 
   it("reports no stored external activity coverage for a known account with no scans", async () => {
     await withCoverageStores(async (store) => {
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
 
       await expect(
         store.getExternalActivityCoverage({
@@ -807,7 +760,7 @@ describe("SqliteActivityStore", () => {
 
   it("treats an enclosing complete affected-account scan as complete coverage even when it found no transactions", async () => {
     await withCoverageStores(async (store) => {
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       await store.recordExternalActivityScan({
         scanId: "scan_empty_complete",
         kind: "account_scan",
@@ -846,7 +799,7 @@ describe("SqliteActivityStore", () => {
 
   it("keeps sent-only and incomplete scans as partial coverage while still reporting stored transactions", async () => {
     await withCoverageStores(async (store) => {
-      const active = await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      const active = await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       await store.recordExternalActivityScan({
         scanId: "scan_sent_only",
         kind: "account_scan",
@@ -920,7 +873,7 @@ describe("SqliteActivityStore", () => {
 
   it("does not double-count a repeated stored digest when reporting coverage transaction count", async () => {
     await withCoverageStores(async (store) => {
-      const active = await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      const active = await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       const repeatedDigest = "b".repeat(44);
       const scanBase = {
         kind: "account_scan" as const,
@@ -990,7 +943,7 @@ describe("SqliteActivityStore", () => {
 
   it("returns canonical half-open effect transactions for account timelines", async () => {
     await withCoverageStores(async (store) => {
-      const active = await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      const active = await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       const sharedDigest = "c".repeat(44);
       const endBoundaryDigest = "d".repeat(44);
       const scanBase = {
@@ -1090,7 +1043,7 @@ describe("SqliteActivityStore", () => {
 
   it("rejects forbidden external activity fields before local DB write", async () => {
     await withTempDb(async (store) => {
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
 
       await expect(
         store.recordExternalActivityScan({
@@ -1126,7 +1079,7 @@ describe("SqliteActivityStore", () => {
 
   it("rejects malformed and oversized external activity details before local DB write", async () => {
     await withTempDb(async (store) => {
-      const active = await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      const active = await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       const baseTransaction = {
         digest: "7".repeat(44),
         relationship: "sent" as const,
@@ -1257,7 +1210,6 @@ describe("SqliteActivityStore", () => {
         account: walletAccount,
         createdAtSeconds: 1,
         state: "blocked",
-        execute: "signed_pending_result"
       });
       const knownAccount = await source.getKnownAccount(walletAccount);
       if (!knownAccount) {
@@ -1320,8 +1272,9 @@ describe("SqliteActivityStore", () => {
             accounts: 1,
             reviewSessions: 1,
             reviewStateSnapshots: 1,
-            reviewStatusTransitions: 5,
-            reviewExecutions: 1,
+            reviewStatusTransitions: 4,
+            reviewExecutions: 0,
+            reviewRequests: 0,
             externalActivityScans: 1,
             externalActivityTransactions: 1,
             localSettings: 2
@@ -1401,7 +1354,7 @@ describe("SqliteActivityStore", () => {
         suiGrpcUrl: "https://fullnode.mainnet.sui.io:443",
         suiGraphqlUrl: "https://graphql.mainnet.sui.io/graphql"
       });
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date(0));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date(0));
       const exported = await store
         .createLocalDataService(localDataOptions())
         .exportLocalData(new Date("2026-05-11T00:00:00.000Z"));
@@ -1447,13 +1400,13 @@ describe("SqliteActivityStore", () => {
   it("previews active account changes by Sui address across replace-only imports", async () => {
     await withTempDb(async (source) => {
       await source.createPreferencesRepository().ensureDefaultLocalSettings({ suiGrpcUrl: "https://fullnode.mainnet.sui.io:443", suiGraphqlUrl: "https://graphql.mainnet.sui.io/graphql" });
-      await source.setActiveAccount(otherWalletAccount, "wallet_identity", new Date(0));
+      await source.setActiveAccount(otherWalletAccount, "wallet_connection", new Date(0));
       const sourceLocalData = source.createLocalDataService(localDataOptions());
       const exported = await sourceLocalData.exportLocalData(new Date("2026-05-11T00:00:00.000Z"));
 
       await withTempDb(async (target) => {
         await target.createPreferencesRepository().ensureDefaultLocalSettings({ suiGrpcUrl: "https://fullnode.mainnet.sui.io:443", suiGraphqlUrl: "https://graphql.mainnet.sui.io/graphql" });
-        await target.setActiveAccount(walletAccount, "wallet_identity", new Date(0));
+        await target.setActiveAccount(walletAccount, "wallet_connection", new Date(0));
         const targetLocalData = target.createLocalDataService(localDataOptions());
 
         await expect(targetLocalData.previewImportLocalData(exported)).resolves.toMatchObject({
@@ -1469,7 +1422,7 @@ describe("SqliteActivityStore", () => {
         suiGrpcUrl: "https://fullnode.mainnet.sui.io:443",
         suiGraphqlUrl: "https://graphql.mainnet.sui.io/graphql"
       });
-      await source.setActiveAccount(walletAccount, "wallet_identity", new Date(0));
+      await source.setActiveAccount(walletAccount, "wallet_connection", new Date(0));
       const exported = await source.createLocalDataService(localDataOptions()).exportLocalData(new Date("2026-05-11T00:00:00.000Z"));
       const legacyData = {
         ...exported.data,
@@ -1504,7 +1457,7 @@ describe("SqliteActivityStore", () => {
   it("rolls back invalid local data imports before replacing existing data", async () => {
     await withTempDb(async (store) => {
       await store.createPreferencesRepository().ensureDefaultLocalSettings({ suiGrpcUrl: "https://fullnode.mainnet.sui.io:443", suiGraphqlUrl: "https://graphql.mainnet.sui.io/graphql" });
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date(0));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date(0));
       const service = store.createLocalDataService(localDataOptions());
       const exported = await service.exportLocalData(new Date("2026-05-11T00:00:00.000Z"));
       const invalid = {
@@ -1534,7 +1487,7 @@ describe("SqliteActivityStore", () => {
   it("does not contact imported Sui gRPC endpoints while previewing local data", async () => {
     await withTempDb(async (store) => {
       await store.createPreferencesRepository().ensureDefaultLocalSettings({ suiGrpcUrl: "https://fullnode.mainnet.sui.io:443", suiGraphqlUrl: "https://graphql.mainnet.sui.io/graphql" });
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date(0));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date(0));
       const exported = await store
         .createLocalDataService(localDataOptions())
         .exportLocalData(new Date("2026-05-11T00:00:00.000Z"));
@@ -1593,7 +1546,7 @@ describe("SqliteActivityStore", () => {
         createdAtSeconds: 1,
         state: "blocked"
       });
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date(10));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date(10));
       const service = store.createLocalDataService(localDataOptions());
       const exported = await service.exportLocalData(new Date("2026-05-11T00:00:00.000Z"));
 
@@ -1627,7 +1580,7 @@ describe("SqliteActivityStore", () => {
         suiGrpcUrl: "https://fullnode.mainnet.sui.io:443",
         suiGraphqlUrl: "https://graphql.mainnet.sui.io/graphql"
       });
-      const active = await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      const active = await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       await store.recordExternalActivityScan({
         scanId: "scan_payload_reject",
         kind: "digest_lookup",
@@ -1675,7 +1628,7 @@ describe("SqliteActivityStore", () => {
         suiGrpcUrl: "https://fullnode.mainnet.sui.io:443",
         suiGraphqlUrl: "https://graphql.mainnet.sui.io/graphql"
       });
-      const active = await store.setActiveAccount(walletAccount, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      const active = await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       await store.recordExternalActivityScan({
         scanId: "scan_detail_shape_reject",
         kind: "digest_lookup",
@@ -1901,14 +1854,14 @@ describe("SqliteActivityStore", () => {
 
   it("sets, replaces, and clears active account read context", async () => {
     await withTempDb(async (store) => {
-      const first = await store.setActiveAccount(walletAccount.toUpperCase(), "wallet_identity", new Date(0));
+      const first = await store.setActiveAccount(walletAccount.toUpperCase(), "wallet_connection", new Date(0));
       expect(first).toMatchObject({
         address: walletAccount,
-        source: "wallet_identity",
+        source: "wallet_connection",
         setAt: new Date(0).toISOString()
       });
 
-      const second = await store.setActiveAccount(otherWalletAccount, "wallet_identity", new Date(1));
+      const second = await store.setActiveAccount(otherWalletAccount, "wallet_connection", new Date(1));
       expect(second.address).toBe(otherWalletAccount);
       expect(await store.getActiveAccount()).toMatchObject({
         accountId: second.accountId,
@@ -1923,16 +1876,16 @@ describe("SqliteActivityStore", () => {
 
   it("preserves first account source and tracks last account source", async () => {
     await withTempDb(async (store) => {
-      const initial = await store.upsertAccount(walletAccount, "wallet_identity", new Date(0));
+      const initial = await store.upsertAccount(walletAccount, "wallet_connection", new Date(0));
       expect(initial).toMatchObject({
-        firstSource: "wallet_identity",
-        lastSource: "wallet_identity"
+        firstSource: "wallet_connection",
+        lastSource: "wallet_connection"
       });
 
       const reused = await store.upsertAccount(walletAccount, "review_execution", new Date(1));
       expect(reused).toMatchObject({
         id: initial.id,
-        firstSource: "wallet_identity",
+        firstSource: "wallet_connection",
         lastSource: "review_execution",
         firstSeenAt: new Date(0).toISOString(),
         lastUsedAt: new Date(1).toISOString()
@@ -1942,7 +1895,7 @@ describe("SqliteActivityStore", () => {
 
   it("rejects inconsistent active account context rows", async () => {
     await withTempDb(async (store, dbPath) => {
-      const account = await store.upsertAccount(walletAccount, "wallet_identity", new Date(0));
+      const account = await store.upsertAccount(walletAccount, "wallet_connection", new Date(0));
       const db = new Database(dbPath);
       try {
         db.exec("PRAGMA foreign_keys=ON");
@@ -1958,152 +1911,7 @@ describe("SqliteActivityStore", () => {
           db
             .prepare(
               `INSERT INTO active_account_context (id, account_id, source, set_at)
-               VALUES (1, NULL, 'wallet_identity', '2026-05-11T00:00:00.000Z')`
-            )
-            .run()
-        ).toThrow();
-      } finally {
-        db.close();
-      }
-    });
-  });
-
-  it("records review executions idempotently with account foreign keys", async () => {
-    await withTempDb(async (store, dbPath) => {
-      await store.recordReviewSession({
-        reviewSessionId: "review_1",
-        plan,
-        currentStatus: "proposed",
-        createdAt: new Date(0).toISOString()
-      });
-      const first = await store.recordReviewExecution({
-        reviewSessionId: "review_1",
-        planId: "plan_1",
-        account: walletAccount,
-        status: "signed_pending_result",
-        txDigest: "digest_1",
-        result: {
-          reviewSessionId: "review_1",
-          planId: "plan_1",
-          status: "signed_pending_result",
-          txDigest: "digest_1",
-          recordedAt: new Date(0).toISOString()
-        },
-        recordedAt: new Date(0).toISOString()
-      });
-      expect(first).toMatchObject({
-        reviewSessionId: "review_1",
-        planId: "plan_1",
-        account: walletAccount,
-        status: "signed_pending_result",
-        txDigest: "digest_1"
-      });
-      const duplicate = await store.recordReviewExecution({
-        reviewSessionId: "review_1",
-        planId: "plan_1",
-        account: walletAccount,
-        status: "signed_pending_result",
-        txDigest: "digest_1",
-        result: {
-          reviewSessionId: "review_1",
-          planId: "plan_1",
-          status: "signed_pending_result",
-          txDigest: "digest_1",
-          recordedAt: new Date(1).toISOString()
-        },
-        recordedAt: new Date(1).toISOString()
-      });
-      expect(duplicate).toMatchObject({
-        status: "signed_pending_result",
-        txDigest: "digest_1",
-        recordedAt: new Date(0).toISOString(),
-        updatedAt: new Date(0).toISOString()
-      });
-      await expect(
-        store.recordReviewExecution({
-          reviewSessionId: "review_1",
-          planId: "plan_1",
-          account: walletAccount,
-          status: "signed_pending_result",
-          txDigest: "digest_conflict",
-          result: {
-            reviewSessionId: "review_1",
-            planId: "plan_1",
-            status: "signed_pending_result",
-            txDigest: "digest_conflict",
-            recordedAt: new Date(1).toISOString()
-          },
-          recordedAt: new Date(1).toISOString()
-        })
-      ).rejects.toThrow("Conflicting review execution evidence");
-      await expect(
-        store.recordReviewExecution({
-          reviewSessionId: "review_1",
-          planId: "plan_1",
-          account: walletAccount,
-          status: "success",
-          result: {
-            reviewSessionId: "review_1",
-            planId: "plan_1",
-            status: "success",
-            txDigest: "digest_1",
-            chainReceipt: chainReceiptFixture({ txDigest: "digest_1" }),
-            recordedAt: new Date(1).toISOString()
-          },
-          recordedAt: new Date(1).toISOString()
-        })
-      ).rejects.toThrow("Conflicting review execution evidence");
-
-      const updated = await store.recordReviewExecution({
-        reviewSessionId: "review_1",
-        planId: "plan_1",
-        account: walletAccount,
-        status: "success",
-        txDigest: "digest_1",
-        explorerUrl: "https://suivision.xyz/txblock/digest_1",
-        result: {
-          reviewSessionId: "review_1",
-          planId: "plan_1",
-          status: "success",
-          txDigest: "digest_1",
-          chainReceipt: chainReceiptFixture({ txDigest: "digest_1" }),
-          explorerUrl: "https://suivision.xyz/txblock/digest_1",
-          recordedAt: new Date(1).toISOString()
-        },
-        recordedAt: new Date(1).toISOString()
-      });
-      expect(updated).toMatchObject({
-        reviewSessionId: "review_1",
-        status: "success",
-        explorerUrl: "https://suivision.xyz/txblock/digest_1",
-        recordedAt: new Date(0).toISOString(),
-        updatedAt: new Date(1).toISOString()
-      });
-
-      await expect(
-        store.recordReviewTransition({
-          reviewSessionId: "review_1",
-          event: "wallet_connected",
-          fromStatus: "success",
-          toStatus: "success",
-          account: otherWalletAccount,
-          transitionedAt: new Date(2).toISOString()
-        })
-      ).rejects.toThrow("different account");
-
-      const db = new Database(dbPath);
-      try {
-        const transitionCount = db
-          .prepare("SELECT COUNT(*) AS count FROM review_status_transitions WHERE review_session_id = ?")
-          .get("review_1") as { count: number };
-        expect(transitionCount.count).toBe(3);
-        db.exec("PRAGMA foreign_keys=ON");
-        expect(() =>
-          db
-            .prepare(
-              `INSERT INTO review_executions
-                 (review_session_id, plan_id, account_id, status, recorded_at, updated_at)
-               VALUES ('orphan', 'plan', 999, 'success', '2026-05-11T00:00:00.000Z', '2026-05-11T00:00:00.000Z')`
+               VALUES (1, NULL, 'wallet_connection', '2026-05-11T00:00:00.000Z')`
             )
             .run()
         ).toThrow();
@@ -2147,6 +1955,7 @@ describe("SqliteActivityStore", () => {
         transitionedAt: new Date(2).toISOString()
       });
       await store.recordReviewStateSnapshot({
+      reviewRevision: 1,
         reviewSessionId: "review_flow",
         fromStatus: "wallet_connected",
         state: {
@@ -2161,6 +1970,7 @@ describe("SqliteActivityStore", () => {
         recordedAt: new Date(3).toISOString()
       });
       await store.recordReviewStateSnapshot({
+      reviewRevision: 1,
         reviewSessionId: "review_flow",
         fromStatus: "blocked",
         state: {
@@ -2258,69 +2068,15 @@ describe("SqliteActivityStore", () => {
     });
   });
 
-  it("records wallet identity and review execution side effects from session store", async () => {
-    await withTempDb(async (activityStore) => {
-      const sessions = new InMemorySessionStore({
-        activityStore,
-        logger: testLogger,
-        validateAdapterLifecycle: validateSupportedAdapterLifecycle
-      });
-      const { session: walletSession } = await sessions.createWalletIdentitySession(new Date(0));
-      await sessions.recordWalletIdentityOpened(walletSession.id, new Date(1));
-      await sessions.recordWalletIdentityConnecting(walletSession.id, new Date(2));
-      await sessions.recordWalletIdentityResult(
-        walletSession.id,
-        { status: "connected", account: walletAccount.toUpperCase(), chain: "sui:mainnet" },
-        new Date(3)
-      );
-      expect(await activityStore.getActiveAccount()).toMatchObject({
-        address: walletAccount,
-        setAt: new Date(3).toISOString()
-      });
-
-      const { session } = await sessions.createReviewSession([plan], new Date(4));
-      await sessions.recordReviewPageOpened(session.id, new Date(5));
-      await sessions.recordWalletConnected(session.id, walletAccount, new Date(6));
-      const reviewState: ReviewState = {
-        reviewSessionId: session.id,
-        planId: plan.id,
-        account: walletAccount,
-        status: "ready_for_wallet_review",
-        checks: [],
-        updatedAt: new Date(7).toISOString()
-      };
-      await sessions.recordReviewState(session.id, reviewState, new Date(7));
-      await sessions.recordExecutionResult(
-        session.id,
-        {
-          reviewSessionId: session.id,
-          planId: plan.id,
-          status: "signed_pending_result",
-          txDigest: "digest_1",
-          recordedAt: new Date(8).toISOString()
-        },
-        new Date(8)
-      );
-      expect(await activityStore.getReviewExecution(session.id)).toMatchObject({
-        reviewSessionId: session.id,
-        account: walletAccount,
-        status: "signed_pending_result",
-        txDigest: "digest_1"
-      });
-    });
-  });
-
   it("lists review activity with active fallback, explicit filters, inclusive ranges, and stable sorting", async () => {
     await withTempDb(async (store) => {
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date(0));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date(0));
       await recordConnectedReview(store, {
         reviewSessionId: "review_old",
         planId: "plan_old",
         account: walletAccount,
         createdAtSeconds: 10,
         state: "ready_for_wallet_review",
-        execute: "success",
-        txDigest: "digest_old"
       });
       await recordConnectedReview(store, {
         reviewSessionId: "review_new",
@@ -2364,7 +2120,7 @@ describe("SqliteActivityStore", () => {
       expect(explicit.activities.map((row) => row.reviewSessionId)).toEqual(["review_other"]);
       expect(await store.getActiveAccount()).toMatchObject({ address: walletAccount });
 
-      const successOnly = await store.listReviewActivity({ status: "success" });
+      const successOnly = await store.listReviewActivity({ reviewStatus: "ready_for_wallet_review" });
       expect(successOnly.activities.map((row) => row.reviewSessionId)).toEqual(["review_old"]);
 
       const boundary = await store.listReviewActivity({
@@ -2407,7 +2163,7 @@ describe("SqliteActivityStore", () => {
 
   it("summarizes review funnel counts and timing from transition evidence", async () => {
     await withTempDb(async (store) => {
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date(0));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date(0));
       await recordConnectedReview(store, {
         reviewSessionId: "review_success",
         planId: "plan_success",
@@ -2416,43 +2172,11 @@ describe("SqliteActivityStore", () => {
         state: "blocked"
       });
       await store.recordReviewStateSnapshot({
+      reviewRevision: 1,
         reviewSessionId: "review_success",
         fromStatus: "blocked",
         state: reviewStateFor("review_success", "plan_success", walletAccount, "ready_for_wallet_review", iso(4)),
         recordedAt: iso(4)
-      });
-      await store.recordReviewExecution({
-        reviewSessionId: "review_success",
-        planId: "plan_success",
-        account: walletAccount,
-        fromStatus: "ready_for_wallet_review",
-        status: "signed_pending_result",
-        txDigest: "digest_success",
-        result: {
-          reviewSessionId: "review_success",
-          planId: "plan_success",
-          status: "signed_pending_result",
-          txDigest: "digest_success",
-          recordedAt: iso(5)
-        },
-        recordedAt: iso(5)
-      });
-      await store.recordReviewExecution({
-        reviewSessionId: "review_success",
-        planId: "plan_success",
-        account: walletAccount,
-        fromStatus: "signed_pending_result",
-        status: "success",
-        txDigest: "digest_success",
-        result: {
-          reviewSessionId: "review_success",
-          planId: "plan_success",
-          status: "success",
-          txDigest: "digest_success",
-          chainReceipt: chainReceiptFixture({ txDigest: "digest_success" }),
-          recordedAt: iso(6)
-        },
-        recordedAt: iso(6)
       });
 
       await store.recordReviewSession({
@@ -2461,13 +2185,7 @@ describe("SqliteActivityStore", () => {
         currentStatus: "proposed",
         createdAt: iso(10)
       });
-      await store.recordReviewTransition({
-        reviewSessionId: "review_expired",
-        event: "opened",
-        fromStatus: "proposed",
-        toStatus: "awaiting_wallet",
-        transitionedAt: iso(11)
-      });
+      store.createWalletWorkflowStore("activity-fixture").markReviewOpened("review_expired", new Date(iso(11)));
       await store.recordReviewTransition({
         reviewSessionId: "review_expired",
         event: "wallet_connected",
@@ -2493,15 +2211,15 @@ describe("SqliteActivityStore", () => {
         opened: 2,
         walletConnected: 2,
         stateComputed: 1,
-        signedPending: 1,
-        success: 1,
-        failure: 0,
-        expiredBeforeResult: 1,
-        avgCreatedToSignedSeconds: 5,
-        avgOpenedToSignedSeconds: 4
+        everAwaitedChainResult: 0,
+        withoutRequest: 2, withoutExecutionResult: 2,
+        executionStatusCounts: { success: 0, failure: 0 },
+        expiredWithoutExecutionResult: 1,
+        avgCreatedToSignatureVerifiedSeconds: null,
+        avgOpenedToSignatureVerifiedSeconds: null
       });
-      expect(summary.summary.currentStatusCounts.success).toBe(1);
-      expect(summary.summary.currentStatusCounts.expired).toBe(1);
+      expect(summary.summary.reviewStatusCounts.ready_for_wallet_review).toBe(1);
+      expect(summary.summary.reviewStatusCounts.expired).toBe(1);
       expect(summary.summary.everReachedReviewStateCounts.blocked).toBe(1);
       expect(summary.summary.everReachedReviewStateCounts.ready_for_wallet_review).toBe(1);
     });
@@ -2509,39 +2227,23 @@ describe("SqliteActivityStore", () => {
 
   it("returns scoped review session detail with capped append-only evidence", async () => {
     await withTempDb(async (store) => {
-      await store.setActiveAccount(walletAccount, "wallet_identity", new Date(0));
+      await store.setActiveAccount(walletAccount, "wallet_connection", new Date(0));
       await recordConnectedReview(store, {
         reviewSessionId: "review_detail",
         planId: "plan_detail",
         account: walletAccount,
         createdAtSeconds: 0,
         requestedIntent: { from: "SUI", to: "USDC", amount: "1" },
-        txDigest: "digest_detail"
       });
       for (let index = 0; index < REVIEW_ACTIVITY_DETAIL_MAX_ITEMS + 1; index += 1) {
         await store.recordReviewStateSnapshot({
+      reviewRevision: 1,
           reviewSessionId: "review_detail",
           fromStatus: index === 0 ? "wallet_connected" : "ready_for_wallet_review",
           state: reviewStateFor("review_detail", "plan_detail", walletAccount, "ready_for_wallet_review", iso(20 + index)),
           recordedAt: iso(20 + index)
         });
       }
-      await store.recordReviewExecution({
-        reviewSessionId: "review_detail",
-        planId: "plan_detail",
-        account: walletAccount,
-        fromStatus: "ready_for_wallet_review",
-        status: "signed_pending_result",
-        txDigest: "digest_detail",
-        result: {
-          reviewSessionId: "review_detail",
-          planId: "plan_detail",
-          status: "signed_pending_result",
-          txDigest: "digest_detail",
-          recordedAt: iso(200)
-        },
-        recordedAt: iso(200)
-      });
 
       const detail = await store.getReviewSessionDetail({ reviewSessionId: "review_detail" });
       expect(detail).toMatchObject({
@@ -2554,7 +2256,7 @@ describe("SqliteActivityStore", () => {
         session: {
           reviewSessionId: "review_detail",
           planId: "plan_detail",
-          currentStatus: "signed_pending_result"
+          reviewStatus: "ready_for_wallet_review"
         },
         intentJson: { from: "SUI", to: "USDC", amount: "1" },
         truncated: {
@@ -2567,11 +2269,8 @@ describe("SqliteActivityStore", () => {
       expect(detail.transitions).toHaveLength(REVIEW_ACTIVITY_DETAIL_MAX_ITEMS);
       expect(detail.transitions[0]?.isNoOp).toBe(false);
       expect(detail.transitions.some((transition) => transition.isNoOp)).toBe(true);
-      expect(detail.execution?.resultJson).toMatchObject({
-        reviewSessionId: "review_detail",
-        status: "signed_pending_result",
-        txDigest: "digest_detail"
-      });
+      expect(detail.request).toBeUndefined();
+      expect(detail.requests).toEqual([]);
 
       await expect(
         store.getReviewSessionDetail({ reviewSessionId: "review_detail", account: otherWalletAccount })
@@ -2584,27 +2283,24 @@ describe("SqliteActivityStore", () => {
   it("treats malformed or shape-invalid persisted JSON as an internal activity read error", async () => {
     const cases: Array<{
       name: string;
-      column: "plan_json" | "state_json" | "result_json";
+      column: "plan_json" | "state_json";
       invalidJson: string;
-      execute?: "signed_pending_result" | undefined;
     }> = [
       { name: "syntax-invalid plan JSON", column: "plan_json", invalidJson: "{not json" },
       { name: "shape-invalid plan JSON", column: "plan_json", invalidJson: "[]" },
       { name: "shape-invalid state JSON", column: "state_json", invalidJson: "[]" },
-      { name: "shape-invalid result JSON", column: "result_json", invalidJson: "{}", execute: "signed_pending_result" }
     ];
 
     for (const testCase of cases) {
       await withTempDb(async (store, dbPath) => {
         const reviewSessionId = `review_bad_json_${testCase.name.replaceAll(/[^a-z]+/g, "_")}`;
-        await store.setActiveAccount(walletAccount, "wallet_identity", new Date(0));
+        await store.setActiveAccount(walletAccount, "wallet_connection", new Date(0));
         await recordConnectedReview(store, {
           reviewSessionId,
           planId: `plan_${reviewSessionId}`,
           account: walletAccount,
           createdAtSeconds: 0,
           state: "ready_for_wallet_review",
-          execute: testCase.execute
         });
         const db = new Database(dbPath);
         try {
@@ -2664,6 +2360,7 @@ describe("SqliteActivityStore", () => {
 
       await expect(
         store.recordReviewStateSnapshot({
+      reviewRevision: 1,
           reviewSessionId: "review_reject_bad_lifecycle_write",
           fromStatus: "wallet_connected",
           state: withNonCanonicalDeepbookLifecycle(
@@ -2748,25 +2445,6 @@ describe("SqliteActivityStore", () => {
       expect(detail.planJson.assetFlowPreview.expectedIncoming[0]).toMatchObject({
         amountKind: "display_intent"
       });
-    });
-  });
-
-  it("does not set active account for rejected wallet identity results", async () => {
-    await withTempDb(async (activityStore) => {
-      const sessions = new InMemorySessionStore({
-        activityStore,
-        logger: testLogger,
-        validateAdapterLifecycle: validateSupportedAdapterLifecycle
-      });
-      const { session } = await sessions.createWalletIdentitySession(new Date(0));
-      await sessions.recordWalletIdentityOpened(session.id, new Date(1));
-      await sessions.recordWalletIdentityConnecting(session.id, new Date(2));
-      await sessions.recordWalletIdentityResult(
-        session.id,
-        { status: "rejected", failureReason: "user_rejected" },
-        new Date(3)
-      );
-      expect(await activityStore.getActiveAccount()).toBeUndefined();
     });
   });
 

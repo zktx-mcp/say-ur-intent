@@ -13,11 +13,11 @@ It is not the contributor rulebook and it is not enforcement. Development rules 
 | Sui mainnet state reads | Current | Use read tools for supported balances, DeepBook pools, FlowX pools, token registry metadata, mid-price snapshots, orderbook context, raw-quantity quotes, and DeepBook account inventory. |
 | DeepBook USDC candle-history reads | Current DeepBookV3 official Indexer candle evidence | `read.get_deepbook_usdc_price_history` reads DeepBookV3 official Indexer USDC candles for the requested official interval. `read.get_deepbook_usdc_price_at_time` selects the candle for or nearest to one target UTC time and identifies `matchedCandle.close` as the representative price. Treat both as external official Indexer candle evidence, not a live quote, chain recomputation by Say Ur Intent, USD value, route choice, P&L, tax, transaction-building input, signing readiness, or user-account history. |
 | Account, Receipt and DeepBook USDC cards | Internal read-only MCP Apps | Use `ui.open_account`, `ui.open_receipt`, or `ui.open_chart` for an interactive read card. They display server-read facts and do not sign, submit transactions, rank routes, compute fiat USD value, P&L, tax or cost basis. |
-| DeepBook and FlowX swap review sessions | Digest-gated handoff; user-controlled signing on the review page | A review URL can be created. The review URL displays the proposal and local review evidence. The account-bound review can build local unsigned DeepBook or FlowX swap transaction material inside the review server, internally bind a Sui transaction digest to that stored material, and derive object ownership, quote/policy provenance, human-readable review facts, and review-time simulation evidence from the same private review artifacts. Ordinary MCP responses do not provide a sign action, signing data, transaction bytes, or signing readiness. The local review page requests a digest-gated byte handoff for a `ready_for_wallet_review` state, then the user signs in their own wallet. After the page reports the signed transaction digest, the review server re-reads Sui mainnet and records normalized chain receipt evidence. The review page shows server-read chain receipt facts inline on a terminal review session, and a internal Receipt card reads on-chain receipt facts for any transaction digest, without adding wallet or MCP authority. |
-| External proposal review sessions | Non-signable review in the current release | `action.prepare_external_proposal_review` can create a review URL from a structured external payment or Sui action proposal. Treat the proposal as untrusted display and review context only. It does not build, verify, simulate, sign, or execute transaction material. |
-| Wallet signing | User-controlled on the local review page | MCP tools do not return signing readiness, signing data, or executable transaction bytes. Signing and submission happen only from the local review page after the digest-gated handoff; after the page reports the signed transaction digest, the review server records server-read chain receipt evidence keyed by the review session. |
+| DeepBook and FlowX swap review sessions | Internal Review card and backend WalletConnect | Account-bound review independently verifies stored material, digest, ownership, policy, human-readable facts, simulation and PTB evidence. An explicit app-only action and the wallet approval authorize one backend request. Ordinary MCP responses are facts, never signing authority or bytes. |
+| External proposal review sessions | Non-signable review in the current release | `action.prepare_external_proposal_review` can create a internal Review card from a structured external payment or Sui action proposal. Treat the proposal as untrusted display and review context only. It does not build, verify, simulate, sign, or execute transaction material. |
+| Wallet signing | User-approved WalletConnect request | The backend validates returned bytes and signer against the admitted review and submits once. The card and model never receive bytes or signatures. |
 | PTB visualization | Rendered with emitted wallet review contracts | `reviewState.ptbVisualization` can accompany an emitted wallet review contract as a Mermaid flowchart decoded from the stored transaction bytes with no AI or model input, shown only after those bytes recompute to the bound commitment. Treat it as visualization evidence only, not transaction-building input, wallet authorization, signing data, signing readiness, payment execution readiness, or route recommendation. |
-| Transaction material build, wallet execution, fiat cash-out, and P&L | Material build and review evidence implemented for DeepBook and FlowX swap review; MCP signing and execution out of scope; fiat cash-out and P&L out of scope | Account-bound DeepBook and FlowX swap review can build local unsigned transaction material that remains internal to the review server, internally bind a Sui transaction digest to that stored material, project human-readable review facts from material-bound quote policy and object ownership evidence, and summarize review-time simulation of the stored material. The MCP layer does not request wallet signatures, execute, or return transaction bytes; wallet signing and execution happen only in the user's wallet from the local review page after the digest-gated byte handoff, which is gated on recomputed-digest equality with the reviewed contract. Fiat cash-out, P&L, tax, and cost-basis are out of scope. |
+| Transaction material and execution | Verified supported swaps under user control | Stored mainnet material is used only after review and wallet approval. External proposals stay non-signable. Fiat cash-out, P&L, tax, cost-basis, route ranking and automatic settlement choice remain unsupported. |
 | Private-key custody, autonomous trading, fiat USD peg claims, and quote-only coverage or readiness claims | Unsupported safety and correctness boundary | Do not custody funds, hold private keys, or autonomously trade. Do not treat settlement assets as fiat USD, bank cash-out amounts, or peg guarantees. Do not turn quote-only conversion candidates into payment coverage, funding readiness, payment execution readiness, or signing readiness. |
 | Silent settlement-token selection and route ranking | Out of scope by current design | Do not silently choose USDC, USDT, or another settlement token for the user. Do not rank venues, choose routes, or make best-price recommendations. |
 | Other chains, autonomous trading, alerts, arbitrary Move calls, investment advice | Unsupported | Say the request is unsupported and redirect to available Sui mainnet read or review capabilities. |
@@ -145,7 +145,7 @@ Read-only requests split into address-free reads and address-scoped reads.
 - Address-free reads include pool lists, orderbook context, mid prices, and quote facts.
 - Address-scoped reads include explicit public-address snapshots and active-account reads.
 - Use the explicit address when the user asks about a specific Sui address.
-- Use wallet identity only when the request needs active account context.
+- Use wallet connection only when the request needs active account context.
 - Action-preparation requests use words such as prepare, review, swap, buy, sell, or sign.
 
 When an action is unsupported or blocked, say so plainly and offer the closest read-only information.
@@ -170,9 +170,9 @@ transaction material. Do not treat it as route selection. Do not treat it as
 settlement-token selection. Do not treat it as payment execution readiness. Do
 not treat it as signing data or signing readiness.
 
-After a DeepBook or FlowX review session is wallet-account bound, `session.get_review_status` can include review-state checks, `reviewState.adapterLifecycle`, `reviewState.humanReadableReview`, and `reviewState.simulation`. The review page renders those fields as local review evidence.
+After a DeepBook or FlowX review session is wallet-account bound, `session.get_review_status` can include review-state checks, `reviewState.adapterLifecycle`, `reviewState.humanReadableReview`, and `reviewState.simulation`. The Review card renders those fields as local review evidence.
 
-Use `reviewState.adapterLifecycle.stageCatalogId`, `completedStages`, and `missingStages` only to explain which account-bound DeepBook or FlowX review evidence stage catalog is being used, which stages have run, and which required review evidence stages are still missing. If `transaction_material_build_or_verify` is completed, say only that the review server built local unsigned transaction material and kept bytes internal. If `digest_commitment` is completed, say only that the review server internally bound a Sui transaction digest to that stored local material. If `object_ownership` is completed, say only that the review server derived object ownership evidence from the stored local material and Sui owner/type reads. If `review_time_simulation` is completed, say only that the review server simulated the stored local unsigned material with checks enabled and exposed a redacted simulation summary. `reviewState.humanReadableReview` is valid only after `human_readable_review` is completed and not missing; `reviewState.simulation` is valid only after `review_time_simulation` is completed and not missing. Do not provide or infer transaction bytes, signing data, signing readiness, or execution readiness from those stages. This lifecycle stops at review-time simulation; the digest-gated byte handoff follows an emitted contract, wallet signing happens on the local review page under the user's control, and chain receipt evidence is recorded only after the page reports a signed transaction digest for server re-read from Sui mainnet. Use those checks to explain what the local review layer verified before signing. Do not describe them as wallet readiness, signing readiness, route quality, execution safety, or public transaction bytes. The MCP layer never signs, executes, or returns transaction bytes.
+Use `reviewState.adapterLifecycle.stageCatalogId`, `completedStages`, and `missingStages` only to explain which account-bound DeepBook or FlowX review evidence stage catalog is being used, which stages have run, and which required review evidence stages are still missing. If `transaction_material_build_or_verify` is completed, say only that the review server built local unsigned transaction material and kept bytes internal. If `digest_commitment` is completed, say only that the review server internally bound a Sui transaction digest to that stored local material. If `object_ownership` is completed, say only that the review server derived object ownership evidence from the stored local material and Sui owner/type reads. If `review_time_simulation` is completed, say only that the review server simulated the stored local unsigned material with checks enabled and exposed a redacted simulation summary. `reviewState.humanReadableReview` is valid only after `human_readable_review` is completed and not missing; `reviewState.simulation` is valid only after `review_time_simulation` is completed and not missing. Do not provide or infer transaction bytes, signing data, signing readiness, or execution readiness from those stages. The review lifecycle is pre-authorization evidence. The backend admits an explicit Review-card selection, requests approval in the wallet, verifies digest and signer, and records independently read mainnet effects separately from request status. Use those checks to explain what the local review layer verified before signing. Do not describe them as wallet readiness, signing readiness, route quality, execution safety, or public transaction bytes. The MCP layer never signs, executes, or returns transaction bytes.
 
 Use `reviewState.humanReadableReview` only as displayable review facts projected
 from verified local review evidence. Its `kind` currently identifies the shared
@@ -192,9 +192,8 @@ transaction bytes, not a public transaction digest, not signing data, not
 signing readiness, not wallet handoff, not execution readiness, not execution
 receipt evidence, and not proof that a wallet signed or submitted a transaction.
 
-`reviewState.walletReviewAdapterContract` is present only on a
-`ready_for_wallet_review` state or on a stored
-`wallet_handoff_not_implemented` record, after every review evidence stage
+`reviewState.transactionReviewData` is present only on a
+`ready_for_wallet_review` state, after every review evidence stage
 completed and contract assembly passed schema validation. Use it only as
 pre-signing review evidence that binds the human-readable review and the
 review-time simulation to one transaction commitment hash. It is not
@@ -291,52 +290,37 @@ For common USD-denominated evidence questions:
 | "How much are my USD-denominated assets together?" | `read.preview_intent_evidence` with `intentKind: "summarize_settlement_asset_group_balance"`, `denomination: "dollar"` | `responseSummary` |
 | "What is the shortfall?" | Reuse the established target amount, or ask for the missing display target amount | `responseSummary` |
 
-Describe a connected wallet identity as active account context for local reads.
+Describe an active wallet account as read context, not login, proof of
+ownership, standing signature approval or custody. Explicit public-address
+reads do not set that context. Account clearing does not disconnect a wallet.
 
-Do not call the user logged in, authenticated for transactions, signed in, connected for signing, or permanently authorized. The active account context can be cleared at any time and disappears if the local MCP server is reinstalled.
+1. Use `account.get_active_account` when an existing read context can answer the
+   request. `source` and `setAt` explain where it came from.
+2. An explicit connect/reconnect/account replacement request opens an internal
+   Connect card with `session.create_wallet_connection`. The user selects the
+   operation there; the model must not call app-only actions on their behalf.
+3. `session.get_wallet_connection` and `session.wait_wallet_connection` use the
+   returned cardId. An unsubmitted card needs input; waiting does not create a
+   pairing. Pairing credentials/QR never belong in chat text.
+4. After connection/account selection, read `account.get_active_account` before
+   stating which account is active. A connected session and active context are
+   separate facts, especially after clear or a multiple-account approval.
+5. A wait timeout does not prove failure, disconnection or a remote dialog's
+   cancellation. Report the actual stored outcome and pending user action.
 
-For wallet identity:
+Use `session.get_interaction_status` for bounded pending interactions. A Review
+status of ready_for_wallet_review means evidence is ready for user inspection;
+it does not mean the wallet has a pending signing request. Request status is
+reported separately. A completed request has independently observed chain
+success/failure. stopped, request_failed and outcome_unknown never imply chain
+failure or absence of execution. Use `session.get_execution_result` to read the
+known digest without resubmitting. `session.open_review_management` requires the
+exact reviewSessionId and attemptId and grants no new signing/refresh action.
+Frame recreation and chat navigation only reread DB state. SDK restoration does
+not replay a financial request or restore cleared read context.
 
-- First call `account.get_active_account` when a wallet-account read can use existing context.
-- If it is `set`, use that account.
-- Mention `source` and `setAt` when the account may have been set by an earlier session or another MCP client.
-- Ask for confirmation when the user wants a different address.
-- If the user explicitly asks to connect, reconnect, or replace wallet context, create a new wallet identity session even when an active account is already set.
-
-When a new wallet identity session is needed:
-
-1. Call `session.create_wallet_identity`.
-2. Tell the user to open `walletUrl` in the same machine's system browser.
-3. Immediately call `session.wait_wallet_identity` in the same turn after giving the URL; do not stop and wait for the user to say they connected. If the wait tool is unavailable, poll `session.get_wallet_identity` about every 5 seconds.
-4. When the wallet status is `connected`, call `account.get_active_account` again before telling the user which account is currently active.
-5. If `session.wait_wallet_identity` returns `timed_out`, say the wallet connection is still pending; do not treat it as failure.
-6. If the wallet status is `rejected`, `failed`, or `expired`, tell the user that concrete outcome and do not claim an active account was set.
-
-The URL contains a short-lived fragment token. Do not tell the user to copy it to another device, share it, or open it in a client webview.
-
-Display addresses in shortened lowercase form by default: `0x` plus the first 4 hex characters, `...`, and the last 4 hex characters, such as `0xabcd...1234`. Show the full address only when the user asks or when exact verification is needed.
-
-Pending wallet identity and review waits are local process memory only.
-
-- If the local MCP server restarts, call `account.get_active_account` before creating a new wallet identity session.
-- Use `session.get_interaction_status` to inspect active account context and pending shared interactions.
-- In `session.get_interaction_status`, `pendingReviewSessions` includes non-final review sessions whose `statusCategory` is `non_terminal`, `awaiting_chain_result`, or `user_action_required`.
-- `session.get_review_status` returns `pollingStatus` and `statusCategory`; use both fields when explaining whether a review is final, still pending, waiting for a chain result, or waiting for user or review-flow action.
-- `session.wait_execution_result` observes stored review-server transitions and
-  may trigger the same lazy server re-read path used by execution result reads.
-- `timed_out` means the step is still pending.
-- `signed_pending_result` means signing already happened and the local server is waiting for the server re-read of the signed transaction digest from Sui mainnet; do not ask the user to sign again.
-- `success` with `executionResult.chainReceipt` means the review server re-read the digest from Sui mainnet and recorded normalized chain receipt evidence for successful effects.
-- `failure` with `failureReason: "chain_execution_failed"` means Sui mainnet returned failed effects for the digest, and the result can still include `executionResult.chainReceipt`.
-- `failure` with `failureReason: "chain_receipt_unavailable"` or `"receipt_verification_failed"` means the server could not record a verified successful chain receipt for the signed digest.
-- A chain receipt is server-read execution evidence for the digest. It is not transaction bytes, signing data, signing readiness, an execution guarantee, route quality, fiat value, P&L, tax evidence, best-price evidence, or peg evidence.
-- The local review page shows the server-read chain receipt inline on a terminal review session, and a internal Receipt card reads on-chain receipt facts by transaction digest. Treat both as inspection surfaces for server-read receipt facts, not an MCP signing or execution capability and not a second safety verdict.
-- `blocked` means user action or refresh is required, not final success or failure.
-- execution waits stop at `blocked` only while required review evidence is missing; after user signing on the local review page they progress through `signed_pending_result` to `success` or `failure`.
-
-Local review activity tools summarize Say Ur Intent review-session records only. They are separate from user-requested Sui activity scans.
-
-If the user asks about Say Ur Intent reviews, use one of these tools:
+Display shortened lowercase addresses by default and full addresses when exact
+verification is needed. For user-requested local review history, use:
 
 - `read.list_review_activity`;
 - `read.summarize_review_funnel`;
@@ -411,9 +395,9 @@ Rules:
 
 Function activity facts are not route quality, P&L, wallet position inventory, transaction-building input, signing data, signing readiness, protocol support, or complete history.
 
-When the user asks for balances for a specific Sui address, call `read.summarize_wallet_assets` or `read.classify_wallet_assets` with `account`. Do not start wallet identity for that public-address read.
+When the user asks for balances for a specific Sui address, call `read.summarize_wallet_assets` or `read.classify_wallet_assets` with `account`. Do not start wallet connection for that public-address read.
 
-If the user asks for the active wallet's balances without giving an address, use active account context. Create a wallet identity session only when no active account is set.
+If the user asks for the active wallet's balances without giving an address, use active account context. Create a wallet connection session only when no active account is set.
 
 Explicit-address wallet asset reads are live read snapshots only. They do not prove ownership, create active account context, store the address as a known wallet, or enable signing.
 
@@ -452,7 +436,7 @@ Do not silently turn vague words into amounts.
 | User phrase | Response |
 | --- | --- |
 | `a little`, `some`, `roughly` | Ask for an amount and offer examples such as `1 SUI`, `10%`, or `25%`. |
-| `half` | Explain that active account context is needed to calculate spendable balance. If none is set, ask for wallet identity connection. Do not ask for manual address entry. |
+| `half` | Explain that active account context is needed to calculate spendable balance. If none is set, ask for wallet connection connection. Do not ask for manual address entry. |
 | `all`, `everything` | Explain that gas reserve and spendable balance must be calculated before an action can be prepared. |
 | Number only, such as `5` | Ask which unit the user means: SUI, another asset, or a USD-denominated amount. If they mean dollars or stablecoins, use settlement-asset-group evidence before asking for a specific token. |
 

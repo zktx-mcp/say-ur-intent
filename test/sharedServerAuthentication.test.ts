@@ -27,7 +27,7 @@ describe("authenticated loopback dispatch", () => {
     try {
       const fetch = createAuthenticatedFetch(server.port, control);
       const identity = await probeAuthenticatedServer(server.port, control);
-      expect(identity).toMatchObject({ service: "say-ur-intent", role: "shared-server", apiVersion: 1, instanceId: server.instanceId });
+      expect(identity).toMatchObject({ service: "say-ur-intent", role: "shared-server", apiVersion: 3, instanceId: server.instanceId });
       await expect(createAuthenticatedFetch(server.port, control, randomUUID())(
         `http://127.0.0.1:${server.port}${INTERNAL_MCP_PATH}`, { method: "POST", body: "{}" }
       )).rejects.toThrow("Shared server changed before dispatch");
@@ -66,7 +66,7 @@ describe("authenticated loopback dispatch", () => {
         response.end(JSON.stringify({ observed: "operation_dispatched" }));
         return;
       }
-      const identity = { service: "say-ur-intent", role: "shared-server", apiVersion: 1,
+      const identity = { service: "say-ur-intent", role: "shared-server", apiVersion: 3,
         databaseId: control.databaseId, configurationId: control.configurationId, instanceId, pid: process.pid,
         challenge: String(request.headers[IDENTITY_CHALLENGE_HEADER]) };
       if (field === "databaseId" || field === "configurationId") identity[field] = "3".repeat(64);

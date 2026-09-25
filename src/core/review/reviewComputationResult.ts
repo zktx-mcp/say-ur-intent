@@ -12,7 +12,7 @@ import type {
 } from "../action/types.js";
 import type { AdapterLifecycleValidator } from "../action/adapterLifecycleValidation.js";
 import { parseLifecycleValidatedReviewState } from "../action/reviewStateValidation.js";
-import type { PtbVisualizationArtifact, WalletReviewAdapterContract } from "../action/signableAdapterContract.js";
+import type { PtbVisualizationArtifact, TransactionReviewData } from "../action/signableAdapterContract.js";
 
 export type ReviewComputationResultBase = {
   checks: ReviewCheck[];
@@ -20,7 +20,7 @@ export type ReviewComputationResultBase = {
   beforeAfterBalance?: BalanceChange;
   simulation?: TransactionSimulationSummary;
   humanReadableReview?: HumanReadableReviewSummary;
-  walletReviewAdapterContract?: WalletReviewAdapterContract;
+  transactionReviewData?: TransactionReviewData;
   ptbVisualization?: PtbVisualizationArtifact;
   adapterLifecycle?: AdapterLifecycle;
   updatedAt?: string;
@@ -65,8 +65,8 @@ export function mapReviewComputationResultToState(
     ...(result.beforeAfterBalance ? { beforeAfterBalance: result.beforeAfterBalance } : {}),
     ...(result.simulation ? { simulation: result.simulation } : {}),
     ...(result.humanReadableReview ? { humanReadableReview: result.humanReadableReview } : {}),
-    ...(result.walletReviewAdapterContract
-      ? { walletReviewAdapterContract: result.walletReviewAdapterContract }
+    ...(result.transactionReviewData
+      ? { transactionReviewData: result.transactionReviewData }
       : {}),
     ...(result.ptbVisualization ? { ptbVisualization: result.ptbVisualization } : {}),
     ...(result.adapterLifecycle ? { adapterLifecycle: result.adapterLifecycle } : {})
@@ -151,7 +151,7 @@ export function walletReviewContractEmittedResult(
   adapterLifecycle: AdapterLifecycle,
   humanReadableReview: HumanReadableReviewSummary,
   simulation: SuccessfulTransactionSimulationSummary,
-  walletReviewAdapterContract: WalletReviewAdapterContract,
+  transactionReviewData: TransactionReviewData,
   ptbVisualization?: PtbVisualizationArtifact
 ): ReviewComputationResult {
   return {
@@ -160,7 +160,7 @@ export function walletReviewContractEmittedResult(
     adapterLifecycle,
     humanReadableReview,
     simulation,
-    walletReviewAdapterContract,
+    transactionReviewData,
     ...(ptbVisualization ? { ptbVisualization } : {})
   };
 }

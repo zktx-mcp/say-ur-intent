@@ -1,22 +1,27 @@
+import { decideReviewEvaluation, needsReviewMaterial, type ReviewEvaluationCandidate, type ReviewEvaluation } from "../session/reviewValidity.js";
+import { workflowEligibility, type WorkflowEvaluationInput, type EvaluatedWorkflowState } from "../session/workflowState.js";
+import { SessionStoreError } from "../session/sessionErrors.js";
+import { z } from "zod";
+import { TRANSACTION_REQUEST_STATUSES, transactionRequestStatusSchema } from "../session/transactionRequest.js";
 import { isDeepStrictEqual } from "node:util";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
+import { SqliteWalletWorkflowStore, readStoredTransactionRequest } from "../session/sqliteWalletWorkflowStore.js";
 import type { AdapterLifecycleValidator } from "../action/adapterLifecycleValidation.js";
 import { assertNoForbiddenMcpFields } from "../action/forbiddenFields.js";
 import { parseLifecycleValidatedReviewState } from "../action/reviewStateValidation.js";
-import { actionPlanSchema, executionResultSchema } from "../action/schemas.js";
-import type { ActionPlan, ExecutionResult, ReviewState } from "../action/types.js";
+import { actionPlanSchema } from "../action/schemas.js";
+import type { ActionPlan, ReviewState } from "../action/types.js";
 import { parseSuiAddress } from "../suiAddress.js";
 import { SqlitePreferencesRepository } from "../preferences/sqlitePreferencesRepository.js";
 import { SqliteTransactionMaterialStore } from "../session/sqliteTransactionMaterialStore.js";
 import { SqliteCardRecordStore } from "../session/sqliteCardStore.js";
-import type { LocalTransactionMaterialStore } from "../session/transactionMaterialStore.js";
+import { sameHandle, type LocalTransactionMaterialStore } from "../session/transactionMaterialStore.js";
 import {
   SqliteSessionRecordStore,
   SqlitePrivateReviewArtifactStore,
-  createSqliteWalletIdentityRecordStore,
   createSqliteSettingsRecordStore,
   sessionFromLiveReviewSessionRow,
   insertLiveReviewSessionRow,
@@ -26,7 +31,6 @@ import {
 import type { SessionRecordStore } from "../session/sessionRecordStore.js";
 import type { PrivateReviewArtifactStore } from "../session/privateReviewArtifacts.js";
 import type { KeyedRecordStore } from "../session/keyedRecordStore.js";
-import type { WalletIdentitySession } from "../session/walletIdentity.js";
 import type { SettingsSession } from "../session/settingsSession.js";
 import type {
   CoinMetadataCache,
@@ -56,13 +60,10 @@ import type {
   ReviewActivityFilter,
   ReviewActivityListFilter,
   ReviewActivityListResult,
-  ReviewFunnelSummary,
   ReviewFunnelSummaryResult,
   ReviewSessionEvidenceInput,
   ReviewSessionDetailInput,
   ReviewSessionDetailResult,
-  ReviewExecutionInput,
-  ReviewExecutionRecord,
   ReviewStateSnapshotInput,
   ReviewTransitionInput,
   LiveReviewSessionMutation
@@ -88,7 +89,6 @@ import {
   EXTERNAL_ACTIVITY_STATUSES,
   INTERNAL_SESSION_STATUSES,
   REVIEW_STATE_STATUSES,
-  REVIEW_TRANSITION_EVENTS,
   type AccountRow,
   type ActiveAccountRow,
   type CoinMetadataCacheRow,
@@ -98,18 +98,13 @@ import {
   type KeyCountRow,
   type ReviewActivityListRow,
   type ReviewActivityScope,
-  type ReviewExecutionRow,
-  type ReviewExecutionStorageRow,
-  type ReviewSessionDetailRow,
   type ReviewStateSnapshotRow,
   type ReviewTransitionRow,
-  type TimingRow,
   asAccountSource,
   asInternalSessionStatus,
   asReviewTransitionEvent,
   asString,
   assertDateRange,
-  canAdvanceReviewExecution,
   coinMetadataCacheRecordFromRow,
   countMap,
   emptyExternalActivitySummaryStats,
@@ -118,7 +113,6 @@ import {
   externalActivitySummaryResult,
   externalActivityTransactionFromRow,
   extractRequestedIntent,
-  isSameReviewExecution,
   normalizeExternalActivityLimit,
   normalizeListLimit,
   nullableSeconds,
@@ -202,10 +196,15 @@ export class SqliteActivityStore implements ActivityStore {
 
   async setActiveAccount(
     address: string,
-    source: "wallet_identity",
+    source: "wallet_connection",
     now = new Date(),
     wallet?: { name?: string | undefined; id?: string | undefined }
   ): Promise<ActiveAccountRecord> {
+    return this.setActiveAccountSync(address, source, now, wallet);
+  }
+
+  private setActiveAccountSync(address: string, source: "wallet_connection", now: Date,
+    wallet?: { name?: string | undefined; id?: string | undefined }): ActiveAccountRecord {
     const timestamp = now.toISOString();
     return this.db.transaction(() => {
       const account = this.upsertAccountSync(address, source, timestamp);
@@ -343,6 +342,13 @@ export class SqliteActivityStore implements ActivityStore {
     input: ReviewTransitionInput,
     live: LiveReviewSessionMutation
   ): Promise<boolean> {
+    return this.recordReviewTransitionWithLiveSessionSync(input, live);
+  }
+
+  private recordReviewTransitionWithLiveSessionSync(
+    input: ReviewTransitionInput,
+    live: LiveReviewSessionMutation
+  ): boolean {
     return this.runLiveReviewSessionMutation(live, () => {
       const accountId = input.account
         ? this.upsertAccountSync(input.account, "review_execution", input.transitionedAt).id
@@ -375,8 +381,8 @@ export class SqliteActivityStore implements ActivityStore {
           .prepare(
             `INSERT INTO review_state_snapshots
                (review_session_id, plan_id, account_id, status, blocked_reason, refresh_reason,
-                state_json, updated_at, recorded_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                state_json, updated_at, recorded_at, review_revision)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .run(
             input.reviewSessionId,
@@ -387,7 +393,7 @@ export class SqliteActivityStore implements ActivityStore {
             "refreshReason" in parsedState ? parsedState.refreshReason : null,
             stateJson,
             parsedState.updatedAt,
-            input.recordedAt
+            input.recordedAt, input.reviewRevision
           );
         this.insertReviewTransition({
           reviewSessionId: input.reviewSessionId,
@@ -412,17 +418,37 @@ export class SqliteActivityStore implements ActivityStore {
     input: ReviewStateSnapshotInput,
     live: LiveReviewSessionMutation
   ): Promise<boolean> {
+    return this.recordReviewStateSnapshotWithLiveSessionSync(input, live);
+  }
+
+  private recordReviewStateSnapshotWithLiveSessionSync(
+    input: ReviewStateSnapshotInput,
+    live: LiveReviewSessionMutation
+  ): boolean {
     const parsedState = parseLifecycleValidatedReviewState(input.state, this.validateAdapterLifecycle);
     const stateJson = serializeJson(parsedState);
     return this.runLiveReviewSessionMutation(live, () => {
+      if (live.publication) {
+        const { material: checked, clock } = live.publication;
+        const at = clock(), handle = checked.artifacts.transactionMaterial;
+        const material = handle && this.createTransactionMaterialStore().getTransactionMaterial(handle, at);
+        const connection = live.expected?.walletConnectionId ? this.db.prepare("SELECT revision,status,owner_id,connection_json FROM live_wallet_connections WHERE id=?")
+          .get(live.expected.walletConnectionId) as { revision: number; status: string; owner_id: string; connection_json: string } | undefined : undefined;
+        if (Date.parse(live.next.expiresAt) <= at.getTime() || !handle || !material || !sameHandle(material, handle) ||
+            !Buffer.from(material.transactionBytes).equals(checked.transactionBytes) || !connection || connection.status !== "connected" ||
+            connection.owner_id !== live.expected?.ownerId || connection.revision !== live.expected?.walletConnectionRevision ||
+            Date.parse((JSON.parse(connection.connection_json) as { expiresAt: string }).expiresAt) <= at.getTime()) {
+          throw new SessionStoreError("invalid_session_transition", "Review material or wallet selection changed before publication.");
+        }
+      }
       const account = this.upsertAccountSync(parsedState.account, "review_execution", input.recordedAt);
       this.assertReviewSessionAccount(input.reviewSessionId, account.id);
       this.db
         .prepare(
           `INSERT INTO review_state_snapshots
              (review_session_id, plan_id, account_id, status, blocked_reason, refresh_reason,
-              state_json, updated_at, recorded_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              state_json, updated_at, recorded_at, review_revision)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           input.reviewSessionId,
@@ -433,7 +459,7 @@ export class SqliteActivityStore implements ActivityStore {
           "refreshReason" in parsedState ? parsedState.refreshReason : null,
           stateJson,
           parsedState.updatedAt,
-          input.recordedAt
+          input.recordedAt, input.reviewRevision
         );
       this.insertReviewTransition({
         reviewSessionId: input.reviewSessionId,
@@ -454,467 +480,139 @@ export class SqliteActivityStore implements ActivityStore {
     });
   }
 
-  async recordReviewExecution(input: ReviewExecutionInput): Promise<ReviewExecutionRecord> {
-    const resultJson = serializeJson(input.result);
-    this.db
-      .transaction(() => {
-        const account = this.upsertAccountSync(input.account, "review_execution", input.recordedAt);
-        this.assertReviewSessionAccount(input.reviewSessionId, account.id);
-        const existing = this.getReviewExecutionStorageRow(input.reviewSessionId);
-        if (existing) {
-          if (isSameReviewExecution(existing, account.id, input)) {
-            return;
-          }
-          if (!canAdvanceReviewExecution(existing, account.id, input)) {
-            throw new ActivityStoreError(`Conflicting review execution evidence: ${input.reviewSessionId}`);
-          }
-        }
-        this.db
-          .prepare(
-            `INSERT INTO review_executions
-               (review_session_id, plan_id, account_id, status, tx_digest, explorer_url,
-                failure_reason, result_json, recorded_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(review_session_id) DO UPDATE SET
-               plan_id = excluded.plan_id,
-               account_id = excluded.account_id,
-               status = excluded.status,
-               tx_digest = excluded.tx_digest,
-               explorer_url = excluded.explorer_url,
-               failure_reason = excluded.failure_reason,
-               result_json = excluded.result_json,
-               updated_at = excluded.updated_at`
-          )
-          .run(
-            input.reviewSessionId,
-            input.planId,
-            account.id,
-            input.status,
-            input.txDigest ?? null,
-            input.explorerUrl ?? null,
-            input.failureReason ?? null,
-            resultJson,
-            input.recordedAt,
-            input.recordedAt
-          );
-        this.insertReviewTransition({
-          reviewSessionId: input.reviewSessionId,
-          event: "result_recorded",
-          fromStatus: input.fromStatus,
-          toStatus: input.status,
-          accountId: account.id,
-          reason: input.failureReason,
-          transitionedAt: input.recordedAt
-        });
-        this.db
-          .prepare(
-            `UPDATE review_sessions
-             SET current_status = ?, account_id = ?, updated_at = ?
-             WHERE id = ?`
-          )
-          .run(input.status, account.id, input.recordedAt, input.reviewSessionId);
-      })();
-    const recorded = await this.getReviewExecution(input.reviewSessionId);
-    if (!recorded) {
-      throw new ActivityStoreError(`Review execution was not recorded: ${input.reviewSessionId}`);
-    }
-    return recorded;
-  }
-
-  async recordReviewExecutionWithLiveSession(
-    input: ReviewExecutionInput,
-    live: LiveReviewSessionMutation
-  ): Promise<ReviewExecutionRecord | undefined> {
-    const resultJson = serializeJson(input.result);
-    const committed = this.runLiveReviewSessionMutation(live, () => {
-      const account = this.upsertAccountSync(input.account, "review_execution", input.recordedAt);
-      this.assertReviewSessionAccount(input.reviewSessionId, account.id);
-      const existing = this.getReviewExecutionStorageRow(input.reviewSessionId);
-      if (existing) {
-        if (isSameReviewExecution(existing, account.id, input)) {
-          return;
-        }
-        if (!canAdvanceReviewExecution(existing, account.id, input)) {
-          throw new ActivityStoreError(`Conflicting review execution evidence: ${input.reviewSessionId}`);
-        }
-      }
-      this.db
-        .prepare(
-          `INSERT INTO review_executions
-             (review_session_id, plan_id, account_id, status, tx_digest, explorer_url,
-              failure_reason, result_json, recorded_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(review_session_id) DO UPDATE SET
-             plan_id = excluded.plan_id,
-             account_id = excluded.account_id,
-             status = excluded.status,
-             tx_digest = excluded.tx_digest,
-             explorer_url = excluded.explorer_url,
-             failure_reason = excluded.failure_reason,
-             result_json = excluded.result_json,
-             updated_at = excluded.updated_at`
-        )
-        .run(
-          input.reviewSessionId,
-          input.planId,
-          account.id,
-          input.status,
-          input.txDigest ?? null,
-          input.explorerUrl ?? null,
-          input.failureReason ?? null,
-          resultJson,
-          input.recordedAt,
-          input.recordedAt
-        );
-      this.insertReviewTransition({
-        reviewSessionId: input.reviewSessionId,
-        event: "result_recorded",
-        fromStatus: input.fromStatus,
-        toStatus: input.status,
-        accountId: account.id,
-        reason: input.failureReason,
-        transitionedAt: input.recordedAt
-      });
-      this.db
-        .prepare(
-          `UPDATE review_sessions
-           SET current_status = ?, account_id = ?, updated_at = ?
-           WHERE id = ?`
-        )
-        .run(input.status, account.id, input.recordedAt, input.reviewSessionId);
-    });
-    if (!committed) {
-      return undefined;
-    }
-    const recorded = await this.getReviewExecution(input.reviewSessionId);
-    if (!recorded) {
-      throw new ActivityStoreError(`Review execution was not recorded: ${input.reviewSessionId}`);
-    }
-    return recorded;
-  }
-
-  private getReviewExecutionStorageRow(reviewSessionId: string): ReviewExecutionStorageRow | undefined {
-    return this.db
-      .prepare(
-        `SELECT review_session_id, plan_id, account_id, status, tx_digest, explorer_url, failure_reason
-         FROM review_executions
-         WHERE review_session_id = ?`
-      )
-      .get(reviewSessionId) as ReviewExecutionStorageRow | undefined;
-  }
-
-  async getReviewExecution(reviewSessionId: string): Promise<ReviewExecutionRecord | undefined> {
-    const row = this.db
-      .prepare(
-        `SELECT r.review_session_id, r.plan_id, r.account_id, a.sui_address AS account,
-                r.status, r.tx_digest, r.explorer_url, r.failure_reason, r.recorded_at, r.updated_at
-         FROM review_executions r
-         JOIN accounts a ON a.id = r.account_id
-         WHERE r.review_session_id = ?`
-      )
-      .get(reviewSessionId) as ReviewExecutionRow | undefined;
-    return row
-      ? {
-          reviewSessionId: asString(row.review_session_id),
-          planId: asString(row.plan_id),
-          accountId: row.account_id,
-          account: asString(row.account),
-          status: asString(row.status),
-          txDigest: row.tx_digest === null ? undefined : asString(row.tx_digest),
-          explorerUrl: row.explorer_url === null ? undefined : asString(row.explorer_url),
-          failureReason: row.failure_reason === null ? undefined : asString(row.failure_reason),
-          recordedAt: asString(row.recorded_at),
-          updatedAt: asString(row.updated_at)
-        }
-      : undefined;
-  }
-
   async listReviewActivity(filter: ReviewActivityListFilter): Promise<ReviewActivityListResult> {
-    const from = parseOptionalIsoTimestamp(filter.from, "from");
-    const to = parseOptionalIsoTimestamp(filter.to, "to");
+    const from = parseOptionalIsoTimestamp(filter.from, "from"), to = parseOptionalIsoTimestamp(filter.to, "to");
     assertDateRange(from, to);
-    const limit = normalizeListLimit(filter.limit);
-    const scope = this.resolveReviewActivityScope(filter);
-
-    if (scope.accountId === undefined) {
-      return reviewActivityListResult(scope, from, to, [], false, 0);
-    }
-
-    const { whereSql, params } = reviewSessionWhere(scope.accountId, from, to, filter.status);
-    const totalRow = this.db
-      .prepare(`SELECT COUNT(*) AS count FROM review_sessions rs ${whereSql}`)
-      .get(...params) as CountRow;
-    const rows = this.db
-      .prepare(
-        `SELECT rs.id AS review_session_id, rs.plan_id, rs.action_kind, rs.adapter_id, rs.protocol,
-                rs.current_status, a.sui_address AS account, rs.created_at, rs.updated_at,
-                re.status AS execution_status, re.tx_digest,
-                (SELECT COUNT(*) FROM review_state_snapshots s WHERE s.review_session_id = rs.id) AS snapshot_count,
-                (SELECT COUNT(*) FROM review_status_transitions t WHERE t.review_session_id = rs.id) AS transition_count
-         FROM review_sessions rs
-         JOIN accounts a ON a.id = rs.account_id
-         LEFT JOIN review_executions re ON re.review_session_id = rs.id
-         ${whereSql}
-         ORDER BY rs.created_at DESC, rs.id DESC
-         LIMIT ?`
-      )
-      .all(...params, limit + 1) as ReviewActivityListRow[];
-    const truncated = rows.length > limit;
-    const activities = rows.slice(0, limit).map(reviewActivityRowFromStorage);
-    return reviewActivityListResult(scope, from, to, activities, truncated, totalRow.count);
+    const limit = normalizeListLimit(filter.limit), scope = this.resolveReviewActivityScope(filter);
+    if (scope.accountId === undefined) return reviewActivityListResult(scope, from, to, [], false, 0);
+    const base = reviewSessionWhere(scope.accountId, from, to, filter.reviewStatus);
+    let where = base.whereSql; const params = [...base.params];
+    if (filter.requestStatus !== undefined) { where += " AND r.request_status=?"; params.push(transactionRequestStatusSchema.parse(filter.requestStatus)); }
+    if (filter.executionStatus !== undefined) { where += " AND e.status=?"; params.push(z.enum(["success", "failure"]).parse(filter.executionStatus)); }
+    const joins = `FROM review_sessions rs JOIN accounts a ON a.id=rs.account_id
+      LEFT JOIN review_requests r ON r.attempt_id=rs.current_attempt_id AND r.review_session_id=rs.id AND r.account_id=rs.account_id
+      LEFT JOIN review_executions e ON e.attempt_id=r.attempt_id`;
+    const count = (this.db.prepare(`SELECT COUNT(*) AS count ${joins} ${where}`).get(...params) as CountRow).count;
+    const rows = this.db.prepare(`SELECT rs.id AS review_session_id, rs.plan_id, rs.action_kind, rs.adapter_id, rs.protocol,
+      rs.current_status, rs.current_attempt_id, a.sui_address AS account, rs.created_at, rs.updated_at,
+      e.status AS execution_status, e.tx_digest,
+      (SELECT COUNT(*) FROM review_state_snapshots s WHERE s.review_session_id=rs.id) AS snapshot_count,
+      (SELECT COUNT(*) FROM review_status_transitions t WHERE t.review_session_id=rs.id) AS transition_count
+      ${joins} ${where} ORDER BY rs.created_at DESC,rs.id DESC LIMIT ?`).all(...params, limit + 1) as ReviewActivityListRow[];
+    const activities = rows.slice(0, limit).map((row) => {
+      const request = row.current_attempt_id ? this.readRequestEvidence(row.current_attempt_id, row.review_session_id, row.account) : undefined;
+      return reviewActivityRowFromStorage(row, request);
+    });
+    return reviewActivityListResult(scope, from, to, activities, rows.length > limit, count);
   }
 
   async summarizeReviewFunnel(filter: ReviewActivityFilter): Promise<ReviewFunnelSummaryResult> {
-    const from = parseOptionalIsoTimestamp(filter.from, "from");
-    const to = parseOptionalIsoTimestamp(filter.to, "to");
+    const from = parseOptionalIsoTimestamp(filter.from, "from"), to = parseOptionalIsoTimestamp(filter.to, "to");
     assertDateRange(from, to);
-    const scope = this.resolveReviewActivityScope(filter);
-
-    if (scope.accountId === undefined) {
-      return reviewFunnelResult(scope, from, to, emptyReviewFunnelSummary(), 0);
+    const scope = this.resolveReviewActivityScope(filter), summary = emptyReviewFunnelSummary();
+    if (scope.accountId === undefined) return reviewFunnelResult(scope, from, to, summary, 0);
+    const { whereSql: where, params } = reviewSessionWhere(scope.accountId, from, to);
+    const totals = this.db.prepare(`SELECT COUNT(*) AS total,
+      SUM(CASE WHEN rs.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened,
+      SUM(CASE WHEN r.attempt_id IS NULL THEN 1 ELSE 0 END) AS without_request,
+      SUM(CASE WHEN e.attempt_id IS NULL THEN 1 ELSE 0 END) AS without_execution,
+      SUM(CASE WHEN rs.current_status='expired' AND NOT EXISTS (SELECT 1 FROM review_executions x WHERE x.review_session_id=rs.id) THEN 1 ELSE 0 END) AS expired_without_execution
+      FROM review_sessions rs LEFT JOIN review_requests r ON r.attempt_id=rs.current_attempt_id AND r.review_session_id=rs.id
+      LEFT JOIN review_executions e ON e.attempt_id=r.attempt_id ${where}`).get(...params) as {
+        total: number; opened: number | null; without_request: number | null; without_execution: number | null; expired_without_execution: number | null;
+      };
+    summary.total = totals.total; summary.opened = totals.opened ?? 0;
+    summary.withoutRequest = totals.without_request ?? 0; summary.withoutExecutionResult = totals.without_execution ?? 0;
+    summary.expiredWithoutExecutionResult = totals.expired_without_execution ?? 0;
+    const eventCounts = this.db.prepare(`SELECT t.event AS key,COUNT(DISTINCT t.review_session_id) AS count
+      FROM review_status_transitions t JOIN review_sessions rs ON rs.id=t.review_session_id ${where} AND t.domain='review' GROUP BY t.event`)
+      .all(...params) as KeyCountRow[];
+    summary.walletConnected = eventCounts.find((row) => row.key === "wallet_connected")?.count ?? 0;
+    summary.stateComputed = eventCounts.find((row) => row.key === "state_computed")?.count ?? 0;
+    summary.reviewStatusCounts = countMap(INTERNAL_SESSION_STATUSES, this.db.prepare(`SELECT rs.current_status AS key,COUNT(*) AS count FROM review_sessions rs ${where} GROUP BY rs.current_status`).all(...params) as KeyCountRow[]);
+    const requestCounts = countMap(TRANSACTION_REQUEST_STATUSES, this.db.prepare(`SELECT r.request_status AS key,COUNT(*) AS count FROM review_sessions rs
+      JOIN review_requests r ON r.attempt_id=rs.current_attempt_id AND r.review_session_id=rs.id ${where} GROUP BY r.request_status`).all(...params) as KeyCountRow[]);
+    summary.requestStatusCounts = TRANSACTION_REQUEST_STATUSES.map((requestStatus) => ({ requestStatus, count: requestCounts[requestStatus] }));
+    summary.executionStatusCounts = countMap(["success", "failure"] as const, this.db.prepare(`SELECT e.status AS key,COUNT(*) AS count FROM review_sessions rs
+      JOIN review_executions e ON e.attempt_id=rs.current_attempt_id AND e.review_session_id=rs.id ${where} GROUP BY e.status`).all(...params) as KeyCountRow[]);
+    summary.everReachedReviewStateCounts = countMap(REVIEW_STATE_STATUSES, this.db.prepare(`SELECT t.to_status AS key,COUNT(DISTINCT rs.id) AS count
+      FROM review_status_transitions t JOIN review_sessions rs ON rs.id=t.review_session_id ${where} AND t.domain='review'
+      AND t.to_status IN ('ready_for_wallet_review','blocked','refresh_required') GROUP BY t.to_status`).all(...params) as KeyCountRow[]);
+    summary.everAwaitedChainResult = (this.db.prepare(`SELECT COUNT(DISTINCT rs.id) AS count FROM review_status_transitions t
+      JOIN review_sessions rs ON rs.id=t.review_session_id ${where} AND t.domain='request' AND t.to_status='awaiting_chain_result'`).get(...params) as CountRow).count;
+    const timing = this.db.prepare(`SELECT AVG((julianday(first.verified_at)-julianday(rs.created_at))*86400.0) AS created,
+      AVG(CASE WHEN rs.opened_at IS NULL THEN NULL ELSE (julianday(first.verified_at)-julianday(rs.opened_at))*86400.0 END) AS opened
+      FROM review_sessions rs JOIN (SELECT review_session_id,MIN(signature_verified_at) AS verified_at FROM review_requests
+      WHERE signature_verified_at IS NOT NULL GROUP BY review_session_id) first ON first.review_session_id=rs.id ${where}`)
+      .get(...params) as { created: number | null; opened: number | null };
+    summary.avgCreatedToSignatureVerifiedSeconds = nullableSeconds(timing.created);
+    summary.avgOpenedToSignatureVerifiedSeconds = nullableSeconds(timing.opened);
+    const inconsistent = this.db.prepare(`SELECT rs.id FROM review_sessions rs LEFT JOIN review_requests r ON r.attempt_id=rs.current_attempt_id
+      LEFT JOIN review_executions e ON e.attempt_id=r.attempt_id ${where} AND
+      ((rs.current_attempt_id IS NOT NULL AND (r.attempt_id IS NULL OR r.review_session_id!=rs.id OR r.account_id!=rs.account_id)) OR
+       (r.request_status='completed' AND e.attempt_id IS NULL) OR (e.attempt_id IS NOT NULL AND
+       (r.request_status!='completed' OR e.tx_digest!=r.transaction_digest OR json_valid(e.result_json)=0))) LIMIT 1`).get(...params);
+    if (inconsistent) throw new ActivityStoreReadError("internal_error", "Stored review request evidence is inconsistent.", { reason: "invalid_stored_evidence" });
+    // Aggregation must not turn a malformed current result into a valid count.
+    for (const row of this.db.prepare(`SELECT rs.id,rs.current_attempt_id,a.sui_address AS account
+      FROM review_sessions rs JOIN accounts a ON a.id=rs.account_id ${where} AND rs.current_attempt_id IS NOT NULL`)
+      .all(...params) as { id: string; current_attempt_id: string; account: string }[]) {
+      this.readRequestEvidence(row.current_attempt_id, row.id, row.account);
     }
+    return reviewFunnelResult(scope, from, to, summary, summary.total);
+  }
 
-    const { whereSql, params } = reviewSessionWhere(scope.accountId, from, to);
-    const total = (this.db
-      .prepare(`SELECT COUNT(*) AS count FROM review_sessions rs ${whereSql}`)
-      .get(...params) as CountRow).count;
-    const eventCounts = this.db
-      .prepare(
-        `SELECT t.event AS key, COUNT(DISTINCT t.review_session_id) AS count
-         FROM review_status_transitions t
-         JOIN review_sessions rs ON rs.id = t.review_session_id
-         ${whereSql}
-         GROUP BY t.event`
-      )
-      .all(...params) as KeyCountRow[];
-    const currentStatusCounts = this.db
-      .prepare(
-        `SELECT rs.current_status AS key, COUNT(*) AS count
-         FROM review_sessions rs
-         ${whereSql}
-         GROUP BY rs.current_status`
-      )
-      .all(...params) as KeyCountRow[];
-    const reachedStateCounts = this.db
-      .prepare(
-        `SELECT t.to_status AS key, COUNT(DISTINCT t.review_session_id) AS count
-         FROM review_status_transitions t
-         JOIN review_sessions rs ON rs.id = t.review_session_id
-         ${whereSql}
-           AND t.to_status IN ('ready_for_wallet_review', 'blocked', 'refresh_required')
-         GROUP BY t.to_status`
-      )
-      .all(...params) as KeyCountRow[];
-    const signedPending = (this.db
-      .prepare(
-        `SELECT COUNT(DISTINCT t.review_session_id) AS count
-         FROM review_status_transitions t
-         JOIN review_sessions rs ON rs.id = t.review_session_id
-         ${whereSql}
-           AND t.event = 'result_recorded'
-           AND t.to_status = 'signed_pending_result'`
-      )
-      .get(...params) as CountRow).count;
-    const expiredBeforeResult = (this.db
-      .prepare(
-        `SELECT COUNT(*) AS count
-         FROM review_sessions rs
-         LEFT JOIN review_executions re ON re.review_session_id = rs.id
-         ${whereSql}
-           AND rs.current_status = 'expired'
-           AND re.review_session_id IS NULL`
-      )
-      .get(...params) as CountRow).count;
-    const timing = this.db
-      .prepare(
-        `WITH scoped AS (
-           SELECT rs.id, rs.created_at
-           FROM review_sessions rs
-           ${whereSql}
-         ),
-         signed AS (
-           SELECT review_session_id, MIN(transitioned_at) AS signed_at
-           FROM review_status_transitions
-           WHERE event = 'result_recorded' AND to_status = 'signed_pending_result'
-           GROUP BY review_session_id
-         ),
-         opened AS (
-           SELECT review_session_id, MIN(transitioned_at) AS opened_at
-           FROM review_status_transitions
-           WHERE event = 'opened'
-           GROUP BY review_session_id
-         )
-         SELECT
-           AVG((julianday(signed.signed_at) - julianday(scoped.created_at)) * 86400.0) AS avg_created_to_signed,
-           AVG(
-             CASE
-               WHEN opened.opened_at IS NULL THEN NULL
-               ELSE (julianday(signed.signed_at) - julianday(opened.opened_at)) * 86400.0
-             END
-           ) AS avg_opened_to_signed
-         FROM scoped
-         JOIN signed ON signed.review_session_id = scoped.id
-         LEFT JOIN opened ON opened.review_session_id = scoped.id`
-      )
-      .get(...params) as TimingRow;
-
-    const currentStatus = countMap(INTERNAL_SESSION_STATUSES, currentStatusCounts);
-    const reachedStates = countMap(REVIEW_STATE_STATUSES, reachedStateCounts);
-    const events = countMap(REVIEW_TRANSITION_EVENTS, eventCounts);
-    const summary: ReviewFunnelSummary = {
-      total,
-      opened: events.opened,
-      walletConnected: events.wallet_connected,
-      stateComputed: events.state_computed,
-      currentStatusCounts: currentStatus,
-      everReachedReviewStateCounts: reachedStates,
-      signedPending,
-      success: currentStatus.success,
-      failure: currentStatus.failure,
-      expiredBeforeResult,
-      avgCreatedToSignedSeconds: nullableSeconds(timing.avg_created_to_signed),
-      avgOpenedToSignedSeconds: nullableSeconds(timing.avg_opened_to_signed)
-    };
-    return reviewFunnelResult(scope, from, to, summary, total);
+  private readRequestEvidence(id: string, reviewSessionId: string, account: string) {
+    try {
+      const request = readStoredTransactionRequest(this.db, id);
+      if (!request || request.reviewSessionId !== reviewSessionId || request.account !== account) throw new Error("Request identity mismatch");
+      return request;
+    } catch {
+      throw new ActivityStoreReadError("internal_error", "Stored review request evidence is invalid.", { reason: "invalid_stored_evidence", reviewSessionId });
+    }
   }
 
   async getReviewSessionDetail(input: ReviewSessionDetailInput): Promise<ReviewSessionDetailResult> {
     const scope = this.resolveReviewActivityScope({ account: input.account });
-    if (scope.accountId === undefined) {
-      throw new ActivityStoreReadError("session_not_found", "Review session not found", {
-        reviewSessionId: input.reviewSessionId
-      });
-    }
-    const row = this.db
-      .prepare(
-        `SELECT rs.id AS review_session_id, rs.plan_id, rs.action_kind, rs.adapter_id, rs.protocol,
-                rs.current_status, a.sui_address AS account, rs.created_at, rs.updated_at,
-                rs.plan_json, rs.intent_json,
-                re.status AS execution_status, re.tx_digest, re.explorer_url, re.failure_reason,
-                re.recorded_at AS execution_recorded_at, re.updated_at AS execution_updated_at,
-                re.result_json
-         FROM review_sessions rs
-         JOIN accounts a ON a.id = rs.account_id
-         LEFT JOIN review_executions re ON re.review_session_id = rs.id
-         WHERE rs.id = ? AND rs.account_id = ?`
-      )
-      .get(input.reviewSessionId, scope.accountId) as ReviewSessionDetailRow | undefined;
-    if (!row) {
-      throw new ActivityStoreReadError("session_not_found", "Review session not found", {
-        reviewSessionId: input.reviewSessionId
-      });
-    }
-
-    const snapshotRows = this.db
-      .prepare(
-        `SELECT s.id, s.plan_id, a.sui_address AS account, s.status, s.blocked_reason, s.refresh_reason,
-                s.state_json, s.updated_at, s.recorded_at
-         FROM review_state_snapshots s
-         JOIN accounts a ON a.id = s.account_id
-         WHERE s.review_session_id = ? AND s.account_id = ?
-         ORDER BY s.recorded_at ASC, s.id ASC
-         LIMIT ?`
-      )
+    const row = scope.accountId === undefined ? undefined : this.db.prepare(`SELECT rs.*, a.sui_address AS account
+      FROM review_sessions rs JOIN accounts a ON a.id=rs.account_id WHERE rs.id=? AND rs.account_id=?`)
+      .get(input.reviewSessionId, scope.accountId) as { id: string; plan_id: string; action_kind: string; adapter_id: string; protocol: string;
+        current_status: string; current_attempt_id: string | null; created_at: string; updated_at: string; account: string; plan_json: string; intent_json: string | null } | undefined;
+    if (!row) throw new ActivityStoreReadError("session_not_found", "Review session not found", { reviewSessionId: input.reviewSessionId });
+    const snapshots = this.db.prepare(`SELECT s.*,a.sui_address AS account FROM review_state_snapshots s JOIN accounts a ON a.id=s.account_id
+      WHERE s.review_session_id=? AND s.account_id=? ORDER BY s.recorded_at,s.id LIMIT ?`)
       .all(input.reviewSessionId, scope.accountId, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS + 1) as ReviewStateSnapshotRow[];
-    const transitionRows = this.db
-      .prepare(
-        `SELECT t.id, t.event, t.from_status, t.to_status, a.sui_address AS account,
-                t.reason, t.transitioned_at
-         FROM review_status_transitions t
-         LEFT JOIN accounts a ON a.id = t.account_id
-         WHERE t.review_session_id = ? AND (t.account_id IS NULL OR t.account_id = ?)
-         ORDER BY t.transitioned_at ASC, t.id ASC
-         LIMIT ?`
-      )
+    const transitions = this.db.prepare(`SELECT t.*,a.sui_address AS account FROM review_status_transitions t LEFT JOIN accounts a ON a.id=t.account_id
+      WHERE t.review_session_id=? AND (t.account_id IS NULL OR t.account_id=?) ORDER BY t.transitioned_at,t.id LIMIT ?`)
       .all(input.reviewSessionId, scope.accountId, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS + 1) as ReviewTransitionRow[];
-    const recordCount = (this.db
-      .prepare(`SELECT COUNT(*) AS count FROM review_sessions rs WHERE rs.account_id = ?`)
-      .get(scope.accountId) as CountRow).count;
-
-    const snapshotsTruncated = snapshotRows.length > REVIEW_ACTIVITY_DETAIL_MAX_ITEMS;
-    const transitionsTruncated = transitionRows.length > REVIEW_ACTIVITY_DETAIL_MAX_ITEMS;
-    const planJson = parseEvidenceJson<ActionPlan>(
-      row.plan_json,
-      input.reviewSessionId,
-      "plan_json",
-      actionPlanSchema
-    );
-    const intentJson = row.intent_json === null
-      ? undefined
-      : parseEvidenceJson<unknown>(row.intent_json, input.reviewSessionId, "intent_json");
-    const execution = row.execution_status === null
-      ? undefined
-      : {
-          reviewSessionId: asString(row.review_session_id),
-          planId: asString(row.plan_id),
-          accountId: scope.accountId,
-          account: asString(row.account),
-          status: asString(row.execution_status),
-          txDigest: row.tx_digest === null ? undefined : asString(row.tx_digest),
-          explorerUrl: row.explorer_url === null ? undefined : asString(row.explorer_url),
-          failureReason: row.failure_reason === null ? undefined : asString(row.failure_reason),
-          recordedAt: asString(row.execution_recorded_at),
-          updatedAt: asString(row.execution_updated_at),
-          resultJson: parseEvidenceJson<ExecutionResult>(
-            row.result_json,
-            input.reviewSessionId,
-            "result_json",
-            executionResultSchema
-          )
-        };
-
+    const requestIds = this.db.prepare(`SELECT attempt_id FROM review_requests WHERE review_session_id=? AND account_id=? ORDER BY created_at,attempt_id LIMIT ?`)
+      .all(input.reviewSessionId, scope.accountId, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS + 1) as { attempt_id: string }[];
+    const requestCount = (this.db.prepare("SELECT COUNT(*) AS count FROM review_requests WHERE review_session_id=? AND account_id=?")
+      .get(input.reviewSessionId, scope.accountId) as CountRow).count;
+    const recordCount = (this.db.prepare("SELECT COUNT(*) AS count FROM review_sessions WHERE account_id=?").get(scope.accountId) as CountRow).count;
+    const request = row.current_attempt_id ? this.readRequestEvidence(row.current_attempt_id, row.id, row.account) : undefined;
     return {
-      dataScope: {
-        account: scope.account,
-        recordCount
-      },
-      accountSource: scope.accountSource,
-      lowSampleWarning: recordCount < REVIEW_ACTIVITY_LOW_SAMPLE_THRESHOLD,
-      lowSampleThreshold: REVIEW_ACTIVITY_LOW_SAMPLE_THRESHOLD,
-      session: {
-        reviewSessionId: asString(row.review_session_id),
-        planId: asString(row.plan_id),
-        actionKind: asString(row.action_kind),
-        adapterId: asString(row.adapter_id),
-        protocol: asString(row.protocol),
-        currentStatus: asInternalSessionStatus(row.current_status),
-        account: asString(row.account),
-        createdAt: asString(row.created_at),
-        updatedAt: asString(row.updated_at)
-      },
-      planJson,
-      intentJson,
-      stateSnapshots: snapshotRows.slice(0, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS).map((snapshot) => ({
-        id: snapshot.id,
-        planId: asString(snapshot.plan_id),
-        account: asString(snapshot.account),
-        status: asString(snapshot.status),
-        blockedReason: snapshot.blocked_reason === null ? undefined : asString(snapshot.blocked_reason),
-        refreshReason: snapshot.refresh_reason === null ? undefined : asString(snapshot.refresh_reason),
-        stateJson: this.parseReviewStateEvidenceJson(
-          snapshot.state_json,
-          input.reviewSessionId,
-          "state_json"
-        ),
-        updatedAt: asString(snapshot.updated_at),
-        recordedAt: asString(snapshot.recorded_at)
-      })),
-      transitions: transitionRows.slice(0, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS).map((transitionRow) => ({
-        id: transitionRow.id,
-        event: asReviewTransitionEvent(transitionRow.event),
-        fromStatus: transitionRow.from_status === null ? undefined : asString(transitionRow.from_status),
-        toStatus: asString(transitionRow.to_status),
-        isNoOp: transitionRow.from_status !== null && asString(transitionRow.from_status) === asString(transitionRow.to_status),
-        account: transitionRow.account === null ? undefined : asString(transitionRow.account),
-        reason: transitionRow.reason === null ? undefined : asString(transitionRow.reason),
-        transitionedAt: asString(transitionRow.transitioned_at)
-      })),
-      execution,
-      truncated: {
-        activities: false,
-        snapshots: snapshotsTruncated,
-        transitions: transitionsTruncated
-      }
+      dataScope: { account: scope.account, recordCount }, accountSource: scope.accountSource,
+      lowSampleWarning: recordCount < REVIEW_ACTIVITY_LOW_SAMPLE_THRESHOLD, lowSampleThreshold: REVIEW_ACTIVITY_LOW_SAMPLE_THRESHOLD,
+      session: { reviewSessionId: row.id, planId: row.plan_id, actionKind: row.action_kind, adapterId: row.adapter_id,
+        protocol: row.protocol, reviewStatus: asInternalSessionStatus(row.current_status), account: row.account,
+        createdAt: row.created_at, updatedAt: row.updated_at, ...(request ? { currentAttemptId: request.attemptId } : {}) },
+      planJson: parseEvidenceJson<ActionPlan>(row.plan_json, row.id, "plan_json", actionPlanSchema),
+      ...(row.intent_json === null ? {} : { intentJson: parseEvidenceJson<unknown>(row.intent_json, row.id, "intent_json") }),
+      stateSnapshots: snapshots.slice(0, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS).map((snapshot) => ({
+        id: snapshot.id, reviewRevision: snapshot.review_revision, planId: snapshot.plan_id, account: snapshot.account, status: snapshot.status,
+        blockedReason: snapshot.blocked_reason ?? undefined, refreshReason: snapshot.refresh_reason ?? undefined,
+        stateJson: this.parseReviewStateEvidenceJson(snapshot.state_json, row.id, "state_json"),
+        updatedAt: snapshot.updated_at, recordedAt: snapshot.recorded_at })),
+      transitions: transitions.slice(0, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS).map((event) => ({
+        id: event.id, event: asReviewTransitionEvent(event.event), domain: event.domain,
+        ...(event.attempt_id === null ? {} : { attemptId: event.attempt_id }),
+        fromStatus: event.from_status ?? undefined, toStatus: event.to_status, isNoOp: event.from_status === event.to_status,
+        account: event.account ?? undefined, reason: event.reason ?? undefined, transitionedAt: event.transitioned_at })),
+      ...(request ? { request } : {}), requestCount,
+      requests: requestIds.slice(0, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS).map(({ attempt_id }) => this.readRequestEvidence(attempt_id, row.id, row.account)),
+      truncated: { activities: false, snapshots: snapshots.length > REVIEW_ACTIVITY_DETAIL_MAX_ITEMS,
+        transitions: transitions.length > REVIEW_ACTIVITY_DETAIL_MAX_ITEMS, requests: requestIds.length > REVIEW_ACTIVITY_DETAIL_MAX_ITEMS }
     };
   }
 
@@ -1238,8 +936,84 @@ export class SqliteActivityStore implements ActivityStore {
     return new SqlitePrivateReviewArtifactStore(this.db);
   }
 
-  createWalletIdentityRecordStore(): KeyedRecordStore<WalletIdentitySession> {
-    return createSqliteWalletIdentityRecordStore(this.db);
+  createWalletWorkflowStore(ownerId: string, clock: () => Date = () => new Date()): SqliteWalletWorkflowStore {
+    const records: SqliteWalletWorkflowStore = new SqliteWalletWorkflowStore(this.db, ownerId,
+      (address, id, name, now) => this.setActiveAccountSync(address, "wallet_connection", now, { id, name }),
+      clock, this.createTransactionMaterialStore(),
+      (input, at) => this.evaluateWorkflowState(input, records, ownerId, at === undefined ? clock : () => at),
+      () => this.getActiveAccountSync()?.address);
+    return records;
+  }
+
+  finalizeReviewEvaluation(candidate: ReviewEvaluationCandidate, clock: () => Date): ReviewEvaluation {
+    return this.db.transaction(() => this.finalizeReviewEvaluationAt(candidate, clock())).immediate();
+  }
+
+  private finalizeReviewEvaluationAt(candidate: ReviewEvaluationCandidate, now: Date): ReviewEvaluation {
+    const row = this.liveReviewSessionRow(candidate.session.id);
+    if (!row) throw new SessionStoreError("session_not_found", "The saved review is unavailable.");
+    const current = sessionFromLiveReviewSessionRow(row);
+    const artifacts = this.createPrivateReviewArtifactStore().get(current.id);
+    const admitted = this.createSessionRecordStore().hasAdmittedRevision(current.id, current.reviewRevision);
+    const material = !admitted && !current.preparationId && artifacts?.transactionMaterial
+      ? this.createTransactionMaterialStore().getTransactionMaterial(artifacts.transactionMaterial, now) : undefined;
+    if (!admitted && !current.preparationId && artifacts && !material && !needsReviewMaterial(current, admitted)) {
+      this.createTransactionMaterialStore().deleteReviewSessionTransactionMaterials(current.id);
+      this.createPrivateReviewArtifactStore().delete(current.id);
+    }
+    const next = decideReviewEvaluation(candidate, current, row.revision, artifacts, material, admitted, now);
+    if (next === current) return { session: current, events: [] };
+    const live = { expected: current, next, deleteTransactionMaterials: true };
+    const committed = next.status === "expired"
+      ? this.recordReviewTransitionWithLiveSessionSync({ reviewSessionId: current.id, event: "expired", fromStatus: current.status,
+          toStatus: next.status, transitionedAt: now.toISOString() }, live)
+      : this.recordReviewStateSnapshotWithLiveSessionSync({ reviewSessionId: current.id, fromStatus: current.status,
+          state: next.reviewState!, reviewRevision: next.reviewRevision, recordedAt: now.toISOString() }, live);
+    if (!committed) throw new SessionStoreError("invalid_session_transition", "Review state changed before evaluation committed.");
+    return { session: next, events: next.status === "expired" ? [] : [{ type: "state.computed", sessionId: next.id,
+      status: next.status, reason: "private_review_artifacts_refresh_required", at: now.toISOString() }] };
+  }
+
+  private evaluateWorkflowState(input: WorkflowEvaluationInput, records: SqliteWalletWorkflowStore,
+    ownerId: string, clock: () => Date): EvaluatedWorkflowState {
+    return this.db.transaction(() => {
+      const now = clock();
+      const cards = this.createCardRecordStore();
+      let record = input.expectedCard && cards.get(input.expectedCard.state.cardId);
+      if (input.expectedCard && (!record || record.tokenHash !== input.expectedCard.tokenHash ||
+          record.scope !== input.expectedCard.scope || record.ownerId !== input.expectedCard.ownerId)) {
+        throw new SessionStoreError("input_invalid", "Card access is unavailable.");
+      }
+      const reviewId = record?.state.kind === "review" ? String(record.state.input.reviewSessionId) : input.reviewSessionId;
+      let evaluated: ReviewEvaluation | undefined;
+      if (reviewId) {
+        if (!input.candidate || input.candidate.session.id !== reviewId) throw new SessionStoreError("session_not_found", "The saved review is unavailable.");
+        evaluated = this.finalizeReviewEvaluationAt(input.candidate, now);
+        if (input.uiObservation && record?.scope === "review") records.markReviewOpened(reviewId, now);
+      }
+      records.advanceRequestDeadlines(now);
+      records.expireConnections(now);
+      if (record) record = cards.evaluate(record, () => now).record;
+      const session = evaluated?.session;
+      const request = record?.scope === "review_manage" ? records.request(String(record.state.input.attemptId)) :
+        record?.state.kind === "review" && record.operationId ? records.request(record.operationId) : reviewId ? records.currentRequest(reviewId) : undefined;
+      if (request && request.reviewSessionId !== reviewId) throw new SessionStoreError("session_mismatch", "The request identity does not match this review.");
+      const authority = request && records.authority(request.attemptId);
+      const details = request?.execution && records.executionDetails(request.attemptId);
+      const connectionView = (connection: import("../session/walletConnection.js").WalletConnection) => ({ ...connection,
+        ...(records.pendingDisconnect(connection.connectionId) ? { pendingAction: "disconnect" as const } : {}) });
+      const connection = record?.state.kind === "connect" && record.operationId ? records.connection(record.operationId) : undefined;
+      const facts = { evaluatedAt: now.toISOString(), ownerId, record, session, request, authority,
+        hasReviewInput: !!session && session.status !== "expired" && Date.parse(session.expiresAt) > now.getTime() &&
+          cards.hasReviewInput(session.id, ownerId, now),
+        walletAvailability: input.walletAvailability, activeAccount: this.getActiveAccountSync()?.address,
+        connections: records.connections().filter(item => item.ownerId === ownerId).map(item => connectionView(item.connection)),
+        connection: connection ? connectionView(connection.connection) : undefined,
+        boundReview: request && (record?.operationId || record?.scope === "review_manage") ? records.requestReview(request.attemptId) : undefined,
+        busyForAccount: !!session?.account && records.busyForAccount(session.account, now),
+        receipt: details ? details.data : undefined, receiptDisplay: details ? details.receiptDisplay : undefined };
+      return { ...facts, ...workflowEligibility(facts), events: evaluated?.events ?? [] };
+    }).immediate();
   }
 
   createSettingsRecordStore(): KeyedRecordStore<SettingsSession> {
@@ -1253,6 +1027,8 @@ export class SqliteActivityStore implements ActivityStore {
     const stale = new Error("live review session changed before commit");
     try {
       const commit = this.db.transaction(() => {
+        const current = this.liveReviewSessionRow(live.next.id);
+        if (live.expected ? !current || !isDeepStrictEqual(sessionFromLiveReviewSessionRow(current), live.expected) : !!current) throw stale;
         writeActivity();
         if (!this.applyLiveReviewSessionMutation(live)) {
           throw stale;
@@ -1290,6 +1066,8 @@ export class SqliteActivityStore implements ActivityStore {
   }
 
   private applyLiveReviewSessionSideEffects(live: LiveReviewSessionMutation): void {
+    this.db.prepare(`UPDATE live_read_cards SET revision=revision+1 WHERE kind='review' AND state='ready'
+      AND json_extract(input_json,'$.reviewSessionId')=?`).run(live.next.id);
     if (live.deleteTransactionMaterials) {
       this.db.prepare(`DELETE FROM live_transaction_materials WHERE review_session_id = ?`).run(live.next.id);
       this.db.prepare(`DELETE FROM live_private_review_artifacts WHERE review_session_id = ?`).run(live.next.id);
@@ -1470,7 +1248,7 @@ export class SqliteActivityStore implements ActivityStore {
     const active = this.getActiveAccountSync();
     if (!active) {
       throw new ActivityStoreReadError("active_account_not_set", "Active account read context is not set", {
-        action: "connect_wallet_identity"
+        action: "connect_wallet_connection"
       });
     }
     return {
@@ -1494,7 +1272,7 @@ export class SqliteActivityStore implements ActivityStore {
       ? {
           accountId: row.account_id,
           address: asString(row.address),
-          source: "wallet_identity",
+          source: "wallet_connection",
           setAt: asString(row.set_at),
           ...(row.wallet_name ? { walletName: row.wallet_name } : {}),
           ...(row.wallet_id ? { walletId: row.wallet_id } : {})
@@ -1516,7 +1294,7 @@ export class SqliteActivityStore implements ActivityStore {
 
   private assertActiveAccountSync(accountId: number, reviewSessionId: string): void {
     const row = this.db
-      .prepare("SELECT account_id FROM active_account_context WHERE id = ? AND source = 'wallet_identity'")
+      .prepare("SELECT account_id FROM active_account_context WHERE id = ? AND source = 'wallet_connection'")
       .get(ACTIVE_ACCOUNT_SINGLETON_ID) as { account_id: number | null } | undefined;
     if (!row || row.account_id !== accountId) {
       throw new ActivityStoreError(`Review session active account changed before commit: ${reviewSessionId}`);

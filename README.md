@@ -4,41 +4,24 @@
 
 Say Ur Intent is a local-first Sui review and evidence layer for AI clients.
 
-It turns a supported AI-requested Sui action into a local review page where the
-user reads the transaction summary, inspects the transaction (PTB) as a graph,
-and signs in their own wallet. The AI client never receives signing authority or
-executable transaction bytes.
+It turns a supported Sui action into an internal Review card where you inspect
+verified transaction facts and a PTB graph, then request approval in your own
+wallet. The backend builds or verifies the material, binds the reviewed account
+and digest, and uses WalletConnect for a sign-only request. It verifies the
+wallet's returned bytes and signature before one submission to Sui mainnet.
 
-![Say Ur Intent local review page](https://raw.githubusercontent.com/stelis-dev/say-ur-intent/main/assets/sui1.png)
+The AI and card never receive executable transaction bytes or signatures.
+Neither a review nor a wallet connection is standing transaction permission.
+Only an explicit user action and that transaction's wallet approval authorize
+the request. Lost replies are resolved by reading the known digest; they do not
+cause another signing or submission request. Request failures and unknown
+outcomes are separate from independently observed chain success/failure.
 
-*The local review page: deterministic review checks, review-time simulation
-evidence, and the transaction shown as a labeled PTB graph — what the user
-reviews before signing in their own wallet.*
-
-For natural-language Sui DeFi questions, the current release also returns
-verified, AI-readable evidence before any transaction is built. That answer path
-stays separate from account-bound swap review, where the review server builds
-local unsigned transaction material internally and, once every review evidence
-stage completes, the local review page offers a digest-gated byte handoff,
-and user-controlled wallet signing. After the page reports the signed transaction
-digest, the review server re-reads Sui mainnet and records normalized chain
-receipt evidence. MCP responses never sign, execute, or return transaction
-bytes; the only transaction-byte path is the same-machine, digest-gated wallet
-handoff initiated from the local review page.
-The review page shows the server-read chain receipt facts inline, and a public
-Receipt card reads on-chain receipt facts for any transaction digest,
-without adding wallet, signing, or execution authority.
-
-Because the AI never holds keys, never signs, and never builds the transaction —
-the tool builds it against pinned, known protocol packages, and you review the
-decoded bytes and sign in your own wallet — the failure modes that make AI and
-DeFi dangerous together (an agent acting on its own, signing on your behalf, or
-slipping in an opaque or substituted transaction) are closed by design, not
-patched by asking you to trust the model.
-
-That guarantee is byte-level: the bytes you approve are the bytes your wallet
-signs — not a claim that the human-readable review captures every detail of the
-transaction, so the raw PTB structure and addresses stay inspectable beside it.
+Account, Receipt and Chart cards provide read-only evidence independently of
+signing. Connect and Review also run inside the MCP host. Settings currently
+uses a local token page. Human-readable review is not a guarantee of safety or
+of complete interpretation of every transaction detail; the raw PTB structure
+and addresses remain inspectable.
 
 Users can ask ordinary questions:
 
@@ -60,7 +43,7 @@ choices remain with the user, and what claims are unsupported.
 
 Say Ur Intent is one product, but it must be read at two distinct layers. Do not collapse them:
 
-- **Implemented:** Sui mainnet evidence, local review, and signable review adapters for the DeepBook and FlowX swap routes, registered through protocol-agnostic adapter contracts. The account-bound DeepBook and FlowX swap reviews build unsigned transaction material into a local in-process material store, internally bind a Sui transaction digest to that stored material, derive object ownership, quote/policy provenance, human-readable review facts, review-time simulation evidence, and PTB visualization evidence from the same private review artifacts, emit a schema-validated wallet review contract on a `ready_for_wallet_review` state, and serve a digest-gated byte handoff to the same-machine review page for user-controlled wallet signing. After the page reports a signed transaction digest, the review server re-reads Sui mainnet and records normalized chain receipt evidence on the session. The review page shows the server-read chain receipt facts inline, and an internal Receipt card reads on-chain receipt facts for any transaction digest. MCP responses do not contain transaction bytes, signing data, or signing readiness.
+- **Implemented:** Sui mainnet read evidence, non-signable external proposal review, and account-bound DeepBook and FlowX swap review using protocol-agnostic adapters. Five internal cards use the same SQLite state and permission model. The backend verifies stored material, ownership, quote/policy provenance, human-readable facts, simulation and PTB evidence before an explicit user request. WalletConnect carries bytes only between the backend and wallet; ordinary MCP responses expose facts, request status and observed execution results. Settings remains a local token page; its card and the next package release are sequenced separately.
 - **Never (permanently unsupported at every layer):** no private-key custody, no MCP or AI autonomous execution, no forwarding of opaque external transaction bytes to a wallet, no silent settlement-token or route choice, no fiat cash-out, no P&L, no peg guarantee.
 
 In one sentence: Say Ur Intent is a local-first Sui intent evidence and review layer that progresses from verified evidence to user-controlled wallet signing only after Say Ur Intent independently builds or verifies the transaction material and shows a human-readable local review.
@@ -75,21 +58,11 @@ on behalf of users.
 By current design, it does not rank venues, choose routes, make best-price
 recommendations, or silently choose settlement tokens for users.
 
-The current release can build local unsigned transaction material inside the
-account-bound DeepBook and FlowX swap review paths. It does not expose
-transaction bytes.
-Wallet signing is user-controlled on the local review page after a
-digest-gated handoff; MCP responses never request signatures, provide signing
-readiness, or execute payments.
-
-Current review sessions are local evidence-review records only. DeepBook and
-FlowX review state may show that local transaction material was built,
-internally bound to a Sui transaction digest, and used to derive object
-ownership, quote/policy provenance, human-readable review facts,
-review-time simulation evidence, and PTB visualization evidence. Review
-sessions do not contain public transaction bytes, signing requests, or
-executable wallet actions; the dedicated same-machine handoff endpoint is the
-only transaction-byte path and is gated by recomputed digest equality.
+Account-bound transaction building, signing requests and chain observation stay
+in the local backend. The Review card displays evidence and current permitted
+actions. Public review JSON, card metadata and backups never contain transaction
+bytes, signatures, SDK keys or signing permission. Reopening a card reads its
+stored state and never replays a financial request.
 
 The current release flow is:
 
@@ -126,11 +99,9 @@ The current release can run as a local stdio MCP server and expose mainnet Sui D
 - user-requested bounded Sui transaction digest lookup, account activity scans, sent-function activity scans with known-wallet-only persistence, and stored normalized activity summaries;
 - read-only external proposal review sessions that display proposed action, asset flow, recipient or target, freshness, missing evidence, user choices, unsupported claims, and non-signable reason;
 - local Say Ur Intent review evidence and review-session status reads;
-- account-bound DeepBook and FlowX swap review progress through local unsigned transaction material build, internal Sui transaction digest binding, object ownership evidence, quote/policy provenance binding, human-readable review facts, and review-time simulation evidence; when every stage completes the review reaches `ready_for_wallet_review` and the local review page offers a digest-gated byte handoff and user-controlled wallet signing. After the page reports the signed transaction digest, the review server re-reads Sui mainnet and records normalized chain receipt evidence. MCP responses never sign, execute, or return transaction bytes; transaction bytes flow only through the same-machine, digest-gated wallet handoff initiated from the local review page.
-- the review page's inline server-read chain receipt facts for terminal review
-  sessions, and an internal Receipt card that reads on-chain receipt
-  facts (execution status, balance changes, object changes, and Move calls) for
-  any transaction digest.
+- account-bound DeepBook/FlowX review with verified material, digest, ownership, policy, human-readable facts, simulation and PTB visualization, followed by explicit card selection and wallet approval through the backend;
+- separately recorded request state and chain success/failure, shown in the Review card and available through ordinary reads;
+- a Receipt card for server-read facts about any transaction digest, independent of signing.
 
 It also includes:
 
@@ -141,17 +112,10 @@ It also includes:
 
 ## Screens
 
-**Review → result.** The review page shows exactly what you are about to sign
-while nothing is committed; after you sign in your own wallet, the server
-re-reads Sui mainnet and renders the chain-verified receipt.
-
-![Chain-verified receipt](https://raw.githubusercontent.com/stelis-dev/say-ur-intent/main/assets/sui2.png)
-
-**The transaction as a labeled graph.** Every review and receipt renders the
-PTB as a graph, so the structure of what is signed is visible — not just the
-amounts.
-
-![PTB transaction graph](https://raw.githubusercontent.com/stelis-dev/say-ur-intent/main/assets/ptb-graph.png)
+**Review and result.** The internal Review card shows verified facts before
+wallet approval and independently read chain facts afterward. A PTB graph shows
+transaction structure alongside readable amounts and raw addresses. Missing
+receipt or display details are explicitly marked unavailable.
 
 **DeepBook USDC chart.** `ui.open_chart` opens an internal MCP Apps card with
 official DeepBookV3 Indexer candles and volume for one selected USDC pool.
@@ -163,9 +127,8 @@ The saved result displays the requested UTC range, candle limit and source time.
 
 External proposal execution is not implemented. Further local analysis views
 beyond the current inline review receipt and internal Receipt card are
-not implemented. Transaction material build, contract emit, digest-gated wallet
-handoff, user-controlled signing, signed-digest reporting, server-read chain
-receipt recording, the inline review receipt, and the internal Receipt card
+not implemented. Transaction material review, backend WalletConnect requests under user control,
+signature verification, single submission and independent receipt observation
 are implemented for the account-bound DeepBook and FlowX swap review
 through a plan-factory registry.
 
@@ -175,35 +138,11 @@ signing fields, recognized Sui private-key strings, valid English BIP39
 mnemonic phrases, obvious sensitive markers, and suspicious raw secret-like
 payloads before storage, and records why the review is non-signable.
 
-Blocked review state is session-scoped: a review session stays blocked while
-required review evidence is missing for that session (for example
-`wallet_review_contract_emit_missing`). When an account-bound supported swap
-review completes local transaction material, digest binding, object ownership,
-quote/policy provenance, human-readable review evidence, and review-time
-simulation evidence, the review layer emits a schema-validated
-`WalletReviewAdapterContract` bound to the same transaction commitment on a
-`ready_for_wallet_review` state. Wallet handoff is gated on a recomputed
-digest matching that commitment, and the review page then offers
-user-controlled wallet signing. After the signed transaction digest is
-reported, the review server re-reads Sui mainnet and records a normalized chain
-receipt on the session. Review-time simulation and the emitted contract are
-evidence about stored local material only; they are not signing readiness,
-wallet readiness, or execution readiness. The chain receipt is post-execution
-server-read evidence for that digest; it is not an economic-outcome guarantee,
-not route quality, not fiat value, not P&L, not tax evidence, not best-price
-evidence, and not peg evidence.
-None of these is a user bypass state.
-
-The signable adapter and PTB visualization boundary is documented in
-`docs/SIGNABLE_ADAPTER_CONTRACT.md`. The runtime path emits
-`WalletReviewAdapterContract` as pre-signing review evidence when every
-required evidence stage is complete; the contract carries the transaction
-commitment hash only.
-
-Wallet signing and the digest-gated byte handoff happen only on the local
-review page through the user's own wallet, never through MCP responses. MCP
-responses do not return executable transaction material or signing data, and
-do not provide signing readiness.
+A blocked review lacks required evidence for that session. Only a complete
+`TransactionReviewData` binds human-readable facts and simulation to the exact
+reviewed digest. This is pre-signing evidence, not authority or guaranteed
+execution. The backend checks returned bytes and the selected account's
+signature before submitting. See [the adapter contract](docs/SIGNABLE_ADAPTER_CONTRACT.md).
 
 Fiat cash-out, P&L, tax, and cost-basis support are not part of the current release.
 
@@ -271,7 +210,7 @@ The server also exposes `read.get_server_status`. It returns the package version
 
 DeepBook pool-price context is exposed through `read.get_deepbook_mid_price`. Use `docs/MCP_TOOLS.md` for the response fields and unsupported conclusions.
 
-Tool names use dot prefixes because the MCP spec recommends ASCII letters, digits, underscore, hyphen, and dot for tool names. `action.prepare_sui_action_review` returns a `reviewSessionId` and `reviewUrl`; it does not return executable transaction bytes.
+Tool names use dot prefixes because the MCP spec recommends ASCII letters, digits, underscore, hyphen, and dot for tool names. `action.prepare_sui_action_review` returns a `reviewSessionId` and an internal `card`; it does not return executable transaction bytes.
 
 ## Documentation Map
 
@@ -282,7 +221,7 @@ Runtime-facing MCP resources currently include:
 - this README;
 - `docs/MCP_SETUP.md`;
 - `docs/MCP_TOOLS.md`;
-- `docs/WALLET_IDENTITY.md`;
+- `docs/WALLET_CONNECTION.md`;
 - `docs/AGENT_BEHAVIOR.md`;
 - `protocols/deepbook-v3.md`;
 - `protocols/deepbook-margin.md`.
@@ -297,7 +236,7 @@ AI client answer behavior must be mirrored in runtime-facing instructions, resou
 - `docs/MCP_SETUP.md`: Setup guide: installation, MCP client connection, first-use flow, settings, and troubleshooting.
 - `docs/MCP_TOOLS.md`: API reference: tool contracts, response fields, statuses, follow-up fields, and output boundaries.
 - `docs/AGENT_BEHAVIOR.md`: Answer playbook: user-question flows, tool selection, and response wording boundaries.
-- `docs/WALLET_IDENTITY.md`: Wallet identity reference: active-account read context and same-machine capture boundaries.
+- `docs/WALLET_CONNECTION.md`: Wallet connection reference: active read context, private SDK ownership and user-approved transaction requests.
 - `protocols/deepbook-v3.md`: Protocol reference only; use MCP tool responses and read.list_supported_protocols for current support.
 - `protocols/deepbook-margin.md`: Protocol reference only; no margin MCP read tools or signable actions are exposed in this release.
 - `docs/golden-scenarios/INTENT_EVIDENCE_MATRIX.md`: current-release question, tool-path, and standard-answer matrix for AI client release review.
@@ -307,13 +246,13 @@ AI client answer behavior must be mirrored in runtime-facing instructions, resou
 - `docs/LOCAL_DB_ARCHITECTURE.md`: local SQLite storage boundaries for maintainers.
 - `docs/SDK_API.md`: pinned SDK API notes and source-verification boundaries.
 - `docs/FRONTEND_POLICY.md`: review-app frontend implementation policy for coding agents.
-- `docs/SIGNABLE_ADAPTER_CONTRACT.md`: wallet-review adapter and PTB visualization contract. It defines the pre-signing review evidence and commitment boundary; wallet signing still happens only through the local review page, not through MCP.
+- `docs/SIGNABLE_ADAPTER_CONTRACT.md`: wallet-review adapter and PTB visualization contract. It defines the pre-signing review evidence and commitment boundary; wallet signing requires a user card action and approval in the wallet; the backend alone handles bytes.
 - `AGENTS.md`: root repository development contract and non-negotiable product boundaries for coding agents working on this codebase.
 - `docs/AGENT_DEVELOPMENT_POLICY.md`: detailed binding development, review, documentation, source-of-truth, and completion policies for coding agents.
 
 ## Contract Name Registry
 
-The PTB visualization on the review page can show human-readable labels in place
+The PTB visualization in the Review card can show human-readable labels in place
 of raw addresses, with a toggle back to raw addresses. A label is identity display only, not a
 safety, trust, route-quality, or signing-readiness signal, and only registered
 addresses are relabeled.

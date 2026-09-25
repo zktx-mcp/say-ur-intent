@@ -11,6 +11,11 @@ import { validateSupportedAdapterLifecycle } from "../src/adapters/adapterLifecy
 import { createDeepbookUsdcChartService } from "../src/core/read/deepbookUsdcChartService.js";
 import { DEEPBOOK_OFFICIAL_INDEXER_CANONICAL_USDC_COIN_TYPE, DEEPBOOK_OFFICIAL_INDEXER_SOURCE_STATEMENT } from "../src/core/read/deepbookOfficialIndexerSource.js";
 import { chartRenderer } from "../src/mcp-ui/view/chart.js";
+import { connectRenderer } from "../src/mcp-ui/view/connect.js";
+import { registerWalletConnectionTools } from "../src/mcp/tools/session/walletConnectionTools.js";
+import type { McpServerDeps } from "../src/mcp/server.js";
+import { walletWorkflowFixture, deferred } from "./fixtures/walletWorkflow.js";
+import { TOOL_NAMES } from "../src/mcp/toolNames.js";
 import { CARD_METADATA_KEY, CARD_TOOLS, type CardKind, type CardSnapshot } from "../src/mcp-ui/contracts.js";
 import { startCard, type CardRenderer } from "../src/mcp-ui/view/lifecycle.js";
 
@@ -53,7 +58,8 @@ class Element extends EventTarget {
   remove(): void { if (this.parent) this.parent.children = this.parent.children.filter((child) => child !== this); }
   querySelectorAll(selector: string): Element[] {
     const tags = selector.split(",").map((value) => value.trim());
-    return this.children.flatMap((child) => [...(tags.includes(child.tagName) ? [child] : []), ...child.querySelectorAll(selector)]);
+    return this.children.flatMap((child) => [...(tags.includes(child.tagName) ||
+      (tags.includes("[data-card-action]") && child.dataset.cardAction !== undefined) ? [child] : []), ...child.querySelectorAll(selector)]);
   }
   querySelector(selector: string): Element | undefined { return this.querySelectorAll(selector)[0]; }
   click(): void { if (!this.disabled) this.dispatchEvent(new Event("click")); }
@@ -90,6 +96,24 @@ const renderer: CardRenderer = {
 };
 const submitButton = () => root.querySelectorAll("button").find((node) => node.textContent === "Submit choice");
 
+// Minimal business controls for timer/identity checks. Actual Review rendering
+// is verified with the final HTML; the lifecycle and transport calls here are real.
+const expiryRenderer: CardRenderer = {
+  ...renderer,
+  controls(snapshot) {
+    const data = snapshot.data as { allowedActions: string[] };
+    if (!data.allowedActions.includes("request_signature")) {
+      const node = document.createElement("p"); node.textContent = "Update this review"; return node;
+    }
+    const form = document.createElement("form"), input = document.createElement("input"), button = document.createElement("button");
+    input.value = "selected wallet"; button.dataset.cardAction = "request_signature"; button.textContent = "Request wallet approval";
+    form.append(input, button); return form;
+  }
+};
+const timedReview = (overrides: Record<string, unknown> = {}) => state("review", { data: {
+  allowedActions: ["request_signature"], actionRemainingMs: 20_000, observe: false, nextStateReadAfterMs: 500, ...overrides
+} });
+
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
   root = new Element("main");
@@ -103,6 +127,53 @@ beforeEach(() => {
 afterEach(async () => {
   for (const app of instances.splice(0)) await app.onteardown?.();
   transport.pending.length = 0; vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals();
+});
+
+it("reads at the server's review expiry, locks input during confirmation and then offers refresh", async () => {
+  const pending = deferred<CallToolResult>(), ready = timedReview();
+  const app = host(async () => app.callServerTool.mock.calls.length === 1 ? result(ready) : pending.promise);
+  const started = Date.now();
+  startCard("review", expiryRenderer); app.ontoolresult!(result(ready, true));
+  // Flush initialization without waitFor's implicit fake-clock advancement.
+  await vi.advanceTimersByTimeAsync(0);
+  expect(Date.now()).toBe(started); expect(root.querySelectorAll("button")[0]?.disabled).toBe(false);
+  const button = root.querySelectorAll("button")[0]!;
+  await vi.advanceTimersByTimeAsync(499); expect(app.callServerTool).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1); expect(button.disabled).toBe(true); expect(app.callServerTool).toHaveBeenCalledTimes(2);
+  pending.resolve(result(state("review", { revision: 1, data: { allowedActions: ["prepare_review"], actionRemainingMs: 19_500, observe: false } })));
+  await vi.waitFor(() => expect(root.textContent).toContain("Update this review"));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(app.callServerTool.mock.calls.map(([call]) => call.name)).toEqual([CARD_TOOLS.read, CARD_TOOLS.read]);
+});
+
+it("coalesces expiry with a poll and retains input when only the next-read hint changes", async () => {
+  const pending = deferred<CallToolResult>(), ready = { ...timedReview({ observe: true }), pollAfterMs: 500 };
+  const app = host(async () => app.callServerTool.mock.calls.length === 1 ? result(ready) : pending.promise);
+  startCard("review", expiryRenderer); app.ontoolresult!(result(ready, true));
+  await vi.waitFor(() => expect(root.querySelectorAll("input")).toHaveLength(1));
+  const input = root.querySelectorAll("input")[0]!; input.value = "user choice";
+  await vi.advanceTimersByTimeAsync(500); expect(app.callServerTool).toHaveBeenCalledTimes(2);
+  pending.resolve(result({ ...ready, data: { ...(ready.data as object), nextStateReadAfterMs: 900, actionRemainingMs: 19_500 } }));
+  await vi.waitFor(() => expect(input.disabled).toBe(false));
+  expect(root.querySelectorAll("input")[0]).toBe(input); expect(input.value).toBe("user choice");
+  await app.onteardown!(); await vi.advanceTimersByTimeAsync(1000); expect(app.callServerTool).toHaveBeenCalledTimes(2);
+});
+
+it("stops after an expiry-read failure and does not loop on a zero refresh hint", async () => {
+  const ready = timedReview(); const app = host(async () => {
+    if (app.callServerTool.mock.calls.length === 1) return result(ready);
+    throw new Error("Expiry confirmation unavailable");
+  });
+  startCard("review", expiryRenderer); app.ontoolresult!(result(ready, true));
+  await vi.waitFor(() => expect(root.querySelectorAll("input")).toHaveLength(1));
+  await vi.advanceTimersByTimeAsync(500);
+  expect(root.textContent).toContain("Expiry confirmation unavailable"); expect(root.querySelectorAll("input")[0]?.disabled).toBe(true);
+  await vi.advanceTimersByTimeAsync(30_000); expect(app.callServerTool).toHaveBeenCalledTimes(2);
+  await app.onteardown!(); root = new Element("main");
+  const zero = timedReview({ nextStateReadAfterMs: 0 }); const reopened = host(async () => result(zero));
+  startCard("review", expiryRenderer); reopened.ontoolresult!(result(zero, true));
+  await vi.waitFor(() => expect(root.querySelectorAll("input")).toHaveLength(1));
+  await vi.advanceTimersByTimeAsync(500); expect(reopened.callServerTool).toHaveBeenCalledTimes(1);
 });
 
 describe("shared card lifecycle consumes backend state", () => {
@@ -173,6 +244,26 @@ describe("shared card lifecycle consumes backend state", () => {
     await vi.waitFor(() => expect(root.textContent).toContain("Another choice was accepted."));
     expect(root.textContent).toContain("Stored result"); expect(submitButton()).toBeUndefined();
     expect(app.callServerTool.mock.calls.map(([call]) => call.name)).toEqual([CARD_TOOLS.read, CARD_TOOLS.submit]);
+  });
+  it("preserves input display and stops timers after a typed evaluation conflict until an explicit read", async () => {
+    const ready = state("account", { inputRemainingMs: 500 });
+    let reads = 0;
+    const app = host(async () => ++reads === 2 ? {
+      isError: true, content: [], structuredContent: { ok: false, error: { kind: "invalid_session_transition",
+        details: { reason: "review_changed_during_verification", message: "Review data changed during verification. Read the current state again." } } }
+    } : result(ready));
+    startCard("account", renderer); app.ontoolresult!(result(ready, true));
+    await vi.waitFor(() => expect(submitButton()?.disabled).toBe(false));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(root.textContent).toContain("Read the current state again.");
+    expect(root.textContent).not.toContain("review_changed_during_verification");
+    expect(submitButton()?.disabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reads).toBe(2);
+    root.querySelectorAll("button").find((button) => button.textContent === "Read saved state")!.click();
+    await vi.waitFor(() => expect(submitButton()?.disabled).toBe(false));
+    expect(reads).toBe(3);
+    expect(app.callServerTool.mock.calls.every(([call]) => call.name === CARD_TOOLS.read)).toBe(true);
   });
   it("reads state after a lost submit response and never repeats the submission", async () => {
     const ready = state("account"); let reads = 0;
@@ -362,6 +453,43 @@ it("consumes real MCP/SQLite chart preparation failures and valid choices in the
   } finally { await client.close(); await server.close(); cards.stop(); database.close(); }
 });
 
+it.each(["success", "failure"] as const)("the actual Connect view observes a delayed disconnect %s across frame recreation", async (outcome) => {
+  const f = await walletWorkflowFixture(), { connection } = await f.approve();
+  const pending = deferred<void>(); vi.mocked(f.transport.disconnect).mockImplementationOnce(() => pending.promise);
+  const server = new McpServer({ name: "connect-view-fixture", version: "1" });
+  const deps = { cards: { store: f.cards }, activityStore: f.activity, sessions: f.sessions, workflow: f.workflow, logger: f.logger } as unknown as McpServerDeps;
+  registerReadCards(server, deps); registerWalletConnectionTools(server, deps);
+  const client = new Client({ name: "view-fixture", version: "1" }, { capabilities: { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } } });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport); await client.connect(clientTransport);
+  const call = (request: { name: string; arguments: Record<string, unknown> }) => f.run(async () => CallToolResultSchema.parse(await client.callTool(request)));
+  const created = await call({ name: TOOL_NAMES.sessionCreateWalletConnection, arguments: {} });
+  try {
+    const first = host(call); startCard("connect", connectRenderer); first.ontoolresult!(created);
+    await vi.waitFor(() => expect(root.querySelectorAll("button").find((button) => button.dataset.cardAction === "disconnect")?.disabled).toBe(false));
+    root.querySelectorAll("button").find((button) => button.dataset.cardAction === "disconnect")!.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("Wallet disconnection is in progress."));
+    expect(f.transport.disconnect).toHaveBeenCalledOnce();
+    await first.onteardown!();
+    root = new Element("main"); const second = host(call); startCard("connect", connectRenderer); second.ontoolresult!(created);
+    await vi.waitFor(() => expect(root.textContent).toContain("Wallet disconnection is in progress."));
+    f.notify({ topic: "fixture-topic", accounts: [f.account], methods: ["sui_signTransaction"], chain: "sui:mainnet",
+      expiresAt: new Date(Date.parse(connection.expiresAt) + 1000).toISOString() });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(root.textContent).toContain("Wallet disconnection is in progress.");
+    if (outcome === "success") pending.resolve(); else pending.reject(new Error("Fixture disconnect failure"));
+    await vi.waitFor(() => expect(f.run(() => f.records.connection(connection.connectionId)?.sdkPending)).toBe(false));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(root.textContent).not.toContain("Wallet disconnection is in progress.");
+    expect(root.textContent).toContain(outcome === "success" ? "disconnected" : "The wallet disconnection could not be confirmed.");
+    const reads = second.callServerTool.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(second.callServerTool).toHaveBeenCalledTimes(reads); expect(f.transport.disconnect).toHaveBeenCalledOnce();
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+    await second.onteardown!();
+  } finally { await client.close(); await server.close(); f.close(); }
+});
+
 it("refuses a mismatched creating identity before the first state read", async () => {
   const app = host(async () => { throw new Error("Must not read a mismatched card"); });
   const creating = result(state("receipt"), true);
@@ -381,4 +509,20 @@ it("preserves a known fixed result and its display controls when current-state c
   expect(details.disabled).toBe(false); details.click();
   expect(root.textContent).toContain("Stored result details");
   await vi.advanceTimersByTimeAsync(60_000); expect(app.callServerTool).toHaveBeenCalledOnce();
+});
+
+it("keeps stored content and offers explicit reading without polling when wallet progress is unavailable", async () => {
+  const pending = state("review", { state: "running", data: { allowedActions: [], actionRemainingMs: 0,
+    observe: false, walletAvailability: { status: "unavailable", reason: "restoration_failed", message: "Restart the local backend." },
+    progress: { status: "unavailable", reason: "wallet_unavailable", message: "Restart the local backend." } } });
+  const app = host(async () => result(pending));
+  startCard("review", renderer); app.ontoolresult!(result(pending, true));
+  await vi.waitFor(() => expect(root.textContent).toContain("Stored result"));
+  expect(root.textContent).toContain("progress unavailable");
+  expect(root.querySelectorAll("button").some((button) => button.textContent === "Read saved state")).toBe(true);
+  await vi.advanceTimersByTimeAsync(30_000); expect(app.callServerTool).toHaveBeenCalledTimes(1);
+  root.querySelectorAll("button").find((button) => button.textContent === "Read saved state")!.click();
+  await vi.waitFor(() => expect(app.callServerTool).toHaveBeenCalledTimes(2));
+  expect(app.callServerTool.mock.calls.every(([request]) => request.name === CARD_TOOLS.read)).toBe(true);
+  await app.onteardown!(); expect(vi.getTimerCount()).toBe(0);
 });

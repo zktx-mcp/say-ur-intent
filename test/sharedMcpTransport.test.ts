@@ -6,9 +6,8 @@ import { startSharedServer } from "../src/runtime/shared/server.js";
 import { createInternalMcpHandler } from "../src/runtime/shared/mcpHttp.js";
 import type { ControlIdentity } from "../src/runtime/shared/control.js";
 import { registerActionTools } from "../src/mcp/tools/action/prepareSuiActionReview.js";
-import { InMemorySessionStore } from "../src/core/session/sessionStore.js";
-import { InMemoryActivityStore } from "./fixtures/inMemoryActivityStore.js";
-import { validateSupportedAdapterLifecycle } from "../src/adapters/adapterLifecycleValidators.js";
+import { walletWorkflowFixture } from "./fixtures/walletWorkflow.js";
+import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { TOOL_NAMES } from "../src/mcp/toolNames.js";
 import { externalProposalSchema } from "../src/core/proposal/schemas.js";
 import { MAX_JSON_BODY_BYTES } from "../src/review-server/http.js";
@@ -21,17 +20,17 @@ import { ADAPTER_PROMPT_SURFACES } from "../src/adapters/adapterPromptSurfaces.j
 const logger = { info() {}, warn() {}, error() {} };
 it("preserves a valid external proposal larger than the card/HTTP body limit over authenticated MCP", async () => {
   const control: ControlIdentity = { key: randomBytes(32).toString("base64url"), databaseId: "1".repeat(64), configurationId: "2".repeat(64) };
-  const activityStore = new InMemoryActivityStore();
-  const sessions = new InMemorySessionStore({ activityStore, logger, validateAdapterLifecycle: validateSupportedAdapterLifecycle });
+  const f = await walletWorkflowFixture();
+  const { activity: activityStore, sessions, cards } = f;
   const handler = createInternalMcpHandler(() => {
     const server = new McpServer({ name: "proposal-transport-fixture", version: "1" });
-    registerActionTools(server, { sessions, activityStore, reviewBaseUrl: "http://127.0.0.1", logger });
+    registerActionTools(server, { sessions, activityStore, cards: { store: cards }, logger });
     return server;
   });
   const runtime = await startSharedServer({ port: 0, control, onError: () => {}, createApplication: async () => ({
-    handleMcp: handler.handle, handleHttp: async (_request, response) => { response.writeHead(404).end(); }, close: handler.close
+    handleMcp: (request, response) => f.run(() => handler.handle(request, response)), handleHttp: async (_request, response) => { response.writeHead(404).end(); }, close: handler.close
   }) });
-  const client = new Client({ name: "proposal-transport-test", version: "1" });
+  const client = new Client({ name: "proposal-transport-test", version: "1" }, { capabilities: { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } } });
   const [clientTransport, proxyTransport] = InMemoryTransport.createLinkedPair();
   const proxy = await startSharedStdio({ stdio: proxyTransport, port: runtime.port, control, onError: () => {} });
   try {
@@ -46,7 +45,7 @@ it("preserves a valid external proposal larger than the card/HTTP body limit ove
     expect(result.isError).not.toBe(true);
     expect(JSON.stringify(result.structuredContent)).toContain("proposal_review_only");
     expect(JSON.stringify(result.structuredContent)).not.toContain('"transactionBytes":');
-  } finally { await client.close(); await proxy.close(); await runtime.close(); }
+  } finally { await client.close(); await proxy.close(); await runtime.close(); f.close(); }
 });
 
 it("preserves MCP discovery, completions and private results across clients and owner replacement without replay", async () => {

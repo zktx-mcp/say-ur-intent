@@ -1,3 +1,5 @@
+import { cardMetadata, createWorkflowCard, supportsCards } from "../../../mcp-ui/tools.js";
+import { cardSnapshotSchema } from "../../../mcp-ui/contracts.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
@@ -16,37 +18,39 @@ import {
 import { registerSayUrIntentTool } from "../../registerTool.js";
 import type { McpServerDeps } from "../../server.js";
 import { successOutputSchema } from "../../schemas.js";
-import { errorToolResult, okToolResult } from "../../result.js";
+import { errorToolResult } from "../../result.js";
 import { activityStoreToolError, sessionStoreToolError } from "../../toolErrors.js";
 import { TOOL_NAMES } from "../../toolNames.js";
 import { userAnswerUseSchema } from "../read/commonSchemas.js";
 
-export function registerActionTools(server: McpServer, deps: Pick<McpServerDeps, "sessions" | "activityStore" | "reviewBaseUrl" | "logger">): void {
+export function registerActionTools(server: McpServer, deps: Pick<McpServerDeps, "sessions" | "activityStore" | "cards" | "logger">): void {
   server.registerTool(
     TOOL_NAMES.actionPrepareSuiActionReview,
     {
       title: "Prepare swap review",
-      description: "Create a local swap review session on a supported protocol. Returns a review URL; the local review page owns user-controlled signing, and this response contains no signing data.",
+      description: "Create a local swap review session on a supported protocol. Returns an internal review card.",
       inputSchema: {
         intent: swapIntentInputSchema
       },
       outputSchema: successOutputSchema({
         reviewSessionId: z.string(),
-        reviewUrl: z.string(),
+        card: cardSnapshotSchema,
         plans: z.array(actionPlanSchema),
         preliminaryChecks: z.array(reviewCheckSchema),
         userAnswerUse: userAnswerUseSchema
       }),
+      _meta: cardMetadata("review"),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
     },
     async ({ intent }) => {
+      if (!supportsCards(server)) return errorToolResult({ kind: "ui_unavailable", details: { reason: "An internal review card is required." } });
       const now = new Date();
       // A swap review is account-bound: its evidence (balances, transaction
       // material, digest, simulation) is computed for a specific sender, and
       // no transaction can be built without that account. Refuse here when no
       // wallet account is connected instead of creating a hollow proposal that
       // can never be computed or signed. Connect first via
-      // session.create_wallet_identity.
+      // session.create_wallet_connection.
       let activeAccount;
       try {
         activeAccount = await deps.activityStore.getActiveAccount();
@@ -56,7 +60,7 @@ export function registerActionTools(server: McpServer, deps: Pick<McpServerDeps,
       if (!activeAccount) {
         return errorToolResult({
           kind: "active_account_not_set",
-          details: { action: "connect_wallet_identity" }
+          details: { action: "connect_wallet_connection" }
         });
       }
       const { protocol: protocolSlug, ...swapIntent } = intent;
@@ -83,17 +87,16 @@ export function registerActionTools(server: McpServer, deps: Pick<McpServerDeps,
       const plan = resolution.factory.createPlan(swapIntent, now);
 
       try {
-        const { session, token } = await deps.sessions.createReviewSession([plan], now);
+        const { session } = await deps.sessions.createReviewSession([plan], now);
         const preliminaryChecks: ReviewCheck[] = plan.preliminaryChecks ?? [];
         const hasBlockingPreliminaryChecks = preliminaryChecks.some((check) => check.status === "fail");
-        const payload: McpActionResponse = {
+        const payload: Omit<McpActionResponse, "card"> = {
           reviewSessionId: session.id,
-          reviewUrl: `${deps.reviewBaseUrl}/review/${session.id}#${token}`,
           plans: session.plans,
           preliminaryChecks,
           userAnswerUse: prepareActionReviewUserAnswerUse({ hasBlockingPreliminaryChecks })
         };
-        return okToolResult(payload);
+        return await createWorkflowCard(server, deps, "review", { reviewSessionId: session.id }, payload);
       } catch (error) {
         return sessionStoreToolError(error, deps.logger);
       }
@@ -111,28 +114,29 @@ export function registerActionTools(server: McpServer, deps: Pick<McpServerDeps,
       },
       outputSchema: successOutputSchema({
         reviewSessionId: z.string(),
-        reviewUrl: z.string(),
+        card: cardSnapshotSchema,
         plans: z.array(actionPlanSchema),
         preliminaryChecks: z.array(reviewCheckSchema),
         userAnswerUse: userAnswerUseSchema
       }),
+      _meta: cardMetadata("review"),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
     },
     async ({ proposal }) => {
+      if (!supportsCards(server)) return errorToolResult({ kind: "ui_unavailable", details: { reason: "An internal review card is required." } });
       const now = new Date();
       const plan = externalProposalToActionPlan(proposal, now);
 
       try {
-        const { session, token } = await deps.sessions.createReviewSession([plan], now);
+        const { session } = await deps.sessions.createReviewSession([plan], now);
         const preliminaryChecks: ReviewCheck[] = plan.preliminaryChecks ?? [];
-        const payload: McpActionResponse = {
+        const payload: Omit<McpActionResponse, "card"> = {
           reviewSessionId: session.id,
-          reviewUrl: `${deps.reviewBaseUrl}/review/${session.id}#${token}`,
           plans: session.plans,
           preliminaryChecks,
           userAnswerUse: prepareExternalProposalReviewUserAnswerUse()
         };
-        return okToolResult(payload);
+        return await createWorkflowCard(server, deps, "review", { reviewSessionId: session.id }, payload);
       } catch (error) {
         return sessionStoreToolError(error, deps.logger);
       }

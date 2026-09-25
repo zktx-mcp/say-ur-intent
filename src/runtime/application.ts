@@ -1,27 +1,18 @@
+import { createRuntimeReviewDependencies } from "./reviewDependencies.js";
+import { acquireDataDirectoryOwner } from "./shared/ownerLease.js";
+import { readFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { createWalletConnectTransport, WalletConnectConfigurationError } from "./walletConnectTransport.js";
+import { WalletWorkflow } from "../core/session/walletWorkflow.js";
+import type { WalletTransport, WalletStartupFailure } from "../core/session/walletConnection.js";
 import { randomUUID } from "node:crypto";
-import { mainnetCoins } from "@mysten/deepbook-v3";
 import { SqliteActivityStore } from "../core/activity/sqliteActivityStore.js";
-import {
-  createDeepbookSwapTransactionMaterialDigestProducer,
-  createDeepbookSwapTransactionMaterialProducer
-} from "../adapters/deepbook/deepbookTransactionMaterialProducer.js";
-import { createDeepbookSwapHumanReadableReviewProducer } from "../adapters/deepbook/deepbookHumanReviewProducer.js";
-import {
-  createFlowxSwapTransactionMaterialDigestProducer,
-  createFlowxSwapTransactionMaterialProducer
-} from "../adapters/flowx/flowxSwapTransactionMaterialProducer.js";
-import { createFlowxSwapHumanReadableReviewProducer } from "../adapters/flowx/flowxSwapHumanReviewProducer.js";
-import { createFlowxSwapReviewQuoteSource } from "../core/read/flowxQuoteClient.js";
 import { validateSupportedAdapterLifecycle } from "../adapters/adapterLifecycleValidators.js";
-import { buildSupportedReviewAdapters } from "../adapters/reviewAdapters.js";
 import { ADAPTER_PROMPT_SURFACES } from "../adapters/adapterPromptSurfaces.js";
 import { TransactionActivityService } from "../core/activity/transactionActivityService.js";
 import { createSuiReadService } from "../core/read/readService.js";
-import { createTransactionObjectOwnershipProducer } from "../core/action/transactionObjectOwnershipProducer.js";
 import { verifySuiChainReceipt } from "../core/action/suiChainReceiptVerifier.js";
 import { readPublicChainReceipt } from "../core/action/suiChainReceiptReader.js";
-import { createReviewTimeSimulationProducer } from "../core/action/reviewTimeSimulationEvidence.js";
-import { producePtbVisualizationArtifact } from "../core/action/ptbVisualizationProducer.js";
 import { LocalSessionStore } from "../core/session/sessionStore.js";
 import { createMcpServer } from "../mcp/server.js";
 import { SERVER_NAME, SERVER_NETWORK, SERVER_VERSION } from "../mcp/serverInfo.js";
@@ -40,10 +31,13 @@ import { RuntimeDataAccess } from "./shared/dataAccess.js";
 import { createInternalMcpHandler } from "./shared/mcpHttp.js";
 import type { SharedApplication } from "./shared/server.js";
 
-export async function createRuntimeApplication(bootConfig: BootConfig, logger: Logger): Promise<SharedApplication> {
+export async function createRuntimeApplication(bootConfig: BootConfig, logger: Logger, ownerId: string = randomUUID()): Promise<SharedApplication> {
   const access = new RuntimeDataAccess();
+  const ownership = acquireDataDirectoryOwner(bootConfig.activityDatabasePath);
+  let sdkStarted = false;
   let activityStore: SqliteActivityStore | undefined;
   let cards: CardStore | undefined;
+  let workflow: WalletWorkflow | undefined;
   let chart: ReturnType<typeof createDeepbookUsdcChartService> | undefined;
   try {
     const store = new SqliteActivityStore({
@@ -79,7 +73,9 @@ export async function createRuntimeApplication(bootConfig: BootConfig, logger: L
       bootSuiGrpcUrl: config.suiGrpcUrl,
       bootSuiGraphqlUrl: config.suiGraphqlUrl
     });
+    const workflowRecords = store.createWalletWorkflowStore(ownerId);
     const localData = store.createLocalDataService({
+      advanceRequestDeadlines: (now) => workflowRecords.advanceRequestDeadlines(now),
       onDataReplaced: () => { access.dataReplaced(); chart?.clearCache(); },
       suiGrpcUrl: DEFAULT_SUI_GRPC_URL,
       suiGraphqlUrl: DEFAULT_SUI_GRAPHQL_URL,
@@ -104,7 +100,7 @@ export async function createRuntimeApplication(bootConfig: BootConfig, logger: L
       validateAdapterLifecycle: validateSupportedAdapterLifecycle,
       sessions: store.createSessionRecordStore(),
       artifacts: store.createPrivateReviewArtifactStore(),
-      walletIdentityStore: store.createWalletIdentityRecordStore(),
+      ownerId,
       settingsStore: store.createSettingsRecordStore()
     });
     const readService = createSuiReadService({
@@ -133,88 +129,41 @@ export async function createRuntimeApplication(bootConfig: BootConfig, logger: L
         },
         input
       );
-    const httpHandler = createReviewRequestHandler({
-      host: config.reviewHost,
-      store: sessions,
-      logger,
-      activityStore: store,
-      localSettings,
-      localData,
-      chainReceiptVerifier,
-      publicChainReceiptReader,
-      reviewComputationDeps: {
-        validateAdapterLifecycle: validateSupportedAdapterLifecycle,
-        adapters: buildSupportedReviewAdapters((() => {
-          const transactionObjectOwnershipProducer = createTransactionObjectOwnershipProducer({
-            materialStore: transactionMaterialStore,
-            objectSource: suiClient,
-            network: config.network,
-            chainIdentifier,
-            expectedChainIdentifier: config.expectedChainIdentifier
-          });
-          const reviewTimeSimulationProducer = createReviewTimeSimulationProducer({
-            client: suiClient,
-            materialStore: transactionMaterialStore,
-            network: config.network,
-            chainIdentifier,
-            expectedChainIdentifier: config.expectedChainIdentifier
-          });
-          return {
-            deepbook: {
-              deepbookQuoteSource: readService,
-              deepbookDeepBalanceSource: async (account: string) => {
-                const balance = await suiClient.core.getBalance({
-                  owner: account,
-                  coinType: mainnetCoins.DEEP!.type
-                });
-                return balance.balance.balance.toString();
-              },
-              deepbookTransactionMaterialProducer: createDeepbookSwapTransactionMaterialProducer({
-                client: suiClient,
-                network: config.network,
-                chainIdentifier,
-                expectedChainIdentifier: config.expectedChainIdentifier,
-                materialStore: transactionMaterialStore
-              }),
-              deepbookTransactionMaterialDigestProducer: createDeepbookSwapTransactionMaterialDigestProducer({
-                materialStore: transactionMaterialStore
-              }),
-              transactionObjectOwnershipProducer,
-              deepbookHumanReadableReviewProducer: createDeepbookSwapHumanReadableReviewProducer(),
-              reviewTimeSimulationProducer,
-              ptbVisualizationProducer: (vizInput) =>
-                producePtbVisualizationArtifact({ materialStore: transactionMaterialStore, ...vizInput })
-            },
-            flowx: {
-              flowxQuoteSource: createFlowxSwapReviewQuoteSource(),
-              flowxTransactionMaterialProducer: createFlowxSwapTransactionMaterialProducer({
-                client: suiClient,
-                network: config.network,
-                chainIdentifier,
-                expectedChainIdentifier: config.expectedChainIdentifier,
-                materialStore: transactionMaterialStore
-              }),
-              flowxTransactionMaterialDigestProducer: createFlowxSwapTransactionMaterialDigestProducer({
-                materialStore: transactionMaterialStore
-              }),
-              transactionObjectOwnershipProducer,
-              flowxHumanReadableReviewProducer: createFlowxSwapHumanReadableReviewProducer(),
-              reviewTimeSimulationProducer,
-              ptbVisualizationProducer: (vizInput) =>
-                producePtbVisualizationArtifact({ materialStore: transactionMaterialStore, ...vizInput })
-            }
-          };
-        })())
-      },
-      serverInfo: {
-        name: SERVER_NAME,
-        version: SERVER_VERSION,
-        network: SERVER_NETWORK
+    const reviewComputationDeps = createRuntimeReviewDependencies({ client: suiClient, chainIdentifier,
+      expectedChainIdentifier: config.expectedChainIdentifier, materialStore: transactionMaterialStore, readService });
+    const httpHandler = createReviewRequestHandler({ host: config.reviewHost, store: sessions, logger,
+      activityStore: store, localSettings, localData,
+      serverInfo: { name: SERVER_NAME, version: SERVER_VERSION, network: SERVER_NETWORK } });
+    const cardRecords = store.createCardRecordStore();
+    let transport: WalletTransport | undefined;
+    let startupFailure: WalletStartupFailure | undefined = "configuration_missing";
+    const projectId = process.env.SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID;
+    if (projectId) {
+      try {
+        const metadata = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
+          name: string; description: string; homepage: string;
+        };
+        transport = await createWalletConnectTransport({ projectId, dataDirectory: dirname(bootConfig.activityDatabasePath), onSdkStart: () => { sdkStarted = true; },
+          metadata: { name: metadata.name, description: metadata.description, url: metadata.homepage } });
+        startupFailure = undefined;
+      } catch (error) {
+        startupFailure = error instanceof WalletConnectConfigurationError ? "configuration_invalid" : "initialization_failed";
+        logger.error("WalletConnect initialization unavailable", { stage: startupFailure });
       }
+    }
+    workflow = new WalletWorkflow({ records: workflowRecords, sessions, ownerId,
+      transport, startupFailure, computation: reviewComputationDeps, verifyReceipt: chainReceiptVerifier, readReceipt: publicChainReceiptReader, signatureClient: suiClient,
+      assertCurrent: access.assertCurrent, runExternalEvent: (work) => access.run(work), logger,
+      verifyNetwork: async () => {
+        const actual = await suiClient.core.getChainIdentifier();
+        if (actual.chainIdentifier !== config.expectedChainIdentifier) throw new Error("Sui mainnet verification failed.");
+      },
+      submitTransaction: (transaction, signature) => suiClient.core.executeTransaction({ transaction, signatures: [signature] })
     });
+    await workflow.start();
 
     chart = createDeepbookUsdcChartService({ assertCurrent: access.assertCurrent });
-    cards = createReadCardStore({ readService, publicChainReceiptReader, chart, records: store.createCardRecordStore(), ownerId: randomUUID(), assertCurrent: access.assertCurrent, logger });
+    cards = createReadCardStore({ readService, publicChainReceiptReader, chart, records: cardRecords, ownerId, assertCurrent: access.assertCurrent, logger, workflow });
     const transactionActivityService = new TransactionActivityService({
         activityStore: store,
         source: new GraphqlSuiTransactionActivitySource({
@@ -224,13 +173,13 @@ export async function createRuntimeApplication(bootConfig: BootConfig, logger: L
       });
     const mcp = createInternalMcpHandler(() => createMcpServer({
       cards: { store: cards! },
+      workflow,
       promptSurfaces: ADAPTER_PROMPT_SURFACES,
       sessions,
       activityStore: store,
       reviewBaseUrl: `http://${config.reviewHost}:${config.reviewPort}`,
       readService,
       transactionActivityService,
-      chainReceiptVerifier,
       localSettings,
       logger
     }));
@@ -240,13 +189,14 @@ export async function createRuntimeApplication(bootConfig: BootConfig, logger: L
       handleMcp: (request, response) => access.run(() => mcp.handle(request, response)),
       handleHttp: (request, response) => access.run(() => httpHandler(request, response)),
       async close() {
-        access.close(); cards?.stop(); chart?.clearCache();
-        try { await mcp.close(); } finally { store.close(); }
+        workflow?.stop(); access.close(); cards?.stop(); chart?.clearCache();
+        try { await mcp.close(); } finally { store.close(); if (!sdkStarted) ownership.close(); }
       }
     };
   } catch (error) {
-    access.close(); cards?.stop();
+    workflow?.stop(); access.close(); cards?.stop();
     activityStore?.close();
+    if (!sdkStarted) ownership.close();
     throw error;
   }
 }

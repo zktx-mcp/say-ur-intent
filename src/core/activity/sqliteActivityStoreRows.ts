@@ -1,3 +1,5 @@
+import { REVIEW_PREPARATION_STATUSES } from "../action/types.js";
+import { TRANSACTION_REQUEST_STATUSES, type TransactionRequest } from "../session/transactionRequest.js";
 import { actionPlanSchema } from "../action/schemas.js";
 import { assertNoForbiddenMcpFields } from "../action/forbiddenFields.js";
 import type { ActionPlan, InternalSessionStatus, ReviewState } from "../action/types.js";
@@ -20,7 +22,6 @@ import type {
   ReviewActivityDataScope,
   ReviewActivityListResult,
   ReviewActivityRow,
-  ReviewExecutionInput,
   ReviewFunnelSummary,
   ReviewFunnelSummaryResult
 } from "./activityStore.js";
@@ -51,28 +52,9 @@ export type ActiveAccountRow = {
   wallet_id: string | null;
 };
 
-export type ReviewExecutionRow = {
-  review_session_id: string;
-  plan_id: string;
-  account_id: number;
-  account: string;
-  status: string;
-  tx_digest: string | null;
-  explorer_url: string | null;
-  failure_reason: string | null;
-  recorded_at: string;
-  updated_at: string;
-};
 
-export type ReviewExecutionStorageRow = {
-  review_session_id: string;
-  plan_id: string;
-  account_id: number;
-  status: string;
-  tx_digest: string | null;
-  explorer_url: string | null;
-  failure_reason: string | null;
-};
+
+
 
 export type ReviewActivityScope = {
   account: string;
@@ -87,6 +69,7 @@ export type ReviewActivityListRow = {
   adapter_id: string;
   protocol: string;
   current_status: string;
+  current_attempt_id: string | null;
   account: string;
   created_at: string;
   updated_at: string;
@@ -105,31 +88,9 @@ export type KeyCountRow = {
   count: number;
 };
 
-export type TimingRow = {
-  avg_created_to_signed: number | null;
-  avg_opened_to_signed: number | null;
-};
 
-export type ReviewSessionDetailRow = {
-  review_session_id: string;
-  plan_id: string;
-  action_kind: string;
-  adapter_id: string;
-  protocol: string;
-  current_status: string;
-  account: string;
-  created_at: string;
-  updated_at: string;
-  plan_json: string;
-  intent_json: string | null;
-  execution_status: string | null;
-  tx_digest: string | null;
-  explorer_url: string | null;
-  failure_reason: string | null;
-  execution_recorded_at: string | null;
-  execution_updated_at: string | null;
-  result_json: string | null;
-};
+
+
 
 export type ExternalActivityScanRow = {
   scan_id: string;
@@ -174,6 +135,7 @@ export type ExternalActivityTransactionRow = {
 
 export type ReviewStateSnapshotRow = {
   id: number;
+  review_revision: number;
   plan_id: string;
   account: string;
   status: string;
@@ -186,6 +148,8 @@ export type ReviewStateSnapshotRow = {
 
 export type ReviewTransitionRow = {
   id: number;
+  attempt_id: string | null;
+  domain: "review" | "request";
   event: string;
   from_status: string | null;
   to_status: string;
@@ -204,18 +168,7 @@ export type CoinMetadataCacheRow = {
   expires_at: string;
 };
 
-export const INTERNAL_SESSION_STATUSES = [
-  "proposed",
-  "awaiting_wallet",
-  "wallet_connected",
-  "ready_for_wallet_review",
-  "refresh_required",
-  "blocked",
-  "signed_pending_result",
-  "success",
-  "failure",
-  "expired"
-] as const satisfies readonly InternalSessionStatus[];
+export const INTERNAL_SESSION_STATUSES = REVIEW_PREPARATION_STATUSES;
 
 export const REVIEW_STATE_STATUSES = [
   "ready_for_wallet_review",
@@ -228,7 +181,7 @@ export const REVIEW_TRANSITION_EVENTS = [
   "opened",
   "wallet_connected",
   "state_computed",
-  "result_recorded",
+  "request_admitted", "request_status_changed", "signature_verified", "chain_result_recorded", "review_update_failed", "review_invalidated",
   "expired"
 ] as const;
 
@@ -321,19 +274,19 @@ export function reviewSessionWhere(
   };
 }
 
-export function reviewActivityRowFromStorage(row: ReviewActivityListRow): ReviewActivityRow {
+export function reviewActivityRowFromStorage(row: ReviewActivityListRow, request?: TransactionRequest): ReviewActivityRow {
   return {
     reviewSessionId: asString(row.review_session_id),
     planId: asString(row.plan_id),
     actionKind: asString(row.action_kind),
     adapterId: asString(row.adapter_id),
     protocol: asString(row.protocol),
-    currentStatus: asInternalSessionStatus(row.current_status),
+    reviewStatus: asInternalSessionStatus(row.current_status),
     account: asString(row.account),
     createdAt: asString(row.created_at),
     updatedAt: asString(row.updated_at),
-    executionStatus: row.execution_status === null ? undefined : asString(row.execution_status),
-    txDigest: row.tx_digest === null ? undefined : asString(row.tx_digest),
+    ...(request ? { currentAttemptId: request.attemptId, requestStatus: request.requestStatus, reviewRevision: request.reviewRevision,
+      transactionDigest: request.transactionDigest, ...(request.execution ? { executionStatus: request.execution.status } : {}) } : {}),
     snapshotCount: row.snapshot_count,
     transitionCount: row.transition_count
   };
@@ -512,20 +465,12 @@ export function emptyExternalActivitySummaryStats(): {
 }
 
 export function emptyReviewFunnelSummary(): ReviewFunnelSummary {
-  return {
-    total: 0,
-    opened: 0,
-    walletConnected: 0,
-    stateComputed: 0,
-    currentStatusCounts: countMap(INTERNAL_SESSION_STATUSES, []),
-    everReachedReviewStateCounts: countMap(REVIEW_STATE_STATUSES, []),
-    signedPending: 0,
-    success: 0,
-    failure: 0,
-    expiredBeforeResult: 0,
-    avgCreatedToSignedSeconds: null,
-    avgOpenedToSignedSeconds: null
-  };
+  return { total: 0, opened: 0, walletConnected: 0, stateComputed: 0,
+    reviewStatusCounts: countMap(INTERNAL_SESSION_STATUSES, []),
+    requestStatusCounts: TRANSACTION_REQUEST_STATUSES.map((requestStatus) => ({ requestStatus, count: 0 })), executionStatusCounts: { success: 0, failure: 0 },
+    withoutRequest: 0, withoutExecutionResult: 0,
+    everReachedReviewStateCounts: countMap(REVIEW_STATE_STATUSES, []), everAwaitedChainResult: 0,
+    expiredWithoutExecutionResult: 0, avgCreatedToSignatureVerifiedSeconds: null, avgOpenedToSignatureVerifiedSeconds: null };
 }
 
 export function countMap<const T extends readonly string[]>(keys: T, rows: KeyCountRow[]): Record<T[number], number> {
@@ -666,7 +611,7 @@ export function asReviewTransitionEvent(value: unknown) {
 }
 
 export function asAccountSource(value: unknown): AccountSource {
-  if (value === "wallet_identity" || value === "review_execution") {
+  if (value === "wallet_connection" || value === "review_execution") {
     return value;
   }
   throw new ActivityStoreError("Unexpected account source");
@@ -698,41 +643,4 @@ function asExternalActivityIncompleteReason(value: unknown) {
     return value as (typeof EXTERNAL_ACTIVITY_INCOMPLETE_REASONS)[number];
   }
   throw new ActivityStoreError("Unexpected external activity incomplete reason");
-}
-
-export function isSameReviewExecution(
-  existing: ReviewExecutionStorageRow,
-  accountId: number,
-  input: ReviewExecutionInput
-): boolean {
-  return (
-    existing.plan_id === input.planId &&
-    existing.account_id === accountId &&
-    existing.status === input.status &&
-    nullableString(existing.tx_digest) === nullableString(input.txDigest) &&
-    nullableString(existing.explorer_url) === nullableString(input.explorerUrl) &&
-    nullableString(existing.failure_reason) === nullableString(input.failureReason)
-  );
-}
-
-export function canAdvanceReviewExecution(
-  existing: ReviewExecutionStorageRow,
-  accountId: number,
-  input: ReviewExecutionInput
-): boolean {
-  if (existing.plan_id !== input.planId || existing.account_id !== accountId) {
-    return false;
-  }
-  if (existing.status !== "signed_pending_result") {
-    return false;
-  }
-  if (input.status === "signed_pending_result") {
-    return false;
-  }
-  const nextDigest = nullableString(input.txDigest);
-  return existing.tx_digest === null || existing.tx_digest === nextDigest;
-}
-
-function nullableString(value: string | null | undefined): string | null {
-  return value ?? null;
 }

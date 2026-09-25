@@ -196,7 +196,7 @@ export function verifySwapQuotePolicyEvidence(input: {
 export type SwapQuotePolicyContractMapping =
   | {
       status: "mapped";
-      sourceOfTruth: AdapterSourceOfTruth[];
+      sourceReferences: AdapterSourceOfTruth[];
       evidenceClaims: Array<
         Extract<
           AdapterEvidenceClaim,
@@ -230,7 +230,7 @@ export function mapSwapQuotePolicyEvidenceToContractDraft(
     symbol: evidence.expectedOutput.asset.symbol,
     coinType: evidence.expectedOutput.asset.coinType
   };
-  const sourceOfTruth = [
+  const sourceReferences = [
     adapterSourceOfTruthSchema.parse({
       id: quoteSourceId,
       kind: "quote_evidence",
@@ -241,7 +241,7 @@ export function mapSwapQuotePolicyEvidenceToContractDraft(
     }) as AdapterSourceOfTruth,
     adapterSourceOfTruthSchema.parse({
       id: outputUnitSourceId,
-      kind: outputUnitSource.sourceOfTruthKind,
+      kind: outputUnitSource.sourceReferencesKind,
       network: "sui:mainnet",
       source: outputUnitSource.sourceDescription,
       verifiedAt: evidence.derivedAt,
@@ -330,7 +330,7 @@ export function mapSwapQuotePolicyEvidenceToContractDraft(
 
   return {
     status: "mapped",
-    sourceOfTruth,
+    sourceReferences,
     evidenceClaims,
     rawQuantities
   };
@@ -351,27 +351,27 @@ function sameAsset(
 function mapUnitSource(
   unitSource: SwapQuotePolicyEvidence["expectedOutput"]["asset"]["unitSource"]
 ): {
-  sourceOfTruthKind: "pinned_sdk_registry" | "verified_mainnet_onchain_metadata";
+  sourceReferencesKind: "pinned_sdk_registry" | "verified_mainnet_onchain_metadata";
   unitClaimSource: "pinned_sdk_metadata" | "verified_mainnet_onchain_metadata";
   sourceDescription: string;
 } | undefined {
   if (unitSource === DEEPBOOK_SCALAR_UNIT_SOURCE) {
     return {
-      sourceOfTruthKind: "pinned_sdk_registry",
+      sourceReferencesKind: "pinned_sdk_registry",
       unitClaimSource: "pinned_sdk_metadata",
       sourceDescription: "Pinned DeepBook mainnet coin metadata scalar used for quote raw units"
     };
   }
   if (unitSource === FLOWX_CLMM_UNIT_SOURCE) {
     return {
-      sourceOfTruthKind: "pinned_sdk_registry",
+      sourceReferencesKind: "pinned_sdk_registry",
       unitClaimSource: "pinned_sdk_metadata",
       sourceDescription: "Pinned FlowX mainnet registry (chain-verified) used for quote raw units"
     };
   }
   if (unitSource === "sui_core_getCoinMetadata") {
     return {
-      sourceOfTruthKind: "verified_mainnet_onchain_metadata",
+      sourceReferencesKind: "verified_mainnet_onchain_metadata",
       unitClaimSource: "verified_mainnet_onchain_metadata",
       sourceDescription: "Sui mainnet getCoinMetadata result used for quote raw units"
     };

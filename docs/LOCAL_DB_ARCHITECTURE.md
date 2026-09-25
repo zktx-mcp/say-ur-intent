@@ -80,24 +80,23 @@ WAL mode can create companion files next to the main database, such as `say-ur-i
 - `review_sessions`: review session header, current status, full action plan JSON, and materialized requested intent JSON when present.
 - `review_state_snapshots`: append-only account-bound `ReviewState` snapshots with status and reason columns for queryability.
 - `review_status_transitions`: append-only review lifecycle timing for funnel and review-timing analysis.
-- `review_executions`: Say Ur Intent review execution result evidence, keyed by
-  `review_session_id`. For signed review-page swaps, the execution result JSON
-  can include normalized server-read Sui chain receipt evidence for the signed
-  transaction digest.
+- `review_requests`: admitted attempts, immutable review evidence and independent request status.
+- `review_executions`: verified chain success/failure, keyed by `attempt_id` and bound to review session, account, plan and digest. Wallet rejection and uncertainty never create a chain failure row.
 - `external_activity_scans`: user-requested digest lookups, bounded account scans, or sent-function scans, including request window, endpoint host, chain identifier, continuation metadata, coverage signals, and internal scan-kind provenance.
 - `external_activity_transactions`: normalized Sui transaction facts linked to a known local account and the first/last scan that observed them. The optional detail JSON stores typed facts such as capped Move call targets, raw balance changes, object changes, event summaries, gas raw cost fields, execution errors, and truncation flags when GraphQL returns them. Each stored detail JSON value is capped at 64 KiB.
 - `local_settings`: allowlisted local settings. The current key set is `suiGrpcUrl` and `suiGraphqlUrl`, stored as JSON-encoded text and applied after restart.
 - `coin_metadata_cache`: account-independent positive cache for Sui coin metadata used only to format wallet balance display amounts. Rows are keyed by normalized coin type and verified mainnet chain identifier, expire after 24 hours, and are excluded from local data export/import. Read or write failures for this cache block affected wallet unit reads with `metadata_cache_unavailable`; they are not reported as unavailable token decimals.
 
-The following live session tables hold runtime session state in the shared database so any one review server can serve a session another client created (see [Shared single-origin review server](#shared-single-origin-review-server)):
+The following live session tables hold runtime session state in the shared database so any one review server can serve a session another client created (see [Shared local server](#shared-local-server)):
 
 - `live_review_sessions`: the live review session record — status, bound
-  account, the pending wallet-handoff lock, the plan / review-state /
-  execution-result JSON, timestamps, revision, and write-contract marker —
+  account, preparation/connection revision, current attempt reference,
+  plan/review-state JSON, timestamps, revision and write-contract marker —
   keyed by session id.
 - `live_private_review_artifacts`: per-session private review evidence (the transaction-material handle, its digest commitment, and derived evidence), cascade-deleted with its review session.
-- `live_transaction_materials`: locally built unsigned transaction bytes stored as a BLOB behind a redacted handle, with a TTL; deleted on signing, terminal result, or expiry.
-- `live_wallet_identity_sessions` and `live_settings_sessions`: the short-lived wallet-identity and settings capture sessions, stored as validated JSON keyed by session id.
+- `live_transaction_materials`: locally built unsigned transaction bytes stored as a BLOB behind a redacted handle, with a TTL; retained for the admitted request. Terminal request cleanup removes only material still owned by that revision, preserving newer preparation. Owner replacement deletes old private material while retaining immutable review and chain-result evidence.
+- `live_wallet_connections`: verified connection facts, private topic and callback state.
+- `live_settings_sessions`: short-lived Settings page authority.
 
 These live tables are distinct from the append-only review evidence tables above: the evidence tables remain the durable activity/audit record, while the live tables hold the in-flight session state that the review server serves.
 
@@ -124,13 +123,13 @@ update triggers reject revision-unaware writers: inserts must use
 `revision = 0` and the current write-contract marker, and updates must increase
 the revision by exactly one and keep the current write-contract marker.
 
-Logical local data reset is the local settings page action that clears stored product state through the runtime without requiring manual database-file deletion. Replace-only import is the settings page import path that replaces local product state from a validated backup. Both logical local data reset and replace-only import clear `coin_metadata_cache`, card records, live review/wallet/settings sessions, private review artifacts and transaction material in the same SQLite transaction. A rollback preserves the existing data and permissions. No separate HTTP cleanup call owns permission invalidation. Clearing active account context does not clear it because coin metadata is account-independent.
+Logical local data reset is the local settings page action that clears stored product state through the runtime without requiring manual database-file deletion. Replace-only import is the settings page import path that replaces local product state from a validated backup. When no unsettled financial request prevents replacement, both logical local data reset and replace-only import clear `coin_metadata_cache`, card records, live review/wallet/settings sessions, private review artifacts and transaction material in the same SQLite transaction. A rollback preserves the existing data and permissions. No separate HTTP cleanup call owns permission invalidation. Clearing active account context does not clear it because coin metadata is account-independent.
 
 Non-terminal review session expiry is recorded lazily when the session is read or mutated after its TTL. There is no background expiry worker.
 
 ## Shared local server
 
-Exactly one stdio process binds the configured loopback port and creates the shared services and SQLite stores. Other clients authenticate the listener before sending control credentials and forward MCP messages to it. The authentication covers database identity, runtime API version, configuration and server instance. Proof and subsequent dispatch use the same TCP connection. Host/Origin validation is separate from authentication; neither protects against a malicious process running as the same OS user.
+Exactly one runtime owner per data directory binds the configured loopback port and creates the shared services and SQLite stores. Other clients authenticate the listener before sending control credentials and forward MCP messages to it. The authentication covers database identity, internal API version 3, configuration (including WalletConnect project configuration) and server instance. Proof and subsequent dispatch use the same TCP connection. Host/Origin validation is separate from authentication; neither protects against a malicious process running as the same OS user.
 
 The private `runtime-control.key` file is separate from UI permissions and wallet credentials and is excluded from product backups. Stdio closure and process signals close the owned server; no client signals another process. A peer can acquire the port after it becomes free. Failed calls are not replayed automatically.
 
@@ -138,19 +137,122 @@ All state-writing MCP callers use this owner, including reads that save activity
 
 ### Read cards
 
-`live_read_cards` owns the read card kind, permission hash, backend owner, revision, original/accepted input, state/reason and saved result. Admission and result writes use conditional updates. Expiry is applied by the backend to unsubmitted input; a View timer only requests state. Frame recreation and chat navigation perform no close transition. The backend rejects late writes after local data replacement or owner changes, and recovery closes unfinished cards without repeating their source query.
+`live_read_cards` owns the card kind (account, receipt, chart, connect or review), permission hash, backend owner, revision, original/accepted input, state/reason and saved result or scoped workflow operation reference. Business request status is not copied into a separate card state machine. Admission and result writes use conditional updates. Expiry is applied by the backend to unsubmitted input; a View timer only requests state. Frame recreation and chat navigation perform no close transition. The backend rejects late writes after local data replacement or owner changes, and recovery closes unfinished cards without repeating their source query.
 
 The same record contains a model-safe result and, for receipts, separately validated UI-only input values and PTB display data. They are projections of one source read. They are not activity evidence or serialized signing material. Public saved resources exclude the private partition, and product backups exclude card records and permission hashes entirely.
 
 Input TTL is not a result-retention deadline. Completed results survive restart and remain until explicit local data reset/import; there is no automatic age-based deletion or per-card size cap. Existing query limits still apply. DB size can therefore grow with usage. Reset/import affects other local data too and must retain its explicit confirmation and failure-atomicity contract.
 
-### Unsigned transaction material on disk
+### Wallet and request ownership
 
-`live_transaction_materials` stores locally built unsigned transaction bytes so a review can be signed by whichever process owns the port. The data directory is created `0700` and the database file is set `0600` so other operating-system users cannot read them; the bytes carry a short TTL and are deleted on signing, terminal result, or expiry. This store is separate from the review evidence path: the MCP tool layer still does not return transaction bytes, and the activity-store evidence inputs still reject transaction bytes, signatures, and signing material before write.
+The same product DB stores `review_requests` per attempt, with a unique review
+session/revision admission, immutable reviewed state/account/digest, request
+status and signature/submission timestamps. `review_sessions.current_attempt_id`
+selects the current attempt explicitly. `review_executions` is keyed by attempt,
+contains only verified chain success/failure, and cannot stand in for wallet
+rejection or an unknown outcome. Public history and live request transitions
+commit together with card admission or closure. Old attempts remain readable.
+
+`live_request_authority` holds owner, wallet connection revision, submission
+permission, pending callback flags and backend deadlines. `live_wallet_connections`
+holds verified public connection facts and a private SDK topic reference.
+`live_execution_details` holds optional receipt display details separately from
+public history. `live_review_sessions` binds preparation to a connection revision;
+a connection change invalidates unadmitted review data. None of these private
+live tables is exported or restored by public backup.
+
+`live_transaction_materials` contains private unsigned bytes bound to the review.
+Admission freezes the transaction for that request; delayed signatures cannot
+substitute a later quote or material. The backend rechecks digest and signer
+before submission. Card/model results and public activity never include bytes
+or signatures. The OS-user-only data directory is 0700 and DB files are 0600.
+
+A separate `runtime-owner.sqlite` holds a process-lifetime SQLite exclusive lock,
+so two ports cannot create two wallet owners for one data directory. Private
+SDK sessions/keys use `walletconnect/sessions.sqlite` with a current-only format.
+Pinned SDK request/history/message queues and unknown namespaces are volatile.
+Neither file is part of public data backup. SDK state is not business authority;
+restore reconciles only existing known connection records and never replays a
+financial request or restores cleared read context.
+
+Stored snapshot readers do not reconcile expiry, call the wallet or observe the
+chain. Current-state operations bind asynchronous evidence verification to the
+review revision, material identity and exact verified bytes. A short synchronous
+transaction samples its decision time, reconciles expiry and collects related
+card, account, connection and request facts together. Projections consume that
+evaluated state without a clock or I/O. Changed evidence requiring another
+verification ends the read with a conflict; it is not retried in an internal
+loop. Wallet availability is runtime information, not a persisted request state;
+public backup and funnel counts exclude it.
+
+Both `submitting` and `awaiting_chain_result` retain the initial observation
+window in the session, account-busy and data-replacement guards, even when all
+callback flags are clear. A failed post-submission write cannot strand the
+known digest. Callback completion and chain completion remain separate facts.
+Current Review evaluation also reads whether an unconsumed, unexpired original
+input exists. Historical review status alone does not make an interaction pending.
+
+Preparation IDs in the workflow execution set describe only currently running
+computations; they hold no results or authority. If a current owner's stored
+preparation has no running computation, current reads use the existing failure
+writer to settle it. Pending disconnect cards with a settled SDK callback are
+reconciled from the available SDK session or closed as unconfirmed failures.
+These reads never repeat preparation, connection, signing or submission. Raw
+history/export readers do not perform this reconciliation.
+
+Signature admission independently checks the current material handle, expiry,
+bytes, digest and review binding inside its transaction. Displayed actions are
+not admission authority. An admitted attempt keeps its fixed review facts and
+request deadlines; subsequent quote expiry does not cancel that request.
+Revision-specific evidence validity does not remove session/account pending-work
+or data-replacement protections. Mandatory activity rows commit with the state;
+optional event-log failures do not roll back that commit or repeat an operation.
+
+Review preparation also checks the immutable bound account against current read
+context and the selected account before writing preparation state. The same pure
+account rule supplies evaluated choices. A selection mismatch is a current
+restriction, not a stored preparation error or an activity transition.
+
+Request interruption consumes both its internal origin and the request phase.
+Before submission, user stopping, wallet change and requested disconnection
+record distinct safe reasons with the terminal transition. After submission,
+only explicit user stopping sets `observation_stopped`; wallet changes and
+disconnect requests preserve that flag, the lookup deadline and pending work.
+They cannot silently release account-busy protection or restart an observation
+the user stopped. Existing deadline, owner-recovery and data-replacement rules
+remain separate. Stored reasons flow unchanged to cards, model results, activity
+and public backup; earlier recorded reasons are not rewritten speculatively.
+
+Wallet dependency failure keeps guarded DB reads, local deadline reconciliation
+and independent receipt observation available. Only a healthy wallet dependency
+can admit new wallet work or continue a signature toward submission. After
+dispatch, result recording and pending-flag settlement require the current DB
+generation, owner and exact operation, not a working wallet SDK. Pending flags
+remain set until the corresponding asynchronous work actually settles. A DB
+failure is reported as a storage failure, never as an empty successful snapshot.
+
+Reset/import checks SDK/signature/submission/initial-observation settlement
+inside the same DB transaction as replacement, including after asynchronous
+endpoint verification. Rejection preserves data and authority. Completed local
+unknown-outcome records may be removed after the explicit warning; removing
+records cannot cancel a transaction. A generation change rejects late writes.
+
+The wallet store advances expired signature and initial-observation deadlines
+through the same request transition writer used by the workflow. Current
+session/card reads, current local-data counts and preview counts, and the actual
+reset/import transaction use this operation even when no View is open. Expiry
+does not clear pending SDK/submission/lookup callbacks. Stored activity queries
+and public backup export only read recorded facts; they do not advance live
+requests or interpret imported history as authority. Replacement warnings do not
+claim an earlier counts snapshot is the number being deleted now.
+
+Disconnect progress is the existing running Connect card's accepted disconnect
+action and connection reference. Connection updates preserve that operation
+until its result is recorded; no additional persisted connection status is used.
 
 ### Current format and backups
 
-The current `user_version` is 8. It identifies one supported schema; there is no migration registry or older-format decoder. All clients sharing a data directory must use the same compatible runtime.
+The current `user_version` is 9. It identifies one supported schema; there is no migration registry or older-format decoder. All clients sharing a data directory must use the same compatible runtime.
 
 A current backup carries `format`, `schemaVersion`, `network`, `exportedAt` and its product data. Import rejects a missing or different schema identifier, incomplete required fields, invalid references or invalid raw quantities. Missing settings or activity arrays are not filled from defaults. Supported `function_scan` provenance remains part of the current format. Validation failure leaves current data intact.
 

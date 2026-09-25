@@ -3,13 +3,12 @@ import { proposalReviewModelSchema } from "../proposal/schemas.js";
 import { suiAddressStringSchema } from "../suiAddress.js";
 import { makeRawU64StringSchema, makeSignedRawIntegerStringSchema } from "../numeric/rawU64.js";
 import { normalizeCoinType } from "../read/coinMetadata.js";
-import { BLOCKED_REASONS, FAILURE_REASONS, REFRESH_REASONS } from "./types.js";
-import { ptbVisualizationArtifactSchema, walletReviewAdapterContractSchema } from "./signableAdapterContract.js";
-import { suiChainReceiptEvidenceSchema } from "./suiChainReceiptEvidence.js";
+import { BLOCKED_REASONS, REFRESH_REASONS, REVIEW_PREPARATION_STATUSES } from "./types.js";
+import { ptbVisualizationArtifactSchema, transactionReviewDataSchema } from "./signableAdapterContract.js";
+export { transactionExecutionSummarySchema } from "../session/transactionRequest.js";
 
 export const unknownRecordSchema = z.record(z.string(), z.unknown());
 
-export const failureReasonSchema = z.enum(FAILURE_REASONS);
 export const blockedReasonSchema = z.enum(BLOCKED_REASONS);
 export const refreshReasonSchema = z.enum(REFRESH_REASONS);
 
@@ -19,29 +18,11 @@ export const reviewStatusSchema = z.enum([
   "blocked"
 ]);
 
-export const internalSessionStatusSchema = z.enum([
-  "proposed",
-  "awaiting_wallet",
-  "wallet_connected",
-  "ready_for_wallet_review",
-  "refresh_required",
-  "blocked",
-  "signed_pending_result",
-  "success",
-  "failure",
-  "expired"
-]);
+export const internalSessionStatusSchema = z.enum(REVIEW_PREPARATION_STATUSES);
 
 export const executionPollingStatusSchema = z.enum([
-  "pending",
-  "awaiting_wallet",
-  "awaiting_signature",
-  "refresh_required",
-  "signed_pending_result",
-  "success",
-  "failure",
-  "expired",
-  "blocked"
+  "proposed", "awaiting_wallet", "wallet_connected", "ready_for_wallet_review", "refresh_required", "blocked", "expired",
+  "awaiting_signature", "submitting", "awaiting_chain_result", "stopped", "request_failed", "outcome_unknown", "completed"
 ]);
 
 export const reviewCheckSchema = z.object({
@@ -319,7 +300,7 @@ const reviewStateBaseSchema = z.object({
   beforeAfterBalance: balanceChangeSchema.optional(),
   simulation: transactionSimulationSummarySchema.optional(),
   humanReadableReview: humanReadableReviewSummarySchema.optional(),
-  walletReviewAdapterContract: walletReviewAdapterContractSchema.optional(),
+  transactionReviewData: transactionReviewDataSchema.optional(),
   ptbVisualization: ptbVisualizationArtifactSchema.optional(),
   adapterLifecycle: adapterLifecycleSchema.optional(),
   updatedAt: z.string()
@@ -377,22 +358,20 @@ export const reviewStateStructuralInvariantSchema = z.discriminatedUnion("status
     }
   }
 
-  const contractCarryingState =
-    state.status === "ready_for_wallet_review" ||
-    (state.status === "blocked" && state.blockedReason === "wallet_handoff_not_implemented");
-  if (state.walletReviewAdapterContract !== undefined && !contractCarryingState) {
+  const contractCarryingState = state.status === "ready_for_wallet_review";
+  if (state.transactionReviewData !== undefined && !contractCarryingState) {
     ctx.addIssue({
       code: "custom",
-      path: ["walletReviewAdapterContract"],
+      path: ["transactionReviewData"],
       message:
-        "walletReviewAdapterContract is only valid on ready_for_wallet_review or a stored wallet_handoff_not_implemented state"
+        "transactionReviewData is only valid on ready_for_wallet_review"
     });
   }
   if (state.status === "ready_for_wallet_review" && lifecycle !== undefined) {
-    if (state.walletReviewAdapterContract === undefined) {
+    if (state.transactionReviewData === undefined) {
       ctx.addIssue({
         code: "custom",
-        path: ["walletReviewAdapterContract"],
+        path: ["transactionReviewData"],
         message: "ready_for_wallet_review requires an emitted wallet review contract"
       });
     }
@@ -423,36 +402,6 @@ export const reviewStateStructuralInvariantSchema = z.discriminatedUnion("status
     return;
   }
 
-  if (state.blockedReason === "wallet_handoff_not_implemented") {
-    if (state.walletReviewAdapterContract === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["walletReviewAdapterContract"],
-        message: "wallet_handoff_not_implemented requires an emitted wallet review contract"
-      });
-    }
-    if (lifecycle === undefined || lifecycle.missingStages.length !== 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["adapterLifecycle"],
-        message: "wallet_handoff_not_implemented requires a completed adapterLifecycle with no missing stages"
-      });
-    }
-    if (state.humanReadableReview === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["humanReadableReview"],
-        message: "wallet_handoff_not_implemented requires humanReadableReview public evidence"
-      });
-    }
-    if (state.simulation === undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["simulation"],
-        message: "wallet_handoff_not_implemented requires successful simulation public evidence"
-      });
-    }
-  }
 
   if (
     state.blockedReason === "producer_stage_missing" &&
@@ -477,11 +426,11 @@ export const reviewStateStructuralInvariantSchema = z.discriminatedUnion("status
   }
   if (
     state.blockedReason === "wallet_review_contract_emit_missing" &&
-    state.walletReviewAdapterContract !== undefined
+    state.transactionReviewData !== undefined
   ) {
     ctx.addIssue({
       code: "custom",
-      path: ["walletReviewAdapterContract"],
+      path: ["transactionReviewData"],
       message: "wallet_review_contract_emit_missing requires the wallet review contract to be absent"
     });
   }
@@ -612,51 +561,3 @@ function requireSuccessfulSimulationProjection(
     });
   }
 }
-
-const executionResultBaseSchema = z.object({
-  reviewSessionId: z.string(),
-  planId: z.string(),
-  explorerUrl: z.string().optional(),
-  summary: unknownRecordSchema.optional(),
-  recordedAt: z.string()
-});
-
-export const executionResultSchema = z.discriminatedUnion("status", [
-  executionResultBaseSchema.extend({
-    status: z.literal("signed_pending_result"),
-    txDigest: z.string().min(1),
-    failureReason: z.never().optional(),
-    chainReceipt: z.never().optional()
-  }),
-  executionResultBaseSchema.extend({
-    status: z.literal("success"),
-    txDigest: z.string().min(1),
-    chainReceipt: suiChainReceiptEvidenceSchema,
-    failureReason: z.never().optional()
-  }),
-  executionResultBaseSchema.extend({
-    status: z.literal("failure"),
-    txDigest: z.string().optional(),
-    failureReason: failureReasonSchema,
-    chainReceipt: suiChainReceiptEvidenceSchema.optional()
-  })
-]).superRefine((result, ctx) => {
-  if (!("chainReceipt" in result) || result.chainReceipt === undefined) {
-    return;
-  }
-  if (result.txDigest === undefined) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["txDigest"],
-      message: "chain receipt execution results require txDigest"
-    });
-    return;
-  }
-  if (result.txDigest !== result.chainReceipt.txDigest) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["chainReceipt", "txDigest"],
-      message: "chain receipt txDigest must match execution result txDigest"
-    });
-  }
-});

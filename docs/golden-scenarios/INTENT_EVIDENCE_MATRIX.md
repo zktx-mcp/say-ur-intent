@@ -213,13 +213,10 @@ Ask only for returned choices.
 Do not set a target source for an agent-inferred target. Do not count non-group quote proceeds as payment coverage, auto-select source assets, rank routes, claim route-dependent payment support, or imply signing readiness.
 
 `Prepare selling 10 SUI.`
-Use `action.prepare_sui_action_review`.
-Return the review URL and explain that the MCP response contains no transaction
-bytes, signing data, or signing readiness. If the account-bound review reaches
-`ready_for_wallet_review`, the local review page can request the digest-gated
-handoff and the user signs in their own wallet.
-Do not return transaction bytes, signing readiness, or execution claims from
-the MCP answer.
+Use `action.prepare_sui_action_review` and present the internal Review card.
+Explain returned checks; only an explicit card selection and wallet approval
+can authorize the backend request. Do not return bytes, signing readiness or
+an execution claim from preparation alone.
 
 `Tell me this review session status.`
 Use `session.get_review_status` or `read.get_review_session_detail`.
@@ -227,15 +224,15 @@ Report current status and checks returned by the review layer.
 Do not give a safety guarantee or signing-readiness claim when status is blocked.
 
 `Connect my wallet.`
-Use `session.create_wallet_identity`, then wait or poll.
-Return the same-machine browser URL and active account read context after connection.
+Use `session.create_wallet_connection`, then wait or poll.
+Present the internal Connect card, use its cardId for reads/waits, and confirm active read context after explicit connection or account selection. Opening the card does not create a pairing.
 Do not call it login, permanent authorization, or transaction permission.
 
 `Can I sign now?`
 Use review status only.
 If the returned review status is `ready_for_wallet_review` with an emitted
-wallet review contract, say that the local review page can request the
-digest-gated handoff and the user must approve in their own wallet. If the
+transaction review data, say the user can request approval in the Review card
+and must approve the exact transaction in their own wallet. If the
 review is blocked, explain the returned missing or failed review evidence.
 Do not use safe-to-sign language, do not return transaction material, and do
 not describe MCP output as signing data.

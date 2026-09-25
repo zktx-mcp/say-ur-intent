@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { normalizeCoinType } from "../read/coinMetadata.js";
-import { SUI_COIN_TYPE } from "../read/walletReadHelpers.js";
+import { SUI_TYPE_ARG } from "@mysten/sui/utils";
 import { makeCanonicalRawU64StringSchema } from "../numeric/rawU64.js";
 import { suiAddressStringSchema, suiTransactionDigestSchema } from "../suiAddress.js";
 
-export const WALLET_REVIEW_ADAPTER_CONTRACT_VERSION =
-  "wallet-review-adapter-contract-alpha-2026-06-02";
+export const TRANSACTION_REVIEW_SCHEMA_VERSION =
+  1;
 export const PTB_VISUALIZATION_CONTRACT_VERSION =
   "ptb-visualization-contract-alpha-2026-05-25";
 
@@ -49,7 +49,8 @@ export const PTB_VISUALIZATION_REQUIRED_UNSUPPORTED_USES = [
   "route_recommendation"
 ] as const;
 
-export const SUI_GAS_COIN_TYPE = SUI_COIN_TYPE;
+// The generic review contract must not load a protocol registry to name Sui gas.
+export const SUI_GAS_COIN_TYPE = SUI_TYPE_ARG;
 export const SUI_GAS_RAW_UNIT = "MIST";
 
 const EXPIRY_TIMESTAMP_SOURCE_FIELDS = ["checkedAt", "expiresAt"] as const;
@@ -703,7 +704,7 @@ export const adapterObjectOwnershipEvidenceSchema = z.object({
 
 export const adapterSimulationEvidenceSchema = z.object({
   evidenceClaimId: evidenceIdSchema,
-  boundToCommitment: suiTransactionDigestSchema,
+  transactionDigest: suiTransactionDigestSchema,
   provider: z.literal("client.core.simulateTransaction"),
   checksEnabled: z.literal(true),
   simulatedAt: isoUtcStringSchema,
@@ -735,7 +736,7 @@ export const adapterSimulationEvidenceSchema = z.object({
 
 export const adapterHumanReadableReviewSchema = z.object({
   fields: z.array(z.enum(WALLET_REVIEW_REQUIRED_HUMAN_FIELDS)).min(WALLET_REVIEW_REQUIRED_HUMAN_FIELDS.length),
-  boundToCommitment: suiTransactionDigestSchema,
+  transactionDigest: suiTransactionDigestSchema,
   source: z.literal("review_model_or_adapter_equivalent"),
   purpose: z.literal("human_review_before_wallet_authorization")
 }).strict().refine(
@@ -764,14 +765,14 @@ export const adapterOutputBoundarySchema = z.object({
   );
 });
 
-export const walletReviewAdapterContractSchema = z.object({
-  contractVersion: z.literal(WALLET_REVIEW_ADAPTER_CONTRACT_VERSION),
+export const transactionReviewDataSchema = z.object({
+  schemaVersion: z.literal(TRANSACTION_REVIEW_SCHEMA_VERSION),
   adapterId: z.string().min(1).max(120),
   protocol: z.string().min(1).max(120),
   actionKind: z.string().min(1).max(120),
   network: z.literal("sui:mainnet"),
   inputProvenance: adapterInputProvenanceSchema,
-  sourceOfTruth: z.array(adapterSourceOfTruthSchema).min(1),
+  sourceReferences: z.array(adapterSourceOfTruthSchema).min(1),
   evidenceClaims: z.array(adapterEvidenceClaimSchema).min(1),
   rawQuantities: z.array(adapterRawQuantitySchema).min(1),
   gas: adapterGasEvidenceSchema,
@@ -781,17 +782,17 @@ export const walletReviewAdapterContractSchema = z.object({
   simulation: adapterSimulationEvidenceSchema,
   humanReadableReview: adapterHumanReadableReviewSchema,
   outputBoundary: adapterOutputBoundarySchema,
-  transactionMaterialCommitment: suiTransactionDigestSchema
+  reviewedTransactionDigest: suiTransactionDigestSchema
 }).strict().superRefine((value, ctx) => {
   const sourceIds = new Set<string>();
-  const sourceById = new Map<string, (typeof value.sourceOfTruth)[number]>();
+  const sourceById = new Map<string, (typeof value.sourceReferences)[number]>();
   const sourceIndexById = new Map<string, number>();
-  value.sourceOfTruth.forEach((source, index) => {
+  value.sourceReferences.forEach((source, index) => {
     if (sourceIds.has(source.id)) {
       ctx.addIssue({
         code: "custom",
-        path: ["sourceOfTruth", index, "id"],
-        message: `sourceOfTruth id must be unique: ${source.id}`
+        path: ["sourceReferences", index, "id"],
+        message: `sourceReferences id must be unique: ${source.id}`
       });
     }
     sourceIds.add(source.id);
@@ -822,7 +823,7 @@ export const walletReviewAdapterContractSchema = z.object({
   const requireSourceId = (
     sourceEvidenceId: string | undefined,
     path: Array<string | number>
-  ): (typeof value.sourceOfTruth)[number] | undefined => {
+  ): (typeof value.sourceReferences)[number] | undefined => {
     if (sourceEvidenceId === undefined) {
       return undefined;
     }
@@ -833,7 +834,7 @@ export const walletReviewAdapterContractSchema = z.object({
     ctx.addIssue({
       code: "custom",
       path,
-      message: `source evidence id must reference sourceOfTruth[].id: ${sourceEvidenceId}`
+      message: `source evidence id must reference sourceReferences[].id: ${sourceEvidenceId}`
     });
     return undefined;
   };
@@ -852,7 +853,7 @@ export const walletReviewAdapterContractSchema = z.object({
       return;
     }
     const sourceIndex = sourceIndexById.get(sourceEvidenceId);
-    const sourcePath = sourceIndex === undefined ? path : ["sourceOfTruth", sourceIndex];
+    const sourcePath = sourceIndex === undefined ? path : ["sourceReferences", sourceIndex];
     if (!requirement.kinds.includes(source.kind)) {
       ctx.addIssue({
         code: "custom",
@@ -865,7 +866,7 @@ export const walletReviewAdapterContractSchema = z.object({
       source.fields,
       requirement.fields,
       [...sourcePath, "fields"],
-      `${label} sourceOfTruth fields`
+      `${label} sourceReferences fields`
     );
   };
 
@@ -1256,20 +1257,20 @@ export const walletReviewAdapterContractSchema = z.object({
   // Contract invariant: human review, review-time simulation, and transaction
   // material commitment must all reference the same Sui transaction digest.
   // Reuse requireEqual so commitment checks match the evidence-claim bindings.
-  const handoffDigest = value.transactionMaterialCommitment;
+  const handoffDigest = value.reviewedTransactionDigest;
   requireEqual(
     ctx,
-    value.humanReadableReview.boundToCommitment,
+    value.humanReadableReview.transactionDigest,
     handoffDigest,
-    ["humanReadableReview", "boundToCommitment"],
-    "humanReadableReview.boundToCommitment"
+    ["humanReadableReview", "transactionDigest"],
+    "humanReadableReview.transactionDigest"
   );
   requireEqual(
     ctx,
-    value.simulation.boundToCommitment,
+    value.simulation.transactionDigest,
     handoffDigest,
-    ["simulation", "boundToCommitment"],
-    "simulation.boundToCommitment"
+    ["simulation", "transactionDigest"],
+    "simulation.transactionDigest"
   );
 });
 
@@ -1319,5 +1320,5 @@ export type AdapterSourceOfTruth = z.infer<typeof adapterSourceOfTruthSchema>;
 export type AdapterEvidenceClaim = z.infer<typeof adapterEvidenceClaimSchema>;
 export type AdapterObjectOwnershipEvidence = z.infer<typeof adapterObjectOwnershipEvidenceSchema>;
 export type AdapterRawQuantity = z.infer<typeof adapterRawQuantitySchema>;
-export type WalletReviewAdapterContract = z.infer<typeof walletReviewAdapterContractSchema>;
+export type TransactionReviewData = z.infer<typeof transactionReviewDataSchema>;
 export type PtbVisualizationArtifact = z.infer<typeof ptbVisualizationArtifactSchema>;

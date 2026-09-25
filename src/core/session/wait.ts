@@ -1,22 +1,21 @@
-import type { ExecutionPollingStatus } from "./status.js";
+import type { ExecutionPollingStatus, ReviewSnapshot } from "./status.js";
 import {
   EXECUTION_POLLING_INTERVAL_SECONDS,
   getExecutionPollingStatus,
+  executionStatusCategory,
   isWaitStoppingExecutionStatus
 } from "./status.js";
-import type { ReviewSession } from "../action/types.js";
-import { SessionStoreError, type SessionStore } from "./sessionStore.js";
-import {
-  isTerminalWalletIdentityStatus,
-  WALLET_IDENTITY_POLLING_INTERVAL_SECONDS,
-  type WalletIdentitySession,
-  type WalletIdentityStatus
-} from "./walletIdentity.js";
+import { SessionStoreError } from "./sessionStore.js";
+import type { CardStore } from "./cardSessionStore.js";
+import type { CardSnapshot } from "./cardSession.js";
+import { workflowViewSchema } from "./workflowView.js";
+import { WALLET_CONNECTION_POLL_SECONDS } from "./walletConnection.js";
 
 export const DEFAULT_WAIT_TIMEOUT_MS = 45_000;
 export const MAX_WAIT_TIMEOUT_MS = 55_000;
 
-export type WaitOutcome = "status_reached" | "timed_out";
+export const WAIT_OUTCOMES = ["status_reached", "timed_out", "unavailable"] as const;
+export type WaitOutcome = (typeof WAIT_OUTCOMES)[number];
 export type WalletStatusCategory = "terminal" | "non_terminal";
 export type WaitSessionMissingReason = "missing" | "session_removed_during_wait";
 export type WaitAbortReason = "host_abort";
@@ -27,140 +26,55 @@ export class WaitRequestAbortedError extends Error {
   }
 }
 
-export type WalletIdentityWaitResult = {
-  waitOutcome: WaitOutcome;
-  session: WalletIdentitySession;
-  statusCategory: WalletStatusCategory;
-};
-
-export type ExecutionWaitResult = {
-  waitOutcome: WaitOutcome;
-  session: ReviewSession;
-  status: ExecutionPollingStatus;
-};
-
+export type ExecutionWaitResult = ReviewSnapshot & { waitOutcome: WaitOutcome; status: ExecutionPollingStatus };
+export type ReviewStateReader = (reviewSessionId: string, now?: Date) => Promise<ReviewSnapshot | undefined>;
 type WaitOptions = {
   timeoutMs?: number | undefined;
   signal?: AbortSignal;
   now?: () => Date;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
-  readReviewSession?: (
-    reviewSessionId: string,
-    now?: Date
-  ) => Promise<ReviewSession | undefined>;
 };
 
-export async function waitForWalletIdentitySession(
-  sessions: SessionStore,
-  walletSessionId: string,
-  options: WaitOptions = {}
-): Promise<WalletIdentityWaitResult> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
-  const sleep = options.sleep ?? sleepMs;
-  const startedAt = Date.now();
-
-  assertNotAborted(options.signal);
-  let session = await getRequiredWalletIdentitySession(sessions, walletSessionId, options.now, "missing");
-  if (isTerminalWalletIdentityStatus(session.status)) {
-    return walletWaitResult("status_reached", session);
-  }
-
-  while (Date.now() - startedAt < timeoutMs) {
+export async function waitForWalletConnection(cards: CardStore, cardId: string, options: WaitOptions = {}): Promise<{
+  waitOutcome: WaitOutcome; snapshot: CardSnapshot;
+}> {
+  const timeout = options.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+  const started = Date.now(), sleep = options.sleep ?? sleepMs;
+  let snapshot: CardSnapshot;
+  while (true) {
     assertNotAborted(options.signal);
-    const remainingMs = timeoutMs - (Date.now() - startedAt);
-    await sleep(Math.min(remainingMs, WALLET_IDENTITY_POLLING_INTERVAL_SECONDS * 1000), options.signal);
-    session = await getRequiredWalletIdentitySession(
-      sessions,
-      walletSessionId,
-      options.now,
-      "session_removed_during_wait"
-    );
-    if (isTerminalWalletIdentityStatus(session.status)) {
-      return walletWaitResult("status_reached", session);
-    }
+    snapshot = await cards.readSaved(cardId);
+    const view = workflowViewSchema.parse(snapshot.data);
+    if (snapshot.kind !== "connect") throw new SessionStoreError("input_invalid", "A connection card ID is required.");
+    if (view.progress.status === "unavailable") return { waitOutcome: "unavailable", snapshot };
+    if (!view.observe) return { waitOutcome: "status_reached", snapshot };
+    const remaining = timeout - (Date.now() - started);
+    if (remaining <= 0) return { waitOutcome: "timed_out", snapshot };
+    await sleep(Math.min(remaining, WALLET_CONNECTION_POLL_SECONDS * 1000), options.signal);
   }
-
-  return walletWaitResult("timed_out", session);
 }
 
 export async function waitForExecutionResult(
-  sessions: SessionStore,
+  readState: ReviewStateReader,
   reviewSessionId: string,
   options: WaitOptions = {}
 ): Promise<ExecutionWaitResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
-  const sleep = options.sleep ?? sleepMs;
-  const startedAt = Date.now();
-
-  assertNotAborted(options.signal);
-  let session = await getRequiredReviewSession(sessions, reviewSessionId, options.now, "missing", options.readReviewSession);
-  let status = getExecutionPollingStatus(session);
-  if (isWaitStoppingExecutionStatus(status)) {
-    return { waitOutcome: "status_reached", session, status };
-  }
-
-  while (Date.now() - startedAt < timeoutMs) {
+  const sleep = options.sleep ?? sleepMs, startedAt = Date.now();
+  let reason: WaitSessionMissingReason = "missing";
+  while (true) {
     assertNotAborted(options.signal);
-    const remainingMs = timeoutMs - (Date.now() - startedAt);
-    await sleep(Math.min(remainingMs, EXECUTION_POLLING_INTERVAL_SECONDS * 1000), options.signal);
-    session = await getRequiredReviewSession(
-      sessions,
-      reviewSessionId,
-      options.now,
-      "session_removed_during_wait",
-      options.readReviewSession
-    );
-    status = getExecutionPollingStatus(session);
-    if (isWaitStoppingExecutionStatus(status)) {
-      return { waitOutcome: "status_reached", session, status };
-    }
+    const state = await readState(reviewSessionId, options.now?.());
+    if (!state) throw new SessionStoreError("session_not_found", `Review session not found: ${reviewSessionId}`, { reason });
+    const status = getExecutionPollingStatus(state.session, state.request);
+    if (executionStatusCategory(status) === "final") return { ...state, status, waitOutcome: "status_reached" };
+    if (state.progress.status === "unavailable") return { ...state, status, waitOutcome: "unavailable" };
+    if (isWaitStoppingExecutionStatus(status)) return { ...state, status, waitOutcome: "status_reached" };
+    const remaining = timeoutMs - (Date.now() - startedAt);
+    if (remaining <= 0) return { ...state, status, waitOutcome: "timed_out" };
+    await sleep(Math.min(remaining, EXECUTION_POLLING_INTERVAL_SECONDS * 1000), options.signal);
+    reason = "session_removed_during_wait";
   }
-
-  return { waitOutcome: "timed_out", session, status };
-}
-
-export function walletStatusCategory(status: WalletIdentityStatus): WalletStatusCategory {
-  return isTerminalWalletIdentityStatus(status) ? "terminal" : "non_terminal";
-}
-
-function walletWaitResult(waitOutcome: WaitOutcome, session: WalletIdentitySession): WalletIdentityWaitResult {
-  return {
-    waitOutcome,
-    session,
-    statusCategory: walletStatusCategory(session.status)
-  };
-}
-
-async function getRequiredWalletIdentitySession(
-  sessions: SessionStore,
-  walletSessionId: string,
-  now: (() => Date) | undefined,
-  reason: WaitSessionMissingReason
-): Promise<WalletIdentitySession> {
-  const session = await sessions.getWalletIdentitySession(walletSessionId, now?.());
-  if (!session) {
-    throw new SessionStoreError("session_not_found", `Wallet identity session not found: ${walletSessionId}`, {
-      reason
-    });
-  }
-  return session;
-}
-
-async function getRequiredReviewSession(
-  sessions: SessionStore,
-  reviewSessionId: string,
-  now: (() => Date) | undefined,
-  reason: WaitSessionMissingReason,
-  readReviewSession?: (reviewSessionId: string, now?: Date) => Promise<ReviewSession | undefined>
-): Promise<ReviewSession> {
-  const at = now?.();
-  const session = await (readReviewSession
-    ? readReviewSession(reviewSessionId, at)
-    : sessions.getReviewSession(reviewSessionId, at));
-  if (!session) {
-    throw new SessionStoreError("session_not_found", `Review session not found: ${reviewSessionId}`, { reason });
-  }
-  return session;
 }
 
 function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {

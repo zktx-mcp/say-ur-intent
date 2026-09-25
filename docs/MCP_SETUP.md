@@ -15,7 +15,7 @@ Say Ur Intent is tested from a local checkout in this repository state.
 - DeepBook: Sui's onchain order book protocol.
 - SDK: Software Development Kit, a version-pinned library dependency used by this repository.
 - gRPC and GraphQL: Sui SDK transports used by this runtime for mainnet reads.
-- dApp Kit: Sui's wallet connection library for web apps.
+- WalletConnect: the backend's transport for wallet-approved connections and individual transaction requests.
 - stdio: standard input/output, the local transport used by MCP clients to talk to this server.
 - Stelis: the GitHub and npm namespace for this package. Say Ur Intent is the product and runtime name.
 
@@ -42,7 +42,7 @@ They do not require wallet connection.
 
 This placeholder is only the sender value required by DeepBook SDK simulation reads. It is not a user's wallet, signing authorization, or fake user liquidity.
 
-Wallet-account reads require a wallet identity session created through `session.create_wallet_identity`.
+Wallet-account reads require a wallet connection session created through `session.create_wallet_connection`.
 
 ## Developer Checkout Setup
 
@@ -367,10 +367,10 @@ After the MCP server is connected:
    - `read.inspect_deepbook_orderbook`
    - `read.quote_deepbook_action`
    - `read.quote_deepbook_display_amount`
-3. For wallet-account reads, call `session.create_wallet_identity`.
-4. Open the returned `walletUrl` in the same machine's system browser. Do not move the URL to another device; it contains a short-lived fragment token.
-5. Connect a Sui mainnet wallet. The page captures only the selected account address and chain identifier.
-6. Immediately call `session.wait_wallet_identity` after giving the URL, or poll `session.get_wallet_identity` about every 5 seconds until the status is `connected`. Do not wait for the user to return and say they connected before checking the session.
+3. For wallet-account reads, call `session.create_wallet_connection`.
+4. Use the internal Connect card in Claude Desktop or Codex desktop and explicitly choose the connection operation.
+5. Scan the card’s pairing QR in a Sui mainnet wallet and approve the connection. This is not approval of a transaction.
+6. Read or wait on the returned cardId. A card that still needs a selection does not have a pending pairing. Select an approved account explicitly if the wallet provides several.
 7. Call `account.get_active_account` to confirm the current active account context.
    Then call the active-account tool that matches the user's request:
    - `read.summarize_wallet_assets` for balances.
@@ -379,19 +379,46 @@ After the MCP server is connected:
    - `read.summarize_deepbook_account_inventory` for DeepBook manager or pool-account inventory.
    - `read.summarize_sui_activity_scan` for a live bounded activity summary.
    - `read.summarize_sui_function_activity_scan` for sent transactions that called one full function target.
-   If the user provided a specific Sui address for these reads, pass that address as `account` instead of starting wallet identity.
+   If the user provided a specific Sui address for these reads, pass that address as `account` instead of starting wallet connection.
 8. For local review evidence, use `read.list_review_activity`, `read.summarize_review_funnel`, or `read.get_review_session_detail`.
 9. For local endpoint settings or local data controls, ask your AI client to call `settings.create_local_settings_session`, then open the returned settings URL in the same machine's system browser. Setting changes apply after restart.
 
-## Wallet Identity Boundary
+## Wallet Connection Boundary
 
-Wallet-free DeepBook read boundaries are summarized in [Default Setup](#default-setup).
+An active account is read context, not login, ownership proof or transaction
+permission. Explicit public-address reads do not set it. Connect and Review use
+internal MCP Apps views; there is no external wallet/review page or browser
+signer. A client without a card surface can use ordinary reads but cannot start
+these UI workflows. See [Wallet Connection](WALLET_CONNECTION.md).
 
-Active-account reads use the active account context created by the first-use wallet identity flow above.
+Configure `SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID` in the local server environment
+with your own WalletConnect project ID before connecting a wallet. Missing or
+invalid configuration preserves ordinary reads and returns an unavailable
+connection card. Do not paste project credentials, pairing URIs or UI permission
+values into chat. Only the owner initializes the SDK; clients sharing an owner
+must have matching configuration.
 
-Explicit-address coin balance reads through `read.summarize_wallet_assets` and `read.classify_wallet_assets` are public-address snapshots. They do not create active account context.
+If the card reports missing or invalid configuration, check the project ID in
+the server environment and restart the local backend. If it reports an
+initialization or connection-restoration failure, check the backend's safe
+startup diagnostic and restart after resolving the problem. Those failures do
+not prove that the ID is missing. Opening another card does not retry SDK
+initialization. Ordinary reads remain available while wallet operations are
+unavailable. Saved review and execution results remain readable. An unavailable
+wait means progress cannot currently be observed; it is not a transaction
+failure or a completed operation. Transactions already submitted can still be
+checked by their recorded digest without reconnecting the wallet.
 
-The wallet identity page captures only the selected account address and chain identifier. It does not prepare a transaction or request wallet authorization. MCP client sidebars and embedded webviews are not supported wallet identity surfaces; use the same machine's system browser.
+The shared backend uses internal API version 3 for the stored-state and wallet
+availability contract. An older running owner is refused rather than silently
+reused. Stop the clients sharing that owner and restart with the same updated
+installation. This change does not require deleting or migrating schema 9 data.
+
+Review requires an explicit card action and individual wallet approval. The
+backend uses Sui sign-only requests, verifies returned bytes/digest/signer and
+submits once. Wallet support must be confirmed through its normal sign-only
+flow; an advertised namespace or rejected request is not sufficient. Account,
+Receipt and Chart do not sign or submit.
 
 ## Internal read cards
 
@@ -401,7 +428,7 @@ A card accepts one read selection. Moving between chats or recreating its frame 
 
 ## Local data format
 
-Start this runtime with an empty `SAY_UR_INTENT_DATA_DIR` or a database already in its current format. A mismatched existing database is refused before writes. There is no older DB or backup migration. Older local records, known/active accounts and stored endpoints are not inherited; set the needed account context and endpoints again. Existing files are left in place, and environment overrides keep their existing precedence. See [Local DB Architecture](LOCAL_DB_ARCHITECTURE.md) for the current format, backup scope and card-result retention. Card results do not expire with the input period and can increase DB size. Reset/import removes them along with the affected local data; it is not a card-only space cleanup operation.
+Start this runtime with an empty `SAY_UR_INTENT_DATA_DIR` or a database already in its current format. A mismatched existing database is refused before writes. There is no older DB or backup migration. The current database and public backup use schema 9; a development checkout replacing schema 8 needs a new empty data folder, preserving the previous folder. Older local records, known/active accounts and stored endpoints are not inherited; set the needed account context and endpoints again. Existing files are left in place, and environment overrides keep their existing precedence. See [Local DB Architecture](LOCAL_DB_ARCHITECTURE.md) for the current format, backup scope and card-result retention. Card results do not expire with the input period and can increase DB size. Reset/import removes them along with the affected local data; it is not a card-only space cleanup operation.
 
 ## Local Settings
 
@@ -465,14 +492,19 @@ SAY_UR_INTENT_DATA_DIR="/path/to/local/app-data" node /absolute/path/to/say-ur-i
 
 To reset local product data files, stop the MCP server and delete `say-ur-intent.sqlite`, `say-ur-intent.sqlite-wal`, and `say-ur-intent.sqlite-shm`, or use a new `SAY_UR_INTENT_DATA_DIR`.
 
+Resetting, importing or replacing that database does not disconnect approvals
+in your wallet app. Private SDK sessions are stored separately, and the backend
+does not restore a connection without its product database record. If an old
+connection is no longer listed in Say Ur Intent, remove it from the connected-app
+list in your wallet app. Removing local data cannot cancel a transaction on Sui.
+
 ### Fixed review server port
 
-`SAY_UR_INTENT_REVIEW_PORT` pins the local review server to a fixed loopback
-port (1-65535; default `8765`). A fixed port keeps the review
-page origin stable across server restarts, so the browser wallet's
-authorization and the signing auto-reconnect persist instead of being asked
-again on every restart. If the port is taken, the server fails to start
-rather than silently moving.
+`SAY_UR_INTENT_REVIEW_PORT` selects the authenticated shared backend port
+(1–65535, default 8765). Clients for the same data folder must use the same port
+and configuration. A second runtime owner for that folder is refused even on a
+different port. No process forces another owner to stop. The SDK's lifetime ends
+with its owner process; the port is not a browser-wallet authorization origin.
 
 ## Packed Package Testing
 
@@ -481,19 +513,13 @@ rather than silently moving.
 ## Current Release Limitations
 
 - Product-facing behavior is mainnet-only.
-- Wallet-account reads require an active account read context from wallet identity.
-- The signable review path is implemented for the account-bound DeepBook and
-  FlowX swap reviews:
-  review evidence runs through review-time simulation, a schema-validated
-  wallet review contract is emitted on a `ready_for_wallet_review` state, and
-  the local review page offers a digest-gated byte handoff with
-  user-controlled wallet signing. After the page reports the signed transaction
-  digest, the review server re-reads Sui mainnet and records normalized chain
-  receipt evidence. MCP responses still do not contain transaction bytes or
-  signing data, and they do not provide signing readiness.
-- Here, `blocked` means required review evidence or user action is missing for
-  that session (for example `wallet_review_contract_emit_missing`), not a
-  release-wide signing stop.
+- Wallet-account reads require an active account read context from wallet connection.
+- Account-bound DeepBook/FlowX review requires all evidence stages. The internal
+  Review card then allows an explicit WalletConnect request under user control.
+  Requests and observed chain results are separate; missing results remain
+  unknown and are not resubmitted automatically.
+- External proposals remain non-signable. `blocked` refers to that review's
+  unmet evidence requirements, not to a hidden fallback signing path.
 - The package is published to npm as `@stelis/say-ur-intent`, so the `npx` and
   global-install client configs in this guide work directly. A developer
   checkout (local build) or packed tarball is an option for testing local
@@ -592,13 +618,13 @@ It is not part of CI or `release:check`.
 
 For active-account reads:
 
-1. Create a wallet identity session with `session.create_wallet_identity`.
-2. Open the `walletUrl` in the same machine's system browser.
+1. Open a Connect card with `session.create_wallet_connection`.
+2. Choose the connection operation in that internal card.
 3. Connect a Sui mainnet wallet.
-4. Immediately call `session.wait_wallet_identity` after giving the URL, or poll `session.get_wallet_identity` until `connected`.
+4. Read or wait on that cardId; select an approved read account when required.
 5. Confirm the current context with `account.get_active_account`.
 
-If the user supplied a specific Sui address for `read.summarize_wallet_assets` or `read.classify_wallet_assets`, pass that address as `account` instead of creating a wallet identity session.
+If the user supplied a specific Sui address for `read.summarize_wallet_assets` or `read.classify_wallet_assets`, pass that address as `account` instead of creating a wallet connection session.
 
 ### NPM command returns 404
 
@@ -613,3 +639,16 @@ option for testing local changes, not a substitute for an unpublished package.
 ## Client Snippets
 
 The Claude Code, Claude Desktop, Codex, and Cursor snippets above were checked against official client documentation current to this repository update. If a client changes its MCP config format, prefer that client's official documentation over this file and update this file in the same change.
+
+### Optional account-bound review smoke
+
+Set `SMOKE_SWAP_PROTOCOL`, `SMOKE_SWAP_FROM_SYMBOL`, `SMOKE_SWAP_TO_SYMBOL` and
+`SMOKE_SWAP_AMOUNT_DISPLAY` together to opt into read-only account-bound review
+computation. Protocol is explicitly `deep` or `flowx`; none is silently selected.
+A partially configured group is an error. `SMOKE_SWAP_MAX_SLIPPAGE_BPS` keeps the
+existing explicit override. The script uses the same runtime review composition,
+material store and evidence validation as the product, and records whether
+transaction review data was emitted. This can involve mainnet simulation but
+never wallet pairing, signing or submission. The temporary active-account
+fixture is not proof of a wallet connection or ownership. Without the complete
+optional group, the result records that review computation was not run.

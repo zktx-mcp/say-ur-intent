@@ -61,7 +61,7 @@ export function createFlowxSwapActionPlan(
     protocol: FLOWX_SWAP_PROTOCOL,
     title: `Review ${requestedIntent.from.amountDisplay} ${requestedIntent.from.symbol} to ${requestedIntent.to.symbol}`,
     summary:
-      "Account-bound FlowX review evidence is computed after a wallet account is connected. The review URL displays the proposal and local review evidence; when every evidence stage completes, the review page offers user-controlled wallet signing through a digest-gated handoff. This MCP response contains no sign action, signing data, transaction bytes, or signing readiness.",
+      "Account-bound FlowX review evidence is computed after a wallet account is connected. The internal Review card displays the proposal and verified review evidence; when every evidence stage completes, the Review card can request user-controlled wallet approval through the backend. This MCP response contains no sign action, signing data, transaction bytes, or signing readiness.",
     assetFlowPreview: {
       outgoing: [
         { symbol: requestedIntent.from.symbol, amount: requestedIntent.from.amountDisplay, amountKind: "display_intent" }

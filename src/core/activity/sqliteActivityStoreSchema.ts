@@ -17,20 +17,20 @@ const CURRENT_SCHEMA_SQL = `
       sui_address TEXT NOT NULL UNIQUE,
       first_seen_at TEXT NOT NULL,
       last_used_at TEXT NOT NULL,
-      first_source TEXT NOT NULL CHECK (first_source IN ('wallet_identity', 'review_execution')),
-      last_source TEXT NOT NULL CHECK (last_source IN ('wallet_identity', 'review_execution'))
+      first_source TEXT NOT NULL CHECK (first_source IN ('wallet_connection', 'review_execution')),
+      last_source TEXT NOT NULL CHECK (last_source IN ('wallet_connection', 'review_execution'))
     );
 
     CREATE TABLE IF NOT EXISTS active_account_context (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
-      source TEXT NOT NULL CHECK (source IN ('wallet_identity', 'cleared')),
+      source TEXT NOT NULL CHECK (source IN ('wallet_connection', 'cleared')),
       set_at TEXT NOT NULL,
       wallet_name TEXT,
       wallet_id TEXT,
       CHECK (
         (source = 'cleared' AND account_id IS NULL)
-        OR (source = 'wallet_identity' AND account_id IS NOT NULL)
+        OR (source = 'wallet_connection' AND account_id IS NOT NULL)
       )
     );
 
@@ -41,7 +41,9 @@ const CURRENT_SCHEMA_SQL = `
       adapter_id TEXT NOT NULL,
       protocol TEXT NOT NULL,
       account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
-      current_status TEXT NOT NULL,
+      current_status TEXT NOT NULL CHECK (current_status IN ('proposed','awaiting_wallet','wallet_connected','ready_for_wallet_review','refresh_required','blocked','expired')),
+      current_attempt_id TEXT,
+      opened_at TEXT,
       plan_json TEXT NOT NULL,
       intent_json TEXT,
       created_at TEXT NOT NULL,
@@ -56,6 +58,7 @@ const CURRENT_SCHEMA_SQL = `
 
     CREATE TABLE IF NOT EXISTS review_state_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      review_revision INTEGER NOT NULL CHECK (review_revision >= 0),
       review_session_id TEXT NOT NULL REFERENCES review_sessions(id) ON DELETE RESTRICT,
       plan_id TEXT NOT NULL,
       account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
@@ -79,8 +82,10 @@ const CURRENT_SCHEMA_SQL = `
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       review_session_id TEXT NOT NULL REFERENCES review_sessions(id) ON DELETE RESTRICT,
       event TEXT NOT NULL CHECK (
-        event IN ('created', 'opened', 'wallet_connected', 'state_computed', 'result_recorded', 'expired')
+        event IN ('created', 'opened', 'wallet_connected', 'state_computed', 'request_admitted', 'request_status_changed', 'signature_verified', 'chain_result_recorded', 'review_update_failed', 'review_invalidated', 'expired')
       ),
+      attempt_id TEXT,
+      domain TEXT NOT NULL DEFAULT 'review' CHECK (domain IN ('review', 'request')),
       from_status TEXT,
       to_status TEXT NOT NULL,
       account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
@@ -91,28 +96,67 @@ const CURRENT_SCHEMA_SQL = `
     CREATE INDEX IF NOT EXISTS idx_review_transitions_session_time
       ON review_status_transitions(review_session_id, transitioned_at);
 
+    CREATE TABLE IF NOT EXISTS review_requests (
+      attempt_id TEXT PRIMARY KEY,
+      review_session_id TEXT NOT NULL REFERENCES review_sessions(id) ON DELETE RESTRICT,
+      plan_id TEXT NOT NULL,
+      review_revision INTEGER NOT NULL CHECK (review_revision >= 0),
+      account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      transaction_digest TEXT NOT NULL,
+      review_state_json TEXT NOT NULL,
+      request_status TEXT NOT NULL CHECK (request_status IN ('awaiting_signature', 'submitting', 'awaiting_chain_result', 'stopped', 'request_failed', 'outcome_unknown', 'completed')),
+      revision INTEGER NOT NULL CHECK (revision >= 0),
+      reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      signature_verified_at TEXT,
+      submitted_at TEXT,
+      UNIQUE (review_session_id, review_revision)
+    );
+    CREATE INDEX IF NOT EXISTS idx_review_requests_session ON review_requests(review_session_id, created_at);
     CREATE TABLE IF NOT EXISTS review_executions (
-      review_session_id TEXT PRIMARY KEY REFERENCES review_sessions(id) ON DELETE RESTRICT,
+      attempt_id TEXT PRIMARY KEY REFERENCES review_requests(attempt_id) ON DELETE RESTRICT,
+      review_session_id TEXT NOT NULL REFERENCES review_sessions(id) ON DELETE RESTRICT,
       plan_id TEXT NOT NULL,
       account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
-      status TEXT NOT NULL CHECK (status IN ('signed_pending_result', 'success', 'failure')),
-      tx_digest TEXT,
+      status TEXT NOT NULL CHECK (status IN ('success', 'failure')),
+      tx_digest TEXT NOT NULL,
       explorer_url TEXT,
-      failure_reason TEXT,
+      failure_reason TEXT CHECK (failure_reason IS NULL OR failure_reason = 'chain_execution_failed'),
       result_json TEXT NOT NULL,
       recorded_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      CHECK (
-        (status = 'failure' AND failure_reason IS NOT NULL)
-        OR (status != 'failure' AND failure_reason IS NULL)
-      )
+      CHECK ((status = 'failure' AND failure_reason IS NOT NULL) OR (status = 'success' AND failure_reason IS NULL))
     );
-
-    CREATE INDEX IF NOT EXISTS idx_review_executions_account_updated
-      ON review_executions(account_id, updated_at);
-
-    CREATE INDEX IF NOT EXISTS idx_review_executions_digest
-      ON review_executions(tx_digest);
+    CREATE INDEX IF NOT EXISTS idx_review_executions_account_updated ON review_executions(account_id, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_review_executions_digest ON review_executions(tx_digest);
+    CREATE TABLE IF NOT EXISTS live_execution_details (
+      attempt_id TEXT PRIMARY KEY REFERENCES review_requests(attempt_id) ON DELETE RESTRICT,
+      model_json TEXT NOT NULL,
+      display_json TEXT
+    );
+    CREATE TABLE IF NOT EXISTS live_wallet_connections (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision >= 0),
+      topic TEXT UNIQUE,
+      sdk_pending INTEGER NOT NULL CHECK (sdk_pending IN (0,1)),
+      connection_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS live_request_authority (
+      attempt_id TEXT PRIMARY KEY REFERENCES review_requests(attempt_id) ON DELETE RESTRICT,
+      owner_id TEXT NOT NULL,
+      connection_id TEXT NOT NULL REFERENCES live_wallet_connections(id) ON DELETE RESTRICT,
+      connection_revision INTEGER NOT NULL,
+      can_submit INTEGER NOT NULL CHECK (can_submit IN (0,1)),
+      sdk_pending INTEGER NOT NULL CHECK (sdk_pending IN (0,1)),
+      submit_pending INTEGER NOT NULL CHECK (submit_pending IN (0,1)),
+      lookup_pending INTEGER NOT NULL CHECK (lookup_pending IN (0,1)),
+      signature_deadline TEXT NOT NULL,
+      lookup_deadline TEXT,
+      observation_stopped INTEGER NOT NULL DEFAULT 0 CHECK (observation_stopped IN (0,1))
+    );
 
     ${externalActivityScansTableSql()};
 
@@ -179,10 +223,15 @@ const CURRENT_SCHEMA_SQL = `
       token_hash TEXT NOT NULL,
       status TEXT NOT NULL,
       account TEXT,
-      pending_handoff_digest TEXT,
+      owner_id TEXT NOT NULL,
+      review_revision INTEGER NOT NULL DEFAULT 0,
+      preparation_id TEXT,
+      preparation_error TEXT,
+      wallet_connection_id TEXT,
+      wallet_connection_revision INTEGER,
+      current_attempt_id TEXT,
       plans_json TEXT NOT NULL,
       review_state_json TEXT,
-      execution_result_json TEXT,
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       last_activity_at TEXT NOT NULL,
@@ -196,11 +245,6 @@ const CURRENT_SCHEMA_SQL = `
       artifacts_json TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS live_wallet_identity_sessions (
-      id TEXT PRIMARY KEY,
-      session_json TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS live_settings_sessions (
       id TEXT PRIMARY KEY,
       session_json TEXT NOT NULL
@@ -210,14 +254,16 @@ const CURRENT_SCHEMA_SQL = `
       id TEXT PRIMARY KEY,
       owner_id TEXT NOT NULL,
       token_hash TEXT NOT NULL,
-      kind TEXT NOT NULL CHECK (kind IN ('account', 'receipt', 'chart')),
+      kind TEXT NOT NULL CHECK (kind IN ('account', 'receipt', 'chart', 'connect', 'review')),
       state TEXT NOT NULL CHECK (state IN ('ready', 'running', 'closed')),
-      reason TEXT CHECK (reason IN ('completed', 'expired', 'failed', 'server_restarted')),
+      reason TEXT CHECK (reason IN ('completed', 'expired', 'failed', 'server_restarted', 'cancelled')),
       error TEXT,
       revision INTEGER NOT NULL CHECK (revision >= 0),
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       input_json TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'read' CHECK (scope IN ('read', 'connect', 'review', 'review_manage')),
+      operation_id TEXT,
       accepted_input_json TEXT,
       result_json TEXT,
       receipt_display_json TEXT,

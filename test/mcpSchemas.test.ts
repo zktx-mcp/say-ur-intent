@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   actionPlanSchema,
   executionPollingStatusSchema,
-  executionResultSchema,
+  transactionExecutionSummarySchema,
   humanReadableReviewSummarySchema,
   reviewCheckSchema,
   reviewStateStructuralInvariantSchema
@@ -518,16 +518,16 @@ describe("MCP schemas", () => {
       }).success
     ).toBe(true);
     expect(
-      executionResultSchema.safeParse({
+      transactionExecutionSummarySchema.safeParse({
         reviewSessionId: "session_1",
         planId: "plan_1",
         status: "failure",
         failureReason: "network_error",
         recordedAt: new Date(0).toISOString()
       }).success
-    ).toBe(true);
+    ).toBe(false);
     expect(
-      executionResultSchema.safeParse({
+      transactionExecutionSummarySchema.safeParse({
         reviewSessionId: "session_1",
         planId: "plan_1",
         status: "failure",

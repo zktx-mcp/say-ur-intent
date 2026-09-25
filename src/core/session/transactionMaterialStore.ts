@@ -156,6 +156,7 @@ export async function verifyLocalTransactionMaterialArtifacts(
 ): Promise<{
   transactionMaterial: LocalTransactionMaterialHandle;
   transactionMaterialDigest: LocalTransactionMaterialDigestCommitment;
+  transactionBytes: Uint8Array;
 }> {
   const now = value.now ?? new Date();
   const parsed = parseLocalTransactionMaterialArtifacts(
@@ -184,7 +185,7 @@ export async function verifyLocalTransactionMaterialArtifacts(
     throw new LocalTransactionMaterialStoreError("transaction material digest does not match stored transaction bytes");
   }
 
-  return parsed;
+  return { ...parsed, transactionBytes: new Uint8Array(material.transactionBytes) };
 }
 
 export type StoreLocalTransactionMaterialInput = {

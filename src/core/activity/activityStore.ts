@@ -1,6 +1,8 @@
+import type { PrivateReviewArtifacts } from "../session/privateReviewArtifacts.js";
+import type { ReviewEvaluationCandidate, ReviewEvaluation } from "../session/reviewValidity.js";
+import type { TransactionRequest, TransactionRequestStatus } from "../session/transactionRequest.js";
 import type {
   ActionPlan,
-  ExecutionResult,
   InternalSessionStatus,
   ReviewSession,
   ToolErrorKind,
@@ -8,14 +10,19 @@ import type {
 } from "../action/types.js";
 import type { ExternalActivityTransactionDetail } from "./transactionActivityDetails.js";
 
-export type AccountSource = "wallet_identity" | "review_execution";
-export type ActiveAccountSource = "wallet_identity" | "cleared";
+export type AccountSource = "wallet_connection" | "review_execution";
+export type ActiveAccountSource = "wallet_connection" | "cleared";
 export type ReviewTransitionEvent =
   | "created"
   | "opened"
   | "wallet_connected"
   | "state_computed"
-  | "result_recorded"
+  | "request_admitted"
+  | "request_status_changed"
+  | "signature_verified"
+  | "chain_result_recorded"
+  | "review_update_failed"
+  | "review_invalidated"
   | "expired";
 
 export const REVIEW_ACTIVITY_LOW_SAMPLE_THRESHOLD = 5;
@@ -231,6 +238,7 @@ export type ReviewActivityTruncation = {
   activities: boolean;
   snapshots: boolean;
   transitions: boolean;
+  requests?: boolean;
 };
 
 export type ReviewActivityFilter = {
@@ -240,24 +248,18 @@ export type ReviewActivityFilter = {
 };
 
 export type ReviewActivityListFilter = ReviewActivityFilter & {
-  status?: InternalSessionStatus | undefined;
+  reviewStatus?: InternalSessionStatus | undefined;
+  requestStatus?: TransactionRequestStatus | undefined;
+  executionStatus?: "success" | "failure" | undefined;
   limit?: number | undefined;
 };
 
 export type ReviewActivityRow = {
-  reviewSessionId: string;
-  planId: string;
-  actionKind: string;
-  adapterId: string;
-  protocol: string;
-  currentStatus: InternalSessionStatus;
-  account: string;
-  createdAt: string;
-  updatedAt: string;
-  executionStatus?: string | undefined;
-  txDigest?: string | undefined;
-  snapshotCount: number;
-  transitionCount: number;
+  reviewSessionId: string; planId: string; actionKind: string; adapterId: string; protocol: string;
+  reviewStatus: InternalSessionStatus; account: string; createdAt: string; updatedAt: string;
+  currentAttemptId?: string; requestStatus?: TransactionRequestStatus; reviewRevision?: number;
+  transactionDigest?: string; executionStatus?: "success" | "failure";
+  snapshotCount: number; transitionCount: number;
 };
 
 export type ReviewActivityListResult = {
@@ -270,18 +272,15 @@ export type ReviewActivityListResult = {
 };
 
 export type ReviewFunnelSummary = {
-  total: number;
-  opened: number;
-  walletConnected: number;
-  stateComputed: number;
-  currentStatusCounts: Record<InternalSessionStatus, number>;
+  total: number; opened: number; walletConnected: number; stateComputed: number;
+  reviewStatusCounts: Record<InternalSessionStatus, number>;
+  requestStatusCounts: Array<{ requestStatus: TransactionRequestStatus; count: number }>;
+  executionStatusCounts: Record<"success" | "failure", number>;
+  withoutRequest: number; withoutExecutionResult: number;
   everReachedReviewStateCounts: Record<"ready_for_wallet_review" | "blocked" | "refresh_required", number>;
-  signedPending: number;
-  success: number;
-  failure: number;
-  expiredBeforeResult: number;
-  avgCreatedToSignedSeconds: number | null;
-  avgOpenedToSignedSeconds: number | null;
+  everAwaitedChainResult: number; expiredWithoutExecutionResult: number;
+  avgCreatedToSignatureVerifiedSeconds: number | null;
+  avgOpenedToSignatureVerifiedSeconds: number | null;
 };
 
 export type ReviewFunnelSummaryResult = {
@@ -309,7 +308,8 @@ export type ReviewSessionDetailResult = {
     actionKind: string;
     adapterId: string;
     protocol: string;
-    currentStatus: InternalSessionStatus;
+    reviewStatus: InternalSessionStatus;
+    currentAttemptId?: string;
     account: string;
     createdAt: string;
     updatedAt: string;
@@ -318,6 +318,7 @@ export type ReviewSessionDetailResult = {
   intentJson?: unknown | undefined;
   stateSnapshots: Array<{
     id: number;
+    reviewRevision: number;
     planId: string;
     account: string;
     status: string;
@@ -333,11 +334,15 @@ export type ReviewSessionDetailResult = {
     fromStatus?: string | undefined;
     toStatus: string;
     isNoOp: boolean;
+    domain: "review" | "request";
+    attemptId?: string;
     account?: string | undefined;
     reason?: string | undefined;
     transitionedAt: string;
   }>;
-  execution?: (ReviewExecutionRecord & { resultJson: ExecutionResult }) | undefined;
+  request?: TransactionRequest;
+  requestCount: number;
+  requests: TransactionRequest[];
   truncated: ReviewActivityTruncation;
 };
 
@@ -350,32 +355,6 @@ export class ActivityStoreReadError extends Error {
     super(message);
   }
 }
-
-export type ReviewExecutionInput = {
-  reviewSessionId: string;
-  planId: string;
-  account: string;
-  fromStatus?: string | undefined;
-  status: string;
-  txDigest?: string | undefined;
-  explorerUrl?: string | undefined;
-  failureReason?: string | undefined;
-  result: ExecutionResult;
-  recordedAt: string;
-};
-
-export type ReviewExecutionRecord = {
-  reviewSessionId: string;
-  planId: string;
-  accountId: number;
-  account: string;
-  status: string;
-  txDigest?: string | undefined;
-  explorerUrl?: string | undefined;
-  failureReason?: string | undefined;
-  recordedAt: string;
-  updatedAt: string;
-};
 
 export type ReviewSessionEvidenceInput = {
   reviewSessionId: string;
@@ -396,12 +375,14 @@ export type ReviewTransitionInput = {
 
 export type ReviewStateSnapshotInput = {
   reviewSessionId: string;
+  reviewRevision: number;
   fromStatus?: string | undefined;
   state: ReviewState;
   recordedAt: string;
 };
 
 export type LiveReviewSessionMutation = {
+  publication?: { material: { artifacts: PrivateReviewArtifacts; transactionBytes: Uint8Array }; clock: () => Date };
   expected?: ReviewSession | undefined;
   next: ReviewSession;
   privateArtifactsJson?: string | null | undefined;
@@ -409,6 +390,7 @@ export type LiveReviewSessionMutation = {
 };
 
 export interface ActivityStore {
+  finalizeReviewEvaluation?(candidate: ReviewEvaluationCandidate, clock: () => Date): ReviewEvaluation;
   upsertAccount(address: string, source: AccountSource, now?: Date): Promise<AccountRecord>;
   getKnownAccount(address: string): Promise<AccountRecord | undefined>;
   setActiveAccount(address: string, source: Exclude<ActiveAccountSource, "cleared">, now?: Date, wallet?: ActiveAccountWallet): Promise<ActiveAccountRecord>;
@@ -420,9 +402,6 @@ export interface ActivityStore {
   recordReviewTransitionWithLiveSession?(input: ReviewTransitionInput, live: LiveReviewSessionMutation): Promise<boolean>;
   recordReviewStateSnapshot(input: ReviewStateSnapshotInput): Promise<void>;
   recordReviewStateSnapshotWithLiveSession?(input: ReviewStateSnapshotInput, live: LiveReviewSessionMutation): Promise<boolean>;
-  recordReviewExecution(input: ReviewExecutionInput): Promise<ReviewExecutionRecord>;
-  recordReviewExecutionWithLiveSession?(input: ReviewExecutionInput, live: LiveReviewSessionMutation): Promise<ReviewExecutionRecord | undefined>;
-  getReviewExecution(reviewSessionId: string): Promise<ReviewExecutionRecord | undefined>;
   listReviewActivity(filter: ReviewActivityListFilter): Promise<ReviewActivityListResult>;
   summarizeReviewFunnel(filter: ReviewActivityFilter): Promise<ReviewFunnelSummaryResult>;
   getReviewSessionDetail(input: ReviewSessionDetailInput): Promise<ReviewSessionDetailResult>;

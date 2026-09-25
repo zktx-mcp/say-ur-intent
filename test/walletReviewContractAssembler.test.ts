@@ -8,7 +8,7 @@ import {
 } from "../src/core/action/transactionObjectOwnershipEvidence.js";
 import type { ActionPlan } from "../src/core/action/types.js";
 import {
-  assembleWalletReviewAdapterContract
+  assembleTransactionReviewData
 } from "../src/core/action/walletReviewContractAssembler.js";
 import { InMemoryLocalTransactionMaterialStore } from "../src/core/session/transactionMaterialStore.js";
 import { deepbookDisplayQuote } from "./fixtures/deepbookQuote.js";
@@ -183,22 +183,22 @@ function assemblyInputFrom(artifacts: Awaited<ReturnType<typeof buildAssemblyArt
     objectOwnership: artifacts.objectOwnership,
     humanReadableReview: artifacts.humanReadableReview,
     reviewTimeSimulation: artifacts.reviewTimeSimulation,
-    transactionMaterialCommitment: artifacts.digest.transactionDigest,
+    reviewedTransactionDigest: artifacts.digest.transactionDigest,
     now: assembledAt
   };
 }
 
-describe("assembleWalletReviewAdapterContract", () => {
+describe("assembleTransactionReviewData", () => {
   it("emits a schema-valid contract binding all three commitments to the stored material digest", async () => {
     const artifacts = await buildAssemblyArtifacts();
-    const outcome = assembleWalletReviewAdapterContract(assemblyInputFrom(artifacts));
+    const outcome = assembleTransactionReviewData(assemblyInputFrom(artifacts));
 
     if (outcome.status !== "emitted") {
       throw new Error(`expected emitted contract, got: ${JSON.stringify(outcome)}`);
     }
-    expect(outcome.contract.transactionMaterialCommitment).toBe(artifacts.digest.transactionDigest);
-    expect(outcome.contract.humanReadableReview.boundToCommitment).toBe(artifacts.digest.transactionDigest);
-    expect(outcome.contract.simulation.boundToCommitment).toBe(artifacts.digest.transactionDigest);
+    expect(outcome.contract.reviewedTransactionDigest).toBe(artifacts.digest.transactionDigest);
+    expect(outcome.contract.humanReadableReview.transactionDigest).toBe(artifacts.digest.transactionDigest);
+    expect(outcome.contract.simulation.transactionDigest).toBe(artifacts.digest.transactionDigest);
     expect(outcome.contract.objectOwnership.objects).toHaveLength(2);
     expect(outcome.contract.objectOwnership.ownerAccount).toBe(walletAccount);
     expect(outcome.contract.slippageOrMinOut.status).toBe("required_and_verified");
@@ -211,7 +211,7 @@ describe("assembleWalletReviewAdapterContract", () => {
 
   it("declines when the gas object is not an account-owned Coin<SUI> object", async () => {
     const artifacts = await buildAssemblyArtifacts({ gasObjectType: sharedObjectType });
-    const outcome = assembleWalletReviewAdapterContract(assemblyInputFrom(artifacts));
+    const outcome = assembleTransactionReviewData(assemblyInputFrom(artifacts));
 
     expect(outcome.status).toBe("declined");
     if (outcome.status === "declined") {
@@ -233,9 +233,9 @@ describe("assembleWalletReviewAdapterContract", () => {
       includeSharedObject: false
     });
     expect(other.digest.transactionDigest).not.toBe(artifacts.digest.transactionDigest);
-    const outcome = assembleWalletReviewAdapterContract({
+    const outcome = assembleTransactionReviewData({
       ...assemblyInputFrom(artifacts),
-      transactionMaterialCommitment: other.digest.transactionDigest
+      reviewedTransactionDigest: other.digest.transactionDigest
     });
 
     expect(outcome.status).toBe("declined");

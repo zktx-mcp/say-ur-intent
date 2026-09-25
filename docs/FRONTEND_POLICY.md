@@ -1,170 +1,143 @@
 # Frontend Policy
 
-Say Ur Intent presents Account, Receipt and Chart as internal MCP Apps cards. Connect, Review and Settings use local session-token pages. Every surface displays server-returned facts and keeps AI reasoning separate from wallet authority.
+Account, Receipt, Chart, Connect and Review use internal MCP Apps cards.
+Settings remains a local session-token page. Cards display backend-validated
+facts and forward explicit user selections through scoped app-only tools. They
+never hold transaction bytes/signatures or call a wallet, Sui RPC, Indexer or
+local HTTP endpoint directly. Direct NFT image loading is the display exception.
 
-The review server may build local unsigned DeepBook or FlowX swap transaction material during account-bound review. The review page receives bytes only through the digest-gated handoff and offers signing only for a matching account on `ready_for_wallet_review`. Read cards never receive transaction bytes or signatures.
+## Display and review facts
 
-## Role
+Show what is happening, the relevant asset flow, whether an action is available,
+and its consequences before technical details. Backend status and validated
+structured facts are authoritative; AI interpretation, local timers and UI
+availability do not establish financial truth. Status/error changes must be
+textual, keyboard accessible and screen-reader labeled.
 
-Current release frontend surfaces may capture wallet identity, display review
-state, request refresh when allowed, and report page-local signed-digest or
-failure events for server-owned receipt handling. They do not submit wallet
-signatures or decide final chain receipt truth.
+Review primary facts include action, selected account, network, send limit
+(`up to` where relevant), expected/minimum receive, status and next action.
+`assetFlowPreview` display inputs are proposals, never signing quantities.
+Show failed/warning checks beside the decision. Keep raw integer amounts and
+pinned decimals; display signed net gas without clamping a rebate to zero.
+Review details include quote time, raw min-out policy, gas budget/breakdown,
+simulation effects, object/balance changes and a PTB graph from the same revision.
+PTB source labels, diagnostics, timestamps and name/address controls are facts,
+not safety or venue recommendations. No text-copy buttons or clipboard fallbacks.
 
-It is not a trading dashboard, AI chat, portfolio app, alert surface, analytics screen, or safety oracle.
+External proposals show source, action, recipients/targets, freshness, missing
+evidence, user choices, unsupported claims and nonSignableReason. They never
+expose a preparation/signature action or silently choose a settlement asset.
 
-## Display Priority
+## Connect and Review behavior
 
-Show the minimum facts needed for the user's decision first:
+SQLite owns card permission/revision/deadline, wallet connections, review
+revisions and transaction attempts. A View owns only rendering, local resources
+and sequential observation. Chat changes, frame recreation and teardown have no
+business-state effect. An initial authenticated DB read is required regardless
+of preview rendering success. Missing permission or unknown DB state disables
+business actions without inventing a terminal state.
 
-1. What is happening?
-2. Can the user proceed?
-3. What happens if the user proceeds?
-4. What is the next action?
+Connect shows approved accounts and read context. An explicit connection with
+one approved account can set read context; multiple accounts require selection.
+Clearing read context is not wallet disconnection. Reconciliation alone never
+sets it again. A waiting Connect card displays only the same live pairing QR
+from metadata bound to card/connection/revision. Missing metadata is shown as
+unavailable and never triggers new pairing. Terminal connections cannot be
+reactivated by late approval; another operation uses a new card.
 
-Technical details sit in their own cards below the primary decision — always
-visible there, never crowding the primary card — with their granular per-record
-lists behind compact details controls inside those cards. Raw protocol data must
-not dominate the primary screen.
+Connection facts and the current card operation are separate. A pending
+disconnect is projected from the stored accepted action, target and running
+card. Show its progress while retaining the last confirmed connection facts,
+exclude that connection from new selections, and observe until stored completion
+or failure. Do not end observation merely because the last connection status is
+connected. Frame recreation reads the same operation without sending it again.
+Current reads can recover completion after a storage failure; SDK unavailability
+must not be rendered as proof that the remote wallet connection was removed.
 
-## Information Source
+Review preparation is separate from final admission. Explicit refresh computes
+a new complete review revision and preserves failure information. It does not
+consume final selection. If a finished computation could not store its outcome,
+current reads can record its failed update and restore the existing update/cancel
+choices. The View never restarts computation to repair a progress display.
+The sign action requires backend-permitted
+ready_for_wallet_review, verified transaction review data, a matching live
+account and the user's wallet selection. Only the backend sends bytes to the
+wallet and verifies its response. A card never reports its own chain result.
 
-Primary UI may render only server-validated structured data. AI-generated interpretation must not appear as trusted review fact.
+Use the backend's preparation choices for account compatibility; do not recreate
+that rule in the View. The existing `review.error` text labels current account
+selection guidance and any saved previous update error separately. Display it
+as neutral explanatory text, not as a new failed state. Lifecycle alerts still
+report actual command, transport and display failures. Signing an already valid
+review and reading an admitted result retain their own backend permissions.
 
-The frontend must not compute quote truth, readiness, blocked status, safety, or
-final execution truth. In the current release, it may render state, connect a
-wallet, ask the server to refresh, revoke wallet identity when that action
-exists, and report the signed digest or local failure event that starts
-server-owned receipt handling. The Receipt card renders only server-read receipt facts and does not call Sui RPC, dapp-kit, or wallet APIs.
+Before submission, show the stored interruption reason without replacing wallet
+events with a user-stop explanation. After submission, a connection change or
+disconnect request preserves chain progress; only an explicit transaction stop
+ends observation. A later wallet event must not restart user-stopped observation.
 
-## Wallet Identity
+| Request state | Card behavior |
+| --- | --- |
+| No request | Show proposal/review; prepare or refresh when permitted, request wallet approval only when valid, or cancel input |
+| awaiting_signature | Show wallet wait; user may stop local waiting, which permanently removes submission permission |
+| submitting | Show submission in progress; stopping observation cannot cancel the transaction |
+| awaiting_chain_result | Show the exact digest and observation state; stop/resume observation when permitted |
+| stopped / request_failed | Show reason, without inventing chain failure; a new signature needs a newly reviewed revision |
+| outcome_unknown | Preserve known digest and uncertainty; read the same transaction without resubmitting |
+| completed | Show independently verified chain success/failure and receipt facts; no signing input restoration |
 
-Wallet identity is the product path for active-account reads and account-bound review. Manual address entry is not a product path for the review UI or wallet identity flow. MCP explicit-address inputs for public coin balance snapshots are separate read-only tool inputs and do not create active account context.
+Management cards bind an exact reviewSessionId and attemptId. They cannot
+change the original deadlines, review selection or submission permission.
+A valid saved history is not live management authority. Account/session changes
+invalidate pending approval as appropriate; they cannot silently rebind a review.
 
-Sender-independent DeepBook market reads do not require wallet identity. Wallet identity capture is not signing authorization.
+## Rendering and recovery
 
-The user must be able to see the active wallet account when connected.
+Use the shared lifecycle for all cards. A lost action reply reads the same
+state once; it never resends the action. Read errors stop automatic observation
+and retain previous facts with explicit read recovery. Rendering failures keep
+normal DB observation obligations, preserve previous content, and dispose only
+new failed resources. A rendering failure is not a reason to repeat the business
+query. QR and graph resources are disposed once. Backend-computed remaining
+time triggers a state read, not a client-written expiry reason.
 
-Reusable identity sessions may set an ambient read context after the user connects a wallet. This read context remains until the user clears it or replaces it with another wallet identity. It must be presented as active account context, not login, signing authorization, custody, or permission for transactions.
+An unadmitted ready Review also uses the backend's `nextStateReadAfterMs` hint
+to confirm state at its verified material expiry. Use the earlier positive
+interval from that hint and the card authority deadline. Lock business input
+until the read resolves; a failed read requires explicit recovery. Countdown
+hints do not identify new display content or reset a wallet selection. An
+expired review shows the stored refresh reason and explicit update action;
+it does not recompute a quote or terminate an already admitted request.
 
-When a wallet exposes multiple accounts, Say Ur Intent captures the account returned by the wallet connection result. The UI must display that account clearly. Choosing a different account requires replacing the active account context with another wallet identity connection.
+Card state, action choices and timing hints come from the same backend
+evaluation. A read conflict caused by changed review evidence preserves the
+last display and requires explicit state-read recovery, with inputs and timers
+disabled. Prefer the safe error message when supplied; a reason code is not
+display copy. Do not recreate a business request or continuously retry a conflict.
 
-## Review Surface
+Only actions permitted by the current backend state are rendered. During an
+in-flight action, disable other business actions while preserving display
+controls. Preparation/transport failures and display failures have distinct
+messages and recovery. Amounts, slippage, target asset and venue are changed
+through a new reviewed proposal, not ad hoc frontend edits.
 
-The review page displays server-computed review state. Each action review is a separate ceremony. The review screen prioritizes asset flow over protocol internals.
+Connect and Review show `walletAvailability` separately from stored business
+facts. Wallet unavailability preserves the displayed review and results, removes
+wallet-dependent actions, and does not become a rendering error. A connection
+that cannot be checked is labelled as the last recorded status with its update
+time. Pairing display data must be removed when the backend no longer supplies
+it, even if the card revision is unchanged.
 
-Required primary facts:
+The backend derives `observe` from `progress.status === "waiting"`. Unavailable
+progress stops automatic polling and offers an explicit same-card state read;
+that read cannot reconnect, sign or resubmit. Existing DB expiry wake-ups remain
+independent of progress polling. Availability and allowed actions participate in
+display identity; remaining-time hints do not reset input selection.
 
-- action summary
-- send amount
-- expected receive or minimum receive
-- current review status
-- next action
-
-When a user can spend more than the displayed send amount, the top-level asset flow must show the spend limit with explicit language such as `up to`. Do not hide max spend in secondary details when it changes the user's decision.
-
-`assetFlowPreview` entries with `amountKind: "display_intent"` are display-only proposal facts. They are different from review-time `assetFlowActual`, simulation summaries, and balance changes, and the frontend must not use them as signing input, minimum receive, or transaction-building input.
-
-When a plan includes `reviewModel`, the review page must show the external
-proposal source, proposed action, asset flow, recipient or target, freshness,
-missing evidence, required user choices, unsupported claims, blocking checks,
-and `nonSignableReason`. These fields are review annotations only. They are not
-transaction material. They are not route selection or settlement-token
-selection. They are not wallet readiness, signing readiness, or execution
-safety.
-
-In the current release, the review page reconnects the bound active account, reloads the active account context, and requests account-bound review computation. It does not create a wallet identity session; wallet identity sessions are created only on the Connect page.
-
-It renders server-returned review checks for the resolved direct pool, raw quote evidence, quote freshness, derived raw min-out policy, DEEP fee raw evidence, and internal digest commitment.
-It may also render a server-returned check that local unsigned DeepBook swap
-transaction material was built and kept internal to the review server.
-It may render `reviewState.humanReadableReview` when the server returns it. That
-summary is displayable review evidence projected from server-verified private
-review artifacts. The frontend must not recompute its quote truth, object
-ownership, freshness, blocked status, or readiness.
-It may render `reviewState.simulation` when the server returns it. That summary
-is a redacted projection from private review-time simulation evidence for stored
-local transaction material. The frontend must not recompute simulation truth.
-The frontend must not extract transaction bytes or a public digest from it.
-The frontend must not treat it as wallet readiness or signing readiness.
-The frontend must not treat it as execution readiness or proof of wallet
-submission.
-
-It must keep those checks as review evidence only.
-It must not treat them as public transaction bytes, wallet readiness, signing readiness, route quality, or execution safety.
-
-Compact secondary facts:
-
-- venue or protocol
-- quote timestamp
-- gas estimate when available
-- max spend when available
-
-Details:
-
-- pool ID
-- package ID
-- object changes
-- balance changes
-- simulation summary
-- Review checks
-
-Review checks are generally details. Failed checks and warning checks that determine the current `blocked` or `refresh_required` status must be elevated next to the status banner so the user can understand the reason without opening details.
-
-If the server returns a `PtbVisualizationArtifact`, the frontend may render only
-Mermaid flowchart text plus diagnostics. The panel must show the generated time,
-source, diagnostics, and unsupported-use boundary when those fields are present.
-The Mermaid graph may show a registered Move Registry package name in place of a
-registered package address, with a control to switch back to raw addresses; that name is a package identity
-label, not a safety, trust, route-quality, or signing-readiness signal, and any
-package that is not registered keeps its raw address.
-It must not store or render executable transaction material, wallet signature
-requests, private-key material, or arbitrary Move calls. A PTB graph is not a
-sign action, not a transaction-building action, not a wallet readiness signal,
-not a signing readiness signal, not a payment execution readiness signal, not a
-route-quality signal, and not an execution-safety signal.
-
-## Current Release State Rules
-
-The review page is a state wizard with two displayed phases (Ready, Result)
-over nine page states. Every state keeps the same constant layout: the phase
-indicator, a one-line state headline, the constant Transaction card
-(plan-level values that fill in with reviewed values), the state-specific
-block, and an always-visible Audit record card (its copy-as-Markdown action a
-title-bar icon, its record sections behind nested disclosures). The ready state
-additionally shows an always-visible Transaction details card (estimated balance
-changes, the gas breakdown, and the PTB graph) below the Transaction card. Only
-the current state's actions are rendered;
-out-of-state buttons are removed, not disabled.
-
-The sign action appears only on `ready_for_wallet_review` with an emitted
-wallet review contract, a connected wallet whose account equals the reviewed
-account, and a successful digest-gated handoff. The signing step shows no wallet picker:
-dapp-kit autoconnect restores the wallet recorded for the active account on the
-fixed-port origin, and the sign action stays gated on the connected account
-matching the reviewed account. When autoconnect cannot establish a connection -
-for example after a reload or in a new tab, or for a hardware signer whose
-device session is not restored automatically - the signing step may offer a
-targeted reconnect for the one recorded wallet. That reconnect is not a wallet
-picker: it resumes the recorded wallet's signer session, and the sign action
-stays gated on the connected account matching the reviewed account. While a handoff is outstanding the server locks the session
-(state recomputes are refused) and the page shows a signing-in-progress state
-whose only action is cancel. Other states render:
-
-- `refresh_required` and an expired quote: hide the sign action and show the
-  refresh action with the safe-funds copy.
-- `blocked`: hide the sign action and show a human-readable reason plus the
-  retry action.
-- recorded execution result: show the receipt card (status, digest, failure
-  reason, and server-read chain receipt facts when present) with no review or
-  sign actions; the session is finished. The receipt card shows the server-read
-  chain receipt facts inline; the Receipt card can also read
-  on-chain receipt facts by transaction digest.
-- `expired`: show expiration and a concrete restart path. The default restart path is to return to the AI client and request a new wallet identity or review session.
-
-External proposal review sessions are non-signable. Their primary action is to
-inspect the review facts and return to the AI client with any remaining user
-choices.
+Local-data counts describe the backend state at the time they are read. A later
+replacement warning must not use a stale count, especially zero, as an assurance
+that no unconfirmed transaction records will be deleted. Warn that replacement
+can remove those records and cannot cancel a transaction on Sui.
 
 ## Internal Read Cards
 
@@ -182,25 +155,12 @@ Receipt input values and their PTB graph use a typed UI-only metadata channel bo
 
 Internal cards provide no clipboard actions, copy buttons, or clipboard fallback controls. Preserve readable facts, ordinary text selection, PTB name/address display controls and graph pan/zoom. NFT images retain no-referrer behavior and a failed-image placeholder. Theme follows the host. Card view cleanup ends timers, subscriptions and rendering observers without cancelling an already admitted server operation.
 
-## Actions
-
-Each state should expose at most one primary action.
-
-The review page may show an account-bound review action when an active account is present and no review state has been recorded for the selected plan.
-
-It may also show that action when the server status requires refreshed account-bound evidence.
-
-That action asks the local review server to compute review state.
-It is not a sign action, frontend transaction-building action, wallet readiness signal, signing readiness signal, or route-quality signal.
-
-Do not show a quote/evidence refresh button unless the quote expired, the
-status is `refresh_required`, or no review state has been recorded yet.
-
-Do not automatically close tabs after terminal results. Do not silently renew identity sessions. Do not edit amount, slippage, target asset, or venue on the frontend; revisions go back through AI and MCP.
-
-Loading and waiting states must use plain status copy. For wallet identity, use copy such as `Finish or cancel the request in your wallet popup`. For signing, keep the user's attention on the wallet popup and do not add extra choices.
-
-If a terminal or unrecoverable frontend error occurs, show one clear message and one recovery route. Examples: invalid token, missing session, expired session, unsupported chain, or no compatible wallet.
+All five cards, including Review management, adapt to the embedded frame width.
+Forms wrap, narrow fact rows stack their label above the value, and long addresses,
+amounts, names and records remain readable without widening the document. QR,
+chart and PTB drawing areas stay within the card; resizing changes presentation
+without repeating a business query or changing stored state. Responsive rules
+for shared atoms remain in the shared stylesheet.
 
 ## Language
 
@@ -229,10 +189,10 @@ Frontend labels stay in English. Localization must preserve protocol names, toke
 
 ## Shared UI And Design Principles
 
-The frontend pages share one design-token set and one set of atomic UI
+The card views and remaining Settings page share one design-token set and one set of atomic UI
 components: vanilla TypeScript DOM helpers in `review-app/src/ui` plus the shared
 stylesheet `review-app/public/ui.css`, served at `/review-assets/ui.css`. There is
-no React, Vue, Svelte, or client router. Pages compose the shared atoms and keep
+no React, Vue, Svelte, or client router. Views compose the shared atoms and keep
 only their own layout, container, third-party-sizing, and composition CSS. The
 shared atoms are addressed by `ui-` prefixed classes that only the shared
 stylesheet declares; a page stylesheet declares no `ui-` class rule and no bare
@@ -244,9 +204,8 @@ The shared UI follows these durable principles:
    keyboard-focus feedback. Controls are inert only during the deliberate,
    clearly-signaled async lock. Status and errors are conveyed as text, not color
    alone.
-2. One consistent system: all pages share one shell, one component set, and the
-   same element positions. Public pages carry the shared navigation; token pages
-   carry none.
+2. One consistent system: cards share one lifecycle, one component set, and the
+   same element positions. Cards and token pages have no cross-page navigation.
 3. Multi-step pages show their full set of steps and mark the current step.
 4. A region keeps its position across state and data availability; when content is
    empty, unsupported, or unavailable, the region shows a placeholder card in its
@@ -264,7 +223,7 @@ The shared UI follows these durable principles:
    boundary notes quiet, using a two-weight type scale (regular and medium) where
    size, color, and spacing carry the hierarchy.
 
-Theme: one light and dark token set with a toggle. A shared theme helper stores
+Theme: cards follow the host; the remaining Settings page has a theme toggle. A shared theme helper stores
 only the theme value (`light` or `dark`) under one fixed storage key; it never
 reads or writes a token, session id, wallet account, or any other state. The
 theme is the `data-theme` attribute on the document root and is applied through
@@ -277,26 +236,25 @@ mark for the active theme.
 
 ## Navigation
 
-Read cards open from purpose-specific MCP tools. They contain their own result and error states and do not link to removed Account, Receipt, Chart, home or HTML not-found pages. Connect, Review and Settings pages have no cross-page navigation or linked brand exit.
+Read cards open from purpose-specific MCP tools. They contain their own result and error states and do not link to removed Account, Receipt, Chart, home or HTML not-found pages. Cards and the Settings page have no cross-page navigation or linked brand exit.
 
 ## Security
 
 Tokens must not be accepted in query strings. Wallet addresses must not be written to local event logs in plaintext. Private keys, signatures, transaction bytes, and arbitrary Move calls must not appear in frontend state.
 
-CSP should prefer external assets and avoid inline script or inline style. Host, Origin, and session token validation are mandatory for state-changing APIs.
+Cards bundle script/style locally with the declared Host CSP and no external execution chunks. The Settings page uses local assets and Host/Origin/session-token checks. App-only tools require scoped UI permission, target and revision checks.
 
 Wallet and review screens must be keyboard reachable and screen-reader labeled. Status and error changes must be exposed as text, not color alone.
 
 Native push notifications are out of scope. A frontend may use low-authority browser affordances such as document title changes for off-tab terminal results, but only after server status changes.
 
-Each session URL represents one independent tab surface. Live review and session state is shared across local clients through a shared SQLite database (see docs/LOCAL_DB_ARCHITECTURE.md); the frontend itself does not share state directly between browser tabs.
+Each card has its own scoped input; live review and session state is shared in SQLite (see LOCAL_DB_ARCHITECTURE.md). Views never share mutable business state directly.
 
 ## Out Of Scope
 
 The frontend must not add:
 
-- price charts
-- candlesticks
+- additional live trading/chart dashboards beyond the read-only Chart card
 - portfolio dashboards
 - AI chat
 - trading recommendations

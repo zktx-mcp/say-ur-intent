@@ -3,8 +3,6 @@ export type SessionStoreErrorCode =
   | "input_invalid"
   | "invalid_session_transition"
   | "plan_not_in_session"
-  | "execution_result_finalized"
-  | "signed_pending_result_conflict"
   | "session_expired"
   | "session_not_found"
   | "session_mismatch"

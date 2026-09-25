@@ -1,16 +1,17 @@
 import { App } from "@modelcontextprotocol/ext-apps";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { CARD_METADATA_KEY, CARD_DISPLAY_METADATA_KEY, CARD_RESOURCE_PREFIX, CARD_TOOLS,
-  cardReferenceSchema, cardSnapshotSchema, cardReceiptDisplaySchema,
-  type CardKind, type CardReference, type CardSnapshot, type CardReceiptDisplay } from "../contracts.js";
+import { CARD_METADATA_KEY, CARD_DISPLAY_METADATA_KEY, WALLET_DISPLAY_METADATA_KEY, CARD_RESOURCE_PREFIX, CARD_TOOLS,
+  cardReferenceSchema, cardSnapshotSchema, cardReceiptDisplaySchema, cardWalletDisplaySchema,
+  type CardKind, type CardReference, type CardSnapshot, type CardReceiptDisplay, type CardWalletDisplay } from "../contracts.js";
 import "../../../review-app/public/ui.css";
 import "./style.css";
 
 declare const __SAY_UR_INTENT_VERSION__: string;
+export type CardContent = { node: HTMLElement; mount?: () => void; dispose?: () => void };
 export type CardRenderer = {
   title: string;
-  controls(snapshot: CardSnapshot, submit: (input: Record<string, unknown>) => void): HTMLElement;
-  result(snapshot: CardSnapshot, display?: CardReceiptDisplay): {
+  controls(snapshot: CardSnapshot, submit: (input: Record<string, unknown>) => void, display?: CardReceiptDisplay, wallet?: CardWalletDisplay): HTMLElement | CardContent;
+  result(snapshot: CardSnapshot, display?: CardReceiptDisplay, act?: (input: Record<string, unknown>) => void, wallet?: CardWalletDisplay): {
     node: HTMLElement;
     // Called after insertion; renderers still own any layout-size prerequisites.
     mount?: () => void;
@@ -38,15 +39,21 @@ function unwrap(result: unknown, host: string | undefined): Record<string, unkno
 function responseParts(result: Record<string, unknown>) {
   const payload = object(result.structuredContent);
   const error = object(object(payload?.error)?.details);
-  const value = payload?.ok === true ? payload.data : error?.snapshot;
+  const value = payload?.ok === true ? object(payload.data)?.card ?? payload.data : error?.snapshot;
   const snapshot = value === undefined ? undefined : cardSnapshotSchema.parse(value);
   const privateValue = object(result._meta)?.[CARD_DISPLAY_METADATA_KEY];
   const display = privateValue === undefined ? undefined : cardReceiptDisplaySchema.parse(privateValue);
-  if (display && (!snapshot || snapshot.kind !== "receipt" || display.cardId !== snapshot.cardId ||
-      display.revision !== snapshot.revision || display.transactionDigest !== snapshot.input.digest)) {
+  const request = object(object(snapshot?.data)?.request);
+  if (display && (!snapshot || (snapshot.kind !== "receipt" && snapshot.kind !== "review") || display.cardId !== snapshot.cardId ||
+      display.revision !== snapshot.revision || display.transactionDigest !== (snapshot.kind === "receipt" ? snapshot.input.digest : request?.transactionDigest) ||
+      (snapshot.kind === "review" && display.attemptId !== request?.attemptId))) {
     throw new Error("Receipt display details do not match this saved result.");
   }
-  return { snapshot, display, error: typeof error?.reason === "string" ? error.reason : undefined };
+  const walletValue = object(result._meta)?.[WALLET_DISPLAY_METADATA_KEY];
+  const wallet = walletValue === undefined ? undefined : cardWalletDisplaySchema.parse(walletValue);
+  if (wallet && (!snapshot || snapshot.kind !== "connect" || wallet.cardId !== snapshot.cardId || wallet.revision !== snapshot.revision ||
+      wallet.connectionId !== object(object(snapshot.data)?.connection)?.connectionId)) throw new Error("Pairing display does not match this card.");
+  return { snapshot, display, wallet, error: typeof error?.message === "string" ? error.message : typeof error?.reason === "string" ? error.reason : undefined };
 }
 
 export function startCard(kind: CardKind, renderer: CardRenderer): void {
@@ -64,6 +71,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
   let reference: CardReference | undefined;
   let snapshot: CardSnapshot | undefined;
   let display: CardReceiptDisplay | undefined;
+  let walletDisplay: CardWalletDisplay | undefined;
   let connected = false;
   let creating: unknown;
   let initialized = false;
@@ -80,6 +88,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
   let operationError: string | undefined;
   let displayError: string | undefined;
   let recovery: HTMLButtonElement | undefined;
+  const business = kind === "connect" || kind === "review";
 
   function stopTimers(): void {
     if (timer !== undefined) clearTimeout(timer);
@@ -90,19 +99,30 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     return !!reference && confirmed && !busy && !invalidIdentity && !displayError &&
       !lifetime.signal.aborted && snapshot?.state === "ready" && displayedInput;
   }
+  function canAct(input?: Record<string, unknown>): boolean {
+    const permitted = object(snapshot?.data)?.allowedActions;
+    return business && !!reference && confirmed && !busy && !invalidIdentity && !displayError && !lifetime.signal.aborted &&
+      Array.isArray(permitted) && (input ? permitted.includes(input.action) : permitted.length > 0);
+  }
   function updateChrome(): void {
+    const workflow = business ? object(snapshot?.data) : undefined;
+    const readyLabel = workflow?.mode === "review_manage" ? "Manage this transaction request." :
+      object(workflow?.review)?.preparing === true ? "Updating review…" : "Choose the input for this card.";
     if (snapshot) status.textContent = invalidIdentity ? "Card unavailable" :
-      snapshot.state === "running" ? "Reading the requested data…" :
-      snapshot.state === "ready" ? (confirmed && reference ? "Choose the input for this card." : "Input is unavailable until the current state and permission are confirmed.") :
-      snapshot.reason === "completed" ? "Saved result" : snapshot.error ??
+      snapshot.state === "running" ? (business ? (object(workflow?.progress)?.status === "unavailable" ? "Stored request state — progress unavailable" : "Request in progress") : "Reading the requested data…") :
+      snapshot.state === "ready" ? (confirmed && reference ? readyLabel : "Input is unavailable until the current state and permission are confirmed.") :
+      snapshot.reason === "completed" ? (business ? "Stored request state" : "Saved result") : snapshot.error ??
       (snapshot.reason === "expired" ? "The input period has expired. Request a new card." :
         snapshot.reason === "server_restarted" ? "The server restarted before this request completed. Request a new card." : "This selection is closed.");
     issue.textContent = [operationError, displayError].filter(Boolean).join(" ");
     // A failed replacement may leave the old input form visible. Its controls
     // must stay disabled even if the current DB state is now closed.
     if (displayedInput) for (const control of content.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input, button, select")) {
-      control.disabled = !canSubmit();
+      if (!business || control.tagName !== "BUTTON" || control.dataset.cardAction !== undefined) {
+        control.disabled = business ? !canAct() : !canSubmit();
+      }
     }
+    if (business) for (const control of content.querySelectorAll<HTMLButtonElement>("[data-card-action]")) control.disabled = !canAct();
   }
   function release(dispose: (() => void) | undefined): void {
     try { dispose?.(); }
@@ -112,8 +132,12 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     if (!snapshot || lifetime.signal.aborted) return;
     // A creating response is a display snapshot, never input authority.
     if (snapshot.state === "ready" && !confirmed) return;
-    if (snapshot.state === "running") { displayError = undefined; return; }
-    const key = `${snapshot.revision}:${reference !== undefined}:${display !== undefined}`;
+    if (snapshot.state === "running" && !business) { displayError = undefined; return; }
+    // Workflow projections include referenced connection/account facts. Those
+    // may change while this already-consumed card's own revision stays fixed.
+    // Remaining milliseconds affect timers, not the displayed content identity.
+    const projection = business ? { ...object(snapshot.data), actionRemainingMs: undefined, nextStateReadAfterMs: undefined } : undefined;
+    const key = `${snapshot.revision}:${reference !== undefined}:${display !== undefined}:${walletDisplay !== undefined}:${JSON.stringify(projection)}`;
     if (key === renderedKey || (key === attemptedKey && !retryFailed)) return;
     attemptedKey = key;
     const previousNodes = [...content.children];
@@ -122,10 +146,11 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     let inserted = false;
     try {
       if (snapshot.state === "ready" && reference) {
-        candidate = { node: renderer.controls(snapshot, (input) => { void submit(input); }) };
+        const controls = renderer.controls(snapshot, (input) => { void submit(input); }, display, walletDisplay);
+        candidate = "node" in controls ? controls : { node: controls };
         nextInput = true;
-      } else if (snapshot.reason === "completed" && snapshot.data !== undefined) {
-        candidate = renderer.result(snapshot, display);
+      } else if ((business || snapshot.reason === "completed") && snapshot.data !== undefined) {
+        candidate = renderer.result(snapshot, display, (input) => { void submit(input); }, walletDisplay);
       }
       content.replaceChildren(...(candidate ? [candidate.node] : [])); inserted = true;
       candidate?.mount?.();
@@ -142,7 +167,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     displayError = undefined;
     release(previousDispose);
   }
-  function apply(next: CardSnapshot, details: CardReceiptDisplay | undefined, current: boolean): void {
+  function apply(next: CardSnapshot, details: CardReceiptDisplay | undefined, current: boolean, wallet?: CardWalletDisplay): void {
     if (lifetime.signal.aborted || invalidIdentity) return;
     if (next.kind !== kind || (snapshot !== undefined && next.cardId !== snapshot.cardId) ||
         (reference && reference.cardId !== next.cardId)) {
@@ -151,9 +176,10 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     }
     if (snapshot && next.revision < snapshot.revision) return;
     const firstConfirmation = current && !confirmed;
-    if (!snapshot || next.revision !== snapshot.revision) display = undefined;
+    if (!snapshot || next.revision !== snapshot.revision) { display = undefined; walletDisplay = undefined; }
     snapshot = next;
     if (details) display = details;
+    walletDisplay = wallet;
     confirmed = current;
     stopTimers();
     // Presentation errors cannot invalidate a DB reply or prevent its normal
@@ -161,11 +187,22 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     render(firstConfirmation);
     updateChrome();
     if (!current || !reference) return;
-    if (next.state === "ready") {
+    const data = object(next.data);
+    if (business && object(data?.progress)?.status === "unavailable") offerRead();
+    else { recovery?.remove(); recovery = undefined; }
+    const remaining = business ? data?.actionRemainingMs : next.inputRemainingMs;
+    const hasTimedActions = business ? Array.isArray(data?.allowedActions) && data.allowedActions.length > 0 : next.state === "ready";
+    const nextRead = business ? data?.nextStateReadAfterMs : undefined;
+    // A zero/elapsed hint cannot form a busy read loop. The backend response
+    // already owns expiry; only positive future intervals schedule a wake-up.
+    const deadlines = [hasTimedActions ? remaining : undefined, nextRead]
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+    if (deadlines.length > 0) {
       expiryTimer = setTimeout(() => {
         confirmed = false; updateChrome(); void readSaved();
-      }, next.inputRemainingMs);
-    } else if (next.state === "running") {
+      }, Math.min(...deadlines));
+    }
+    if ((business && data?.observe === true) || (!business && next.state === "running")) {
       timer = setTimeout(() => { void readSaved(); }, next.pollAfterMs);
     }
   }
@@ -186,8 +223,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
         if (lifetime.signal.aborted || invalidIdentity) return;
         if (!result.snapshot) throw new Error(result.error ?? "Saved card data is unavailable.");
         operationError = result.error;
-        apply(result.snapshot, result.display, true);
-        recovery?.remove(); recovery = undefined;
+        apply(result.snapshot, result.display, true, result.wallet);
       } catch (error) {
         if (lifetime.signal.aborted) return;
         confirmed = false; stopTimers();
@@ -200,14 +236,14 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     return reading;
   }
   async function submit(input: Record<string, unknown>): Promise<void> {
-    if (!snapshot || !reference || !canSubmit()) return;
+    if (!snapshot || !reference || (business ? !canAct(input) : !canSubmit())) return;
     busy = true; stopTimers(); operationError = undefined; updateChrome();
     try {
-      const result = responseParts(await call(CARD_TOOLS.submit, { ...reference, revision: snapshot.revision, input }));
+      const result = responseParts(await call(business ? CARD_TOOLS.act : CARD_TOOLS.submit, { ...reference, revision: snapshot.revision, input }));
       if (lifetime.signal.aborted || invalidIdentity) return;
       if (!result.snapshot) throw new Error(result.error ?? "The request could not be confirmed.");
       operationError = result.error;
-      apply(result.snapshot, result.display, true);
+      apply(result.snapshot, result.display, true, result.wallet);
     } catch (error) {
       if (!lifetime.signal.aborted) {
         confirmed = false; stopTimers();
@@ -247,7 +283,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
         if (!item || !("text" in item)) throw new Error("Saved card data is unavailable.");
         next = cardSnapshotSchema.parse(JSON.parse(item.text));
       }
-      apply(next, initial.display, false);
+      apply(next, initial.display, false, initial.wallet);
       if (reference) await readSaved();
       else if (next.state !== "closed") { operationError = "The host did not provide this card's input permission."; updateChrome(); }
     } catch (error) {

@@ -118,7 +118,7 @@ Do not ask for manual address entry.
 
 `Connect my wallet.`
 Class: `tool_wait`.
-Call `session.create_wallet_identity`, give the user the `walletUrl`, then immediately call `session.wait_wallet_identity` in the same turn or poll `session.get_wallet_identity`.
+Call `session.create_wallet_connection` and present the internal Connect card. The user selects the connection operation; read or wait using its cardId. Opening or waiting never creates a pairing automatically. A connection is account context, not transaction approval or login.
 On `connected`, call `account.get_active_account` before announcing the active account.
 On `timed_out`, say the wallet connection is still pending, not failed.
 

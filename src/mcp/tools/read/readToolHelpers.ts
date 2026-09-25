@@ -42,7 +42,7 @@ export async function resolveExplicitOrActiveAccount(
       result: errorToolResult({
         kind: "active_account_not_set",
         details: {
-          action: "connect_wallet_identity"
+          action: "connect_wallet_connection"
         }
       })
     };

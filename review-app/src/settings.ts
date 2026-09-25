@@ -209,7 +209,7 @@ function renderLocalDataPanel(): HTMLElement {
   const panel = card("Local data");
   panel.append(
     note(
-      "Export downloads a backup of your local data. Import previews a chosen backup file (shape only); endpoint verification runs when you confirm, and importing replaces current local data and invalidates open review, wallet, and settings pages."
+      "Export downloads a backup of your local data. Import previews a chosen backup file (shape only); endpoint verification runs when you confirm, and importing replaces current local data and invalidates open cards and settings sessions."
     )
   );
 
@@ -239,6 +239,7 @@ function renderLocalDataPanel(): HTMLElement {
         `Import preview ready. Incoming accounts: ${importPreview.incomingCounts.accounts}. Active account change: ${importPreview.activeAccountChange}. Endpoint verification runs before replacement. This import replaces current local data.`
       )
     );
+    panel.append(note(unknownOutcomeWarning()));
     panel.append(endRow(button("Import and replace local data", () => void importLocalData(), "danger")));
   }
 
@@ -252,9 +253,10 @@ function renderResetPanel(): HTMLElement {
   const panel = card("Danger zone");
   panel.append(
     note(
-      "Reset permanently clears all local Say Ur Intent data and invalidates every open review, wallet, and settings page. This cannot be undone."
+      "Reset permanently clears all local Say Ur Intent data and invalidates every open card and settings session. This cannot be undone."
     )
   );
+  panel.append(note(unknownOutcomeWarning()));
   panel.append(endRow(button("Reset local data", () => void resetLocalData(), "danger")));
   appendFeedback(panel, "danger");
   return panel;
@@ -384,7 +386,7 @@ async function previewImport(fileInput: HTMLInputElement): Promise<void> {
 
 async function importLocalData(): Promise<void> {
   if (!importPayload) return;
-  if (!window.confirm("Import and replace all local data? This invalidates all open review, wallet, and settings pages.")) {
+  if (!window.confirm("Import and replace all local data? This invalidates all open cards and settings sessions. " + unknownOutcomeWarning())) {
     return;
   }
   try {
@@ -407,7 +409,7 @@ async function importLocalData(): Promise<void> {
 }
 
 async function resetLocalData(): Promise<void> {
-  if (!window.confirm("Reset all local Say Ur Intent data? This invalidates all open review, wallet, and settings pages.")) {
+  if (!window.confirm("Reset all local Say Ur Intent data? This invalidates all open cards and settings sessions. " + unknownOutcomeWarning())) {
     return;
   }
   try {
@@ -464,4 +466,8 @@ async function requestJson<T = unknown>(path: string, init: RequestInit): Promis
 function formatBytes(bytes: number): string {
   const mib = bytes / (1024 * 1024);
   return Number.isInteger(mib) ? `${mib} MiB` : `${bytes} bytes`;
+}
+
+function unknownOutcomeWarning(): string {
+  return "Replacement removes stored requests, including any with an unconfirmed chain outcome. Removing local records cannot cancel or reverse a transaction on Sui. Export the records before replacement if you need to investigate them later.";
 }

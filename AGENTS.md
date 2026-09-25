@@ -11,60 +11,37 @@ primary detailed policy is `docs/AGENT_DEVELOPMENT_POLICY.md`.
 
 Say Ur Intent is a local-first toolkit that turns natural-language Sui DeFi
 intent and structured Sui payment/action proposals into verified, AI-readable
-evidence, and is designed to carry a reviewed request through to user-controlled
-wallet signing and execution receipt evidence after Say Ur Intent independently
-builds or verifies the transaction material. The current release implements
-Sui mainnet evidence, local review, and signable account-bound swap review paths
-for DeepBook and FlowX. Those paths build local unsigned transaction material
-into a local material store, internally bind a Sui transaction digest to that
-stored material, derive object ownership, quote/policy provenance,
-human-readable review evidence, review-time simulation evidence, and a PTB
-visualization from the same stored material and private review artifacts, and
-emit a schema-validated wallet review contract on `ready_for_wallet_review`.
-When every required evidence stage completes, the local review page can request
-the only transaction-byte handoff path: a same-machine, digest-gated handoff
-whose bytes must recompute to the reviewed commitment before the user signs in
-their own wallet. After the page reports the signed transaction digest, the
-review server re-reads Sui mainnet and records normalized chain receipt
-evidence. The review page also displays the server-read chain
-receipt facts inline, and an internal Receipt card reads on-chain receipt
-facts for any transaction digest, without adding signing or execution authority. MCP responses and ordinary review-session JSON never
-expose transaction bytes, request wallet signatures, provide signing readiness,
-or execute on the user's behalf.
+evidence. Users inspect independently built or verified transaction material
+and approve each transaction in their own wallet. The current backend builds
+account-bound DeepBook and FlowX swap material, verifies its digest, ownership,
+quote/policy provenance, human-readable facts, simulation and PTB visualization,
+and exposes internal Connect and Review cards alongside Account, Receipt and
+Chart cards. Settings still uses a local token page.
 
-The current evidence layer answers a pre-execution question: given a user's Sui
-assets and a payment or action request, what can current verified evidence say,
-and what must remain a user choice or unsupported claim?
+WalletConnect is the only connection and signing transport. An explicit,
+permission-checked card action is admitted atomically in SQLite before the
+backend requests a wallet signature. The backend verifies the returned bytes'
+digest and signer against that admitted review, checks Sui mainnet, and submits
+once. It records only independently read chain effects as execution success or
+failure. Lost responses are resolved by reading the same digest, never by
+resending a financial request. Request state and observed chain outcome are
+separate facts. No card or model receives transaction bytes or signatures.
 
-What is implemented today and what is deliberately sequenced next are distinct,
-and both must stay explicit in this file:
+Implemented surfaces and deliberately sequenced work remain distinct:
 
-- Implemented today: read-only natural-language evidence, read-only external
-  proposal review, and signable account-bound DeepBook and FlowX swap review on
-  the local review page. The supported swap review paths can build unsigned
-  transaction material into a local in-process material store and internally
-  bind a Sui transaction digest to that stored material. They can derive object
-  ownership evidence, quote/policy provenance, human-readable review facts,
-  review-time simulation evidence, and PTB visualization evidence from the same
-  material-bound private artifacts. When every review evidence stage completes,
-  the local review page offers a digest-gated byte handoff, user-controlled
-  wallet signing, chain submission from the page, signed-digest reporting, and
-  server-read chain receipt recording. The local review page shows
-  server-read execution facts inline on terminal review sessions, and an internal
-  Receipt card reads on-chain receipt facts by transaction digest. MCP responses and
-  ordinary review-session JSON never expose transaction bytes, request wallet
-  signatures, provide signing readiness, or execute on the user's behalf.
-- Deliberately sequenced next: further analysis views beyond the current inline
-  review receipt and internal Receipt card, further protocol adapters, and external proposal
-  execution, each added only after Say Ur Intent independently builds or
-  verifies the transaction material inside a human-readable local review, and
-  never outside the product's permanent boundaries.
+- Current surfaces: read-only evidence and external proposal review, internal
+  Connect/Review cards for the two supported swap adapters, backend WalletConnect
+  signing and receipt observation, and a local Settings page. Ordinary MCP tools
+  create cards or read evidence; they do not authorize signing or execution.
+- Sequenced next: internal Settings card and complete removal of its external
+  page, final package release checks, further analysis views and protocol
+  adapters. External proposal execution requires a separate implementation
+  decision and independent material verification; proposals remain non-signable.
 
-This sequencing never weakens the Non-Negotiable Boundaries below. "The current
-release does not include X yet (deliberately sequenced later)" and "the final
-product does X under user control after reviewed verification" are separate
-statements and must not be collapsed into either a permanent no-goal or a
-current capability.
+The evidence layer answers what verified Sui facts support about a user's
+assets and request, and which choices or claims remain unsupported. A reviewed
+transaction is not a safety guarantee. Implementation or a unit's verification
+must not be reported as completion of the entire product goal.
 
 Say Ur Intent is not a DeepBook-only product. Extensibility across Sui DeFi
 protocol adapters is a core product advantage, not a late cleanup task. DeepBook
@@ -103,19 +80,17 @@ a task easier.
 
 - The product must not provide private-key custody, autonomous execution, or
   unchecked AI-controlled authorization.
-- The MCP layer and ordinary review-session API responses never request wallet
-  signatures, execute on the user's behalf, or provide signing or
-  payment-execution readiness; wallet signing and execution happen only on the
-  local review page under the user's control. Exposing transaction bytes through
-  MCP or ordinary review-session JSON and trusting external transaction
-  material remain forbidden at every stage. The only transaction-byte exit is
-  the same-machine digest-gated handoff endpoint on the local review page. The
-  current transaction-material build paths are local unsigned account-bound
-  DeepBook and FlowX swap review material, with an internal digest commitment,
-  that stays inside the review-server session until that handoff recomputes the
-  bytes to the reviewed commitment. Object ownership, quote/policy provenance,
-  human-readable review facts, PTB visualization, and review-time simulation
-  evidence derived from that material are pre-signing review evidence only.
+- Ordinary model-facing MCP and review-session responses never request wallet
+  signatures or authorize execution. Only a scoped app-only action initiated by
+  the user, followed by the wallet's approval of that exact transaction, may
+  authorize the backend request. Host UI/model separation is a trust boundary,
+  not cryptographic proof of a physical click. Transaction bytes and signatures
+  stay between the private backend and wallet; they never appear in model
+  responses, card display state, public backup or logs. The backend independently
+  builds/verifies material and binds digest, selected account and review revision
+  before admission, verifies returned bytes and signature, and submits once.
+  Ownership, quote/policy, human-readable review, PTB and simulation remain
+  pre-signing evidence, not authorization or guaranteed execution.
 - Current read-only external proposal review records structured proposal facts
   only as non-signable review context. It is not transaction building, payment
   execution, wallet signing, signing readiness, or trusted transaction material.

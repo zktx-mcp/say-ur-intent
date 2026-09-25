@@ -6,10 +6,17 @@ type Row = {
   state: string; reason: string | null; error: string | null; revision: number;
   created_at: string; expires_at: string; input_json: string;
   accepted_input_json: string | null; result_json: string | null; receipt_display_json: string | null;
+  scope: NonNullable<CardRecord["scope"]>; operation_id: string | null;
 };
 
 export class SqliteCardRecordStore implements CardRecordStore {
   constructor(private readonly db: SqliteDatabase) {}
+
+  hasReviewInput(reviewSessionId: string, ownerId: string, now: Date): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM live_read_cards WHERE owner_id=? AND scope='review'
+      AND state='ready' AND accepted_input_json IS NULL AND expires_at>?
+      AND json_extract(input_json,'$.reviewSessionId')=? LIMIT 1`).get(ownerId, now.toISOString(), reviewSessionId);
+  }
 
   get(id: string): CardRecord | undefined {
     const row = this.db.prepare("SELECT * FROM live_read_cards WHERE id = ?").get(id) as Row | undefined;
@@ -20,23 +27,48 @@ export class SqliteCardRecordStore implements CardRecordStore {
         ...(row.reason === null ? {} : { reason: row.reason }), ...(row.error === null ? {} : { error: row.error }),
         ...(row.result_json === null ? {} : { data: JSON.parse(row.result_json) }) }),
       tokenHash: row.token_hash, ownerId: row.owner_id,
+      scope: row.scope, ...(row.operation_id === null ? {} : { operationId: row.operation_id }),
       ...(row.accepted_input_json === null ? {} : { acceptedInput: JSON.parse(row.accepted_input_json) as Record<string, unknown> }),
       ...(row.receipt_display_json === null ? {} : { receiptDisplay: receiptDisplaySchema.parse(JSON.parse(row.receipt_display_json)) })
     };
   }
+  evaluate(expected: CardRecord, clock: () => Date): { record: CardRecord; evaluatedAt: string } {
+    return this.db.transaction(() => {
+      const now = clock();
+      let record = this.get(expected.state.cardId);
+      if (!record || record.tokenHash !== expected.tokenHash || record.ownerId !== expected.ownerId) throw new Error("Saved card access is unavailable.");
+      if (record.state.state === "ready" && Date.parse(record.state.expiresAt) <= now.getTime()) {
+        const next: CardRecord = { ...record, state: { ...record.state, state: "closed", reason: "expired", revision: record.state.revision + 1 } };
+        if (!this.replace(record, next)) throw new Error("Card expiry could not be committed.");
+        record = next;
+      }
+      return { record, evaluatedAt: now.toISOString() };
+    }).immediate();
+  }
+  admit(expected: CardRecord, input: Record<string, unknown>, ownerId: string, clock: () => Date): CardRecord | undefined {
+    return this.db.transaction(() => {
+      const { record } = this.evaluate(expected, clock);
+      if (record.ownerId !== ownerId || record.state.state !== "ready" || record.acceptedInput !== undefined ||
+          record.state.revision !== expected.state.revision) return undefined;
+      const next: CardRecord = { ...record, acceptedInput: input, state: { ...record.state, input,
+        state: "running", revision: record.state.revision + 1 } };
+      if (!this.replace(record, next)) throw new Error("Card admission could not be committed.");
+      return next;
+    }).immediate();
+  }
   create(record: CardRecord): void {
     this.db.prepare(`INSERT INTO live_read_cards
       (id, owner_id, token_hash, kind, state, reason, error, revision, created_at, expires_at,
-       input_json, accepted_input_json, result_json, receipt_display_json)
+       input_json, accepted_input_json, result_json, receipt_display_json, scope, operation_id)
       VALUES (@id, @owner, @token, @kind, @state, @reason, @error, @revision, @created, @expires,
-       @input, @accepted, @result, @display)`).run(values(record));
+       @input, @accepted, @result, @display, @scope, @operation)`).run(values(record));
   }
   replace(expected: CardRecord, next: CardRecord): boolean {
     // This single statement commits admission or a result atomically. A removed
     // card is never recreated by a delayed network response.
     return this.db.prepare(`UPDATE live_read_cards SET state=@state, reason=@reason, error=@error,
       revision=@revision, input_json=@input, accepted_input_json=@accepted, result_json=@result,
-      receipt_display_json=@display
+      receipt_display_json=@display, scope=@scope, operation_id=@operation
       WHERE id=@id AND owner_id=@owner AND token_hash=@token AND revision=@expectedRevision
         AND state=@expectedState`).run({ ...values(next), expectedRevision: expected.state.revision,
           expectedState: expected.state.state }).changes === 1;
@@ -51,7 +83,8 @@ export class SqliteCardRecordStore implements CardRecordStore {
 
 function values(record: CardRecord) {
   const state = cardStateSchema.parse(record.state);
-  return { id: state.cardId, owner: record.ownerId, token: record.tokenHash, kind: state.kind,
+    return { id: state.cardId, owner: record.ownerId, token: record.tokenHash, kind: state.kind,
+    scope: record.scope ?? "read", operation: record.operationId ?? null,
     state: state.state, reason: state.reason ?? null, error: state.error ?? null, revision: state.revision,
     created: state.createdAt, expires: state.expiresAt, input: JSON.stringify(state.input),
     accepted: record.acceptedInput === undefined ? null : JSON.stringify(record.acceptedInput),

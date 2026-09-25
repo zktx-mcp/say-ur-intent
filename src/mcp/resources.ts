@@ -28,11 +28,11 @@ export const MCP_RESOURCES = [
     path: "docs/MCP_TOOLS.md"
   },
   {
-    name: "wallet-identity",
-    uri: "sayurintent://docs/wallet-identity",
-    title: "Wallet Identity",
-    description: "Wallet identity reference: active-account read context and same-machine capture boundaries.",
-    path: "docs/WALLET_IDENTITY.md"
+    name: "wallet-connection",
+    uri: "sayurintent://docs/wallet-connection",
+    title: "Wallet Connection",
+    description: "Wallet connection reference: active read context, private SDK ownership and user-approved transaction requests.",
+    path: "docs/WALLET_CONNECTION.md"
   },
   {
     name: "agent-behavior",

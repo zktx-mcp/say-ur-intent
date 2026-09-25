@@ -1,4 +1,6 @@
-import { mainnetCoins } from "@mysten/deepbook-v3";
+import { createRuntimeReviewDependencies } from "./reviewDependencies.js";
+import { computeSmokeReview, SmokeReviewConfigError } from "./smokeReview.js";
+import { parseSuiAddress } from "../core/suiAddress.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { randomInt } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -13,16 +15,6 @@ import { DeepbookOfficialIndexerSource } from "../core/read/deepbookOfficialInde
 import { LocalSessionStore } from "../core/session/sessionStore.js";
 import { createMcpServer } from "../mcp/server.js";
 import { TOOL_NAMES } from "../mcp/toolNames.js";
-import { createReviewHttpServer } from "../review-server/server.js";
-import { buildSupportedReviewAdapters } from "../adapters/reviewAdapters.js";
-import {
-  createDeepbookSwapTransactionMaterialDigestProducer,
-  createDeepbookSwapTransactionMaterialProducer
-} from "../adapters/deepbook/deepbookTransactionMaterialProducer.js";
-import { createDeepbookSwapHumanReadableReviewProducer } from "../adapters/deepbook/deepbookHumanReviewProducer.js";
-import { createTransactionObjectOwnershipProducer } from "../core/action/transactionObjectOwnershipProducer.js";
-import { createReviewTimeSimulationProducer } from "../core/action/reviewTimeSimulationEvidence.js";
-import { producePtbVisualizationArtifact } from "../core/action/ptbVisualizationProducer.js";
 import { DEFAULT_SUI_GRAPHQL_URL, DEFAULT_SUI_GRPC_URL, composeRuntimeConfig, loadBootConfig } from "./config.js";
 import { RuntimeLocalSettingsService } from "./localSettingsService.js";
 import { createStderrLogger } from "./logger.js";
@@ -38,7 +30,6 @@ import { GraphqlSuiTransactionActivitySource } from "./suiTransactionGraphqlSour
 const startedAt = new Date();
 const smokeFunctionTarget = process.env.SMOKE_FUNCTION_TARGET;
 const plannedTools = [
-  TOOL_NAMES.sessionCreateWalletIdentity,
   TOOL_NAMES.readSummarizeWalletAssets,
   TOOL_NAMES.readInspectDeepbookOrderbook,
   TOOL_NAMES.readQuoteDeepbookAction,
@@ -85,7 +76,7 @@ class SmokeMainnetError extends Error {
 async function main(): Promise<void> {
   const logger = createStderrLogger("smoke-mainnet");
   const bootConfig = loadSmokeBootConfig();
-  const smokeAddress = requiredEnv("SMOKE_SUI_ADDRESS");
+  const smokeAddress = parseSuiAddress(requiredEnv("SMOKE_SUI_ADDRESS")) ?? fail("config_error", "SMOKE_SUI_ADDRESS must be a Sui address.");
   const poolKey = requiredEnv("SMOKE_DEEPBOOK_POOL_KEY");
   const quoteAmount = requiredEnv("SMOKE_QUOTE_AMOUNT");
   const inspectDigest = process.env.SMOKE_INSPECT_DIGEST;
@@ -96,7 +87,6 @@ async function main(): Promise<void> {
   let smokeDbDir: string | undefined;
   let activityStore: SqliteActivityStore | undefined;
   let server: ReturnType<typeof createMcpServer> | undefined;
-  let reviewServer: Awaited<ReturnType<ReturnType<typeof createReviewHttpServer>["start"]>> | undefined;
 
   try {
     smokeDbDir = mkdtempSync(join(tmpdir(), "say-ur-intent-smoke-db-"));
@@ -145,61 +135,16 @@ async function main(): Promise<void> {
       validateAdapterLifecycle: validateSupportedAdapterLifecycle,
       sessions: activityStore.createSessionRecordStore(),
       artifacts: activityStore.createPrivateReviewArtifactStore(),
-      walletIdentityStore: activityStore.createWalletIdentityRecordStore(),
       settingsStore: activityStore.createSettingsRecordStore()
     });
-    reviewServer = await createReviewHttpServer({
-      host: config.reviewHost,
-      store: sessions,
-      logger,
-      reviewComputationDeps: {
-        validateAdapterLifecycle: validateSupportedAdapterLifecycle,
-        adapters: buildSupportedReviewAdapters({
-          deepbook: {
-          deepbookQuoteSource: readService,
-          deepbookDeepBalanceSource: async (account) => {
-            const balance = await suiClient.core.getBalance({
-              owner: account,
-              coinType: mainnetCoins.DEEP!.type
-            });
-            return balance.balance.balance.toString();
-          },
-          deepbookTransactionMaterialProducer: createDeepbookSwapTransactionMaterialProducer({
-            client: suiClient,
-            network: config.network,
-            chainIdentifier,
-            expectedChainIdentifier: config.expectedChainIdentifier,
-            materialStore: transactionMaterialStore
-          }),
-          deepbookTransactionMaterialDigestProducer: createDeepbookSwapTransactionMaterialDigestProducer({
-            materialStore: transactionMaterialStore
-          }),
-          transactionObjectOwnershipProducer: createTransactionObjectOwnershipProducer({
-            materialStore: transactionMaterialStore,
-            objectSource: suiClient,
-            network: config.network,
-            chainIdentifier,
-            expectedChainIdentifier: config.expectedChainIdentifier
-          }),
-          deepbookHumanReadableReviewProducer: createDeepbookSwapHumanReadableReviewProducer(),
-          reviewTimeSimulationProducer: createReviewTimeSimulationProducer({
-            client: suiClient,
-            materialStore: transactionMaterialStore,
-            network: config.network,
-            chainIdentifier,
-            expectedChainIdentifier: config.expectedChainIdentifier
-          }),
-          ptbVisualizationProducer: (vizInput) =>
-            producePtbVisualizationArtifact({ materialStore: transactionMaterialStore, ...vizInput })
-          }
-        })
-      }
-    }).start(0);
-    const reviewBaseUrl = `http://${reviewServer.host}:${reviewServer.port}`;
+    const reviewDependencies = createRuntimeReviewDependencies({ client: suiClient, chainIdentifier,
+      expectedChainIdentifier: config.expectedChainIdentifier, materialStore: transactionMaterialStore, readService });
+    // Utility-only read context in this script's temporary DB. This does not
+    // create a live wallet session or prove address ownership.
+    await activityStore.setActiveAccount(smokeAddress, "wallet_connection", new Date(), { name: "Explicit smoke read fixture" });
     server = createMcpServer({
       sessions,
       activityStore,
-      reviewBaseUrl,
       localSettings,
       readService,
       transactionActivityService: new TransactionActivityService({
@@ -213,100 +158,8 @@ async function main(): Promise<void> {
     });
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-    const walletIdentity = await callSmokeTool(client, TOOL_NAMES.sessionCreateWalletIdentity, {});
-    const walletData = walletIdentity.data as { walletSessionId?: string; walletUrl?: string } | undefined;
-    const walletSessionId = walletData?.walletSessionId ?? fail("tool_failure", "Wallet identity session id missing");
-    const walletUrl = walletData?.walletUrl ?? fail("tool_failure", "Wallet identity URL missing");
-    const walletToken = new URL(walletUrl).hash.slice(1);
-    if (!walletToken) {
-      fail("tool_failure", "Wallet identity token missing from wallet URL fragment");
-    }
-    markCompleted(TOOL_NAMES.sessionCreateWalletIdentity);
-    await postWalletLifecycle(reviewBaseUrl, walletSessionId, walletToken, "opened", {});
-    await postWalletLifecycle(reviewBaseUrl, walletSessionId, walletToken, "connecting", {});
-    await postWalletLifecycle(reviewBaseUrl, walletSessionId, walletToken, "result", {
-      status: "connected",
-      account: smokeAddress,
-      chain: "sui:mainnet",
-      walletName: "smoke"
-    });
-
-    const swapFromSymbol = process.env.SMOKE_SWAP_FROM_SYMBOL;
-    const swapToSymbol = process.env.SMOKE_SWAP_TO_SYMBOL;
-    const swapAmountDisplay = process.env.SMOKE_SWAP_AMOUNT_DISPLAY;
-    let accountBoundSwapReview: Record<string, unknown> = {
-      status: "not_run",
-      notRunReason: "missing_env",
-      requiredEnv: ["SMOKE_SWAP_FROM_SYMBOL", "SMOKE_SWAP_TO_SYMBOL", "SMOKE_SWAP_AMOUNT_DISPLAY"]
-    };
-    const swapEnvEntries: Array<[string, string | undefined]> = [
-      ["SMOKE_SWAP_FROM_SYMBOL", swapFromSymbol],
-      ["SMOKE_SWAP_TO_SYMBOL", swapToSymbol],
-      ["SMOKE_SWAP_AMOUNT_DISPLAY", swapAmountDisplay]
-    ];
-    const missingSwapEnv = swapEnvEntries.filter(([, value]) => value === undefined).map(([name]) => name);
-    if (missingSwapEnv.length > 0 && missingSwapEnv.length < swapEnvEntries.length) {
-      // A partial swap configuration is a misconfiguration, not an intentional skip.
-      fail(
-        "config_error",
-        `Partial account-bound swap smoke configuration; missing: ${missingSwapEnv.join(", ")}`
-      );
-    }
-    const rawSlippageEnv = process.env.SMOKE_SWAP_MAX_SLIPPAGE_BPS;
-    const maxSlippageBps = Number(rawSlippageEnv ?? "50");
-    if (rawSlippageEnv !== undefined && (!Number.isInteger(maxSlippageBps) || maxSlippageBps < 1)) {
-      fail("config_error", `SMOKE_SWAP_MAX_SLIPPAGE_BPS must be a positive integer, got: ${rawSlippageEnv}`);
-    }
-    if (swapFromSymbol !== undefined && swapToSymbol !== undefined && swapAmountDisplay !== undefined) {
-      const prepared = await callSmokeTool(client, TOOL_NAMES.actionPrepareSuiActionReview, {
-        intent: {
-          type: "swap",
-          from: { symbol: swapFromSymbol, amount: swapAmountDisplay },
-          to: { symbol: swapToSymbol },
-          maxSlippageBps
-        }
-      });
-      const preparedData = prepared.data as
-        | { reviewSessionId?: string; reviewUrl?: string; plans?: Array<{ id?: string }> }
-        | undefined;
-      const reviewSessionId = preparedData?.reviewSessionId ?? fail("tool_failure", "Swap review session id missing");
-      const reviewUrl = preparedData?.reviewUrl ?? fail("tool_failure", "Swap review URL missing");
-      const reviewToken = new URL(reviewUrl).hash.slice(1);
-      const planId = preparedData?.plans?.[0]?.id ?? fail("tool_failure", "Swap review plan id missing");
-      const stateResponse = await fetch(`${reviewBaseUrl}/api/review/${reviewSessionId}/state`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-say-ur-intent-token": reviewToken,
-          origin: reviewBaseUrl
-        },
-        body: JSON.stringify({ planId, account: smokeAddress })
-      });
-      if (!stateResponse.ok) {
-        fail("tool_failure", `Account-bound swap review state failed: ${stateResponse.status} ${await stateResponse.text()}`);
-      }
-      const stateEnvelope = (await stateResponse.json()) as Record<string, unknown>;
-      const state = (stateEnvelope.state ?? stateEnvelope) as {
-        status?: string;
-        blockedReason?: string;
-        adapterLifecycle?: { completedStages?: string[]; missingStages?: string[] };
-        walletReviewAdapterContract?: unknown;
-        checks?: Array<{ id?: string; status?: string }>;
-      };
-      if (state.status === undefined) {
-        fail("tool_failure", "Account-bound swap review state shape missing status");
-      }
-      accountBoundSwapReview = {
-        status: "ok",
-        reviewStatus: state.status,
-        blockedReason: state.blockedReason,
-        completedStageCount: state.adapterLifecycle?.completedStages?.length ?? 0,
-        missingStages: state.adapterLifecycle?.missingStages ?? [],
-        contractEmitted: state.walletReviewAdapterContract !== undefined,
-        failedCheckIds: (state.checks ?? []).filter((check) => check.status === "fail").map((check) => check.id)
-      };
-      markCompleted("account_bound_swap_review");
-    }
+    const accountBoundSwapReview = await computeSmokeReview({ env: process.env, account: smokeAddress, sessions, computation: reviewDependencies });
+    if (accountBoundSwapReview.status === "ok") markCompleted("account_bound_swap_review");
 
     const wallet = await callSmokeTool(client, TOOL_NAMES.readSummarizeWalletAssets, {});
     const orderbook = await callSmokeTool(client, TOOL_NAMES.readInspectDeepbookOrderbook, {
@@ -429,15 +282,12 @@ async function main(): Promise<void> {
       )}\n`
     );
   } finally {
-    activityStore?.close();
-    if (smokeDbDir) {
-      rmSync(smokeDbDir, { recursive: true, force: true });
-    }
     await Promise.allSettled([
       ...(server ? [server.close()] : []),
       client.close(),
-      ...(reviewServer ? [reviewServer.close()] : [])
     ]);
+    activityStore?.close();
+    if (smokeDbDir) rmSync(smokeDbDir, { recursive: true, force: true });
   }
 }
 
@@ -536,31 +386,11 @@ function smokeEnvPresence(): Record<string, boolean> {
     SMOKE_INSPECT_DIGEST: process.env.SMOKE_INSPECT_DIGEST !== undefined,
     SMOKE_INSPECT_RANDOM_LATEST: process.env.SMOKE_INSPECT_RANDOM_LATEST !== undefined,
     SMOKE_FUNCTION_TARGET: process.env.SMOKE_FUNCTION_TARGET !== undefined,
+    SMOKE_SWAP_PROTOCOL: process.env.SMOKE_SWAP_PROTOCOL !== undefined,
     SMOKE_SWAP_FROM_SYMBOL: process.env.SMOKE_SWAP_FROM_SYMBOL !== undefined,
     SMOKE_SWAP_TO_SYMBOL: process.env.SMOKE_SWAP_TO_SYMBOL !== undefined,
     SMOKE_SWAP_AMOUNT_DISPLAY: process.env.SMOKE_SWAP_AMOUNT_DISPLAY !== undefined
   };
-}
-
-async function postWalletLifecycle(
-  baseUrl: string,
-  walletSessionId: string,
-  token: string,
-  event: "opened" | "connecting" | "result",
-  body: Record<string, unknown>
-): Promise<void> {
-  const response = await fetch(`${baseUrl}/api/wallet/${walletSessionId}/${event}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-say-ur-intent-token": token,
-      origin: baseUrl
-    },
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    fail("tool_failure", `Wallet identity smoke ${event} failed: ${response.status}`);
-  }
 }
 
 function tryWriteSmokeResult(record: Record<string, unknown>): void {
@@ -589,6 +419,7 @@ function smokeErrorCategory(error: unknown): string {
   if (error instanceof SmokeResponseShapeError) {
     return "tool_failure";
   }
+  if (error instanceof SmokeReviewConfigError) return "config_error";
   if (error instanceof SmokeMainnetError) {
     return error.category;
   }

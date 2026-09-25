@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-export const cardKindSchema = z.enum(["account", "receipt", "chart"]);
+export const walletDisplaySchema = z.object({
+  connectionId: z.string().min(1), pairingUri: z.string().startsWith("wc:"), expiresAt: z.string().datetime()
+}).strict();
+export type WalletDisplay = z.infer<typeof walletDisplaySchema>;
+
+
+export const cardKindSchema = z.enum(["account", "receipt", "chart", "connect", "review"]);
 export type CardKind = z.infer<typeof cardKindSchema>;
 export const cardStateSchema = z.object({
   cardId: z.string().min(1), kind: cardKindSchema,
@@ -9,7 +15,7 @@ export const cardStateSchema = z.object({
   createdAt: z.string().datetime(), expiresAt: z.string().datetime(),
   input: z.record(z.string(), z.unknown()),
   data: z.unknown().optional(),
-  reason: z.enum(["completed", "expired", "failed", "server_restarted"]).optional(),
+  reason: z.enum(["completed", "expired", "failed", "server_restarted", "cancelled"]).optional(),
   error: z.string().optional()
 }).strict();
 export type CardState = z.infer<typeof cardStateSchema>;
@@ -36,13 +42,17 @@ export type CardRecord = {
   state: CardState;
   tokenHash: string;
   ownerId: string;
+  scope?: "read" | "connect" | "review" | "review_manage";
+  operationId?: string;
   acceptedInput?: Record<string, unknown>;
   receiptDisplay?: ReceiptDisplay;
 };
 export type CardResponse = {
   snapshot: CardSnapshot;
   receiptDisplay?: ReceiptDisplay;
-  error?: { code: "invalid_card_input" | "card_conflict"; message: string };
+  walletDisplay?: WalletDisplay;
+  displayAttemptId?: string;
+  error?: { code: "invalid_card_input" | "card_conflict" | "wallet_unavailable"; message: string };
 };
 export type CardReference = { cardId: string; permission: string };
 export type CardSubmission = CardReference & { revision: number; input: Record<string, unknown> };
@@ -55,6 +65,8 @@ export type CardPreparation =
 
 export interface CardRecordStore {
   get(id: string): CardRecord | undefined;
+  evaluate(expected: CardRecord, clock: () => Date): { record: CardRecord; evaluatedAt: string };
+  admit(expected: CardRecord, input: Record<string, unknown>, ownerId: string, clock: () => Date): CardRecord | undefined;
   create(record: CardRecord): void;
   replace(expected: CardRecord, next: CardRecord): boolean;
   recover(ownerId: string, now: Date): void;

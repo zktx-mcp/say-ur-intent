@@ -21,7 +21,7 @@ export const chartResultSchema = z.object({ status: z.enum(["ok", "empty_result"
 function labelled(label: string, control: HTMLElement): HTMLLabelElement {
   const node = document.createElement("label"); node.append(document.createTextNode(label), control); return node;
 }
-export const chartRenderer: CardRenderer = {
+export const chartRenderer = {
   title: "DeepBook USDC chart",
   controls(snapshot, submit) {
     const choices = poolsSchema.parse(snapshot.data);
@@ -148,7 +148,7 @@ export const chartRenderer: CardRenderer = {
       resize();
     }, dispose };
   }
-};
+} satisfies CardRenderer;
 
 export function chartSeriesData(candles: ChartCandle[], query: z.infer<typeof chartResultSchema>["query"]) {
   const prices: (CandlestickData<UTCTimestamp> | WhitespaceData<UTCTimestamp>)[] = candles.map(candleToCandlestickData);

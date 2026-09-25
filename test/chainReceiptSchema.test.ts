@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  executionResultSchema,
-  failureReasonSchema
+  transactionExecutionSummarySchema
 } from "../src/core/action/schemas.js";
 import {
   SUI_CHAIN_RECEIPT_REQUIRED_INCLUDE,
@@ -126,17 +125,20 @@ describe("chain receipt schemas", () => {
     expect(suiChainReceiptEvidenceSchema.safeParse(wrongDirection).success).toBe(false);
   });
 
-  it("adds chain receipt failure reasons without accepting unknown reasons", () => {
-    expect(failureReasonSchema.safeParse("chain_receipt_unavailable").success).toBe(true);
-    expect(failureReasonSchema.safeParse("receipt_verification_failed").success).toBe(true);
-    expect(failureReasonSchema.safeParse("chain_execution_failed").success).toBe(true);
-    expect(failureReasonSchema.safeParse("chain_receipt_pending").success).toBe(false);
+  it("does not reinterpret local request or receipt lookup failures as failed chain effects", () => {
+    const failed = { reviewSessionId: "session_1", attemptId: "attempt_1", planId: "plan_1", status: "failure",
+      txDigest: digest, chainReceipt: { ...chainReceiptFixture(), effectsStatus: { success: false, errorMessage: "Move abort" } },
+      failureReason: "chain_execution_failed", recordedAt: "2026-06-26T00:00:00.000Z" };
+    expect(transactionExecutionSummarySchema.safeParse(failed).success).toBe(true);
+    for (const reason of ["wallet_rejected", "network_error", "chain_receipt_unavailable", "receipt_verification_failed"]) {
+      expect(transactionExecutionSummarySchema.safeParse({ ...failed, failureReason: reason }).success).toBe(false);
+    }
   });
 
   it("keeps chain receipts off pending results and binds receipts to final result digests", () => {
     expect(
-      executionResultSchema.safeParse({
-        reviewSessionId: "session_1",
+      transactionExecutionSummarySchema.safeParse({
+        reviewSessionId: "session_1", attemptId: "attempt_1",
         planId: "plan_1",
         status: "signed_pending_result",
         txDigest: digest,
@@ -146,8 +148,8 @@ describe("chain receipt schemas", () => {
     ).toBe(false);
 
     expect(
-      executionResultSchema.safeParse({
-        reviewSessionId: "session_1",
+      transactionExecutionSummarySchema.safeParse({
+        reviewSessionId: "session_1", attemptId: "attempt_1",
         planId: "plan_1",
         status: "success",
         txDigest: digest,
@@ -157,8 +159,8 @@ describe("chain receipt schemas", () => {
     ).toBe(true);
 
     expect(
-      executionResultSchema.safeParse({
-        reviewSessionId: "session_1",
+      transactionExecutionSummarySchema.safeParse({
+        reviewSessionId: "session_1", attemptId: "attempt_1",
         planId: "plan_1",
         status: "success",
         txDigest: digest,
@@ -167,20 +169,20 @@ describe("chain receipt schemas", () => {
     ).toBe(false);
 
     expect(
-      executionResultSchema.safeParse({
-        reviewSessionId: "session_1",
+      transactionExecutionSummarySchema.safeParse({
+        reviewSessionId: "session_1", attemptId: "attempt_1",
         planId: "plan_1",
         status: "failure",
         txDigest: digest,
         failureReason: "chain_execution_failed",
-        chainReceipt: chainReceiptFixture(),
+        chainReceipt: { ...chainReceiptFixture(), effectsStatus: { success: false, errorMessage: "Move abort" } },
         recordedAt: "2026-06-26T00:00:00.000Z"
       }).success
     ).toBe(true);
 
     expect(
-      executionResultSchema.safeParse({
-        reviewSessionId: "session_1",
+      transactionExecutionSummarySchema.safeParse({
+        reviewSessionId: "session_1", attemptId: "attempt_1",
         planId: "plan_1",
         status: "success",
         txDigest: otherDigest,

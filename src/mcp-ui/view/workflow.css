@@ -1,0 +1,6 @@
+.workflow-card { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--space-4, 1rem); }
+.workflow-card form { display: flex; gap: var(--space-3, .75rem); flex-wrap: wrap; margin-block: var(--space-3, .75rem); }
+.workflow-select { max-width: 100%; }
+.workflow-section { margin-block: var(--space-3, .75rem); }
+.workflow-qr { display: block; max-width: 100%; height: auto; margin: auto; }
+.workflow-record { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }

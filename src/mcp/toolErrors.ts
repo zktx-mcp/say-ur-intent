@@ -1,3 +1,6 @@
+import { WalletUnavailableError } from "../core/session/walletConnection.js";
+import { WorkflowConflict } from "../core/session/sqliteWalletWorkflowStore.js";
+import { CardError } from "../core/session/cardSessionStore.js";
 import { ActivityStoreReadError } from "../core/activity/activityStore.js";
 import { TransactionActivityError } from "../core/activity/transactionActivityTypes.js";
 import { LocalSettingsError, PreferencesStoreError } from "../core/preferences/preferencesStore.js";
@@ -54,7 +57,12 @@ export function transactionActivityToolError(error: unknown, logger: ToolErrorLo
   } satisfies ToolError);
 }
 
-export function sessionStoreToolError(error: unknown, logger: ToolErrorLogger) {
+export function sessionDomainToolError(error: unknown) {
+  if (error instanceof WalletUnavailableError) return errorToolResult({ kind: "wallet_unavailable",
+    details: { reason: error.reason, message: error.message } });
+  if (error instanceof WorkflowConflict || error instanceof CardError) {
+    return errorToolResult({ kind: "input_invalid", details: { reason: error.message } });
+  }
   if (error instanceof WaitRequestAbortedError) {
     return errorToolResult({
       kind: "request_aborted",
@@ -69,9 +77,13 @@ export function sessionStoreToolError(error: unknown, logger: ToolErrorLogger) {
     } satisfies ToolError);
   }
 
-  logger.error("session store call failed", {
-    error: error instanceof Error ? error.message : String(error)
-  });
+  return undefined;
+}
+
+export function sessionStoreToolError(error: unknown, logger: ToolErrorLogger) {
+  const known = sessionDomainToolError(error);
+  if (known) return known;
+  logger.error("session store call failed");
 
   return errorToolResult({
     kind: "internal_error",

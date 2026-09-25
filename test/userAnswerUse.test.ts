@@ -24,7 +24,6 @@ import {
   reviewFunnelUserAnswerUse,
   reviewSessionDetailUserAnswerUse,
   reviewStatusUserAnswerUse,
-  walletIdentityUserAnswerUse
 } from "../src/mcp/responseGuidance.js";
 import { TOOL_NAMES } from "../src/mcp/toolNames.js";
 
@@ -151,9 +150,10 @@ const followUpResponseShapes: Record<string, unknown> = {
     intentJson: {},
     stateSnapshots: [],
     transitions: [],
-    execution: {}
+    requests: [], requestCount: 0
   },
   [TOOL_NAMES.sessionGetReviewStatus]: {
+    status: "proposed",
     pollingStatus: "pending",
     statusCategory: "non_terminal",
     reviewState: {}
@@ -168,7 +168,7 @@ const followUpResponseShapes: Record<string, unknown> = {
   [TOOL_NAMES.sessionGetExecutionResult]: {
     executionResult: {}
   },
-  [TOOL_NAMES.sessionWaitWalletIdentity]: {
+  [TOOL_NAMES.sessionWaitWalletConnection]: {
     status: "connected",
     account: "0x1",
     chain: "sui:mainnet",
@@ -237,17 +237,6 @@ describe("userAnswerUse field references", () => {
           diagnosticOnlyField: "pendingReviewSessions.truncated",
           followUpTool: TOOL_NAMES.sessionGetReviewStatus,
           followUpAnswerField: "reviewState"
-        }
-      },
-      {
-        label: "wallet identity open",
-        userAnswerUse: walletIdentityUserAnswerUse({ hasOpenFields: true }),
-        expected: {
-          canAnswer: "local_wallet_identity_capture_status",
-          cannotAnswer: "wallet_login_or_authentication",
-          answerField: "walletUrl",
-          followUpTool: TOOL_NAMES.sessionWaitWalletIdentity,
-          followUpAnswerField: "status"
         }
       },
       {
@@ -575,60 +564,22 @@ describe("userAnswerUse field references", () => {
         name: "interaction status",
         userAnswerUse: interactionStatusUserAnswerUse(),
         sourceShape: {
+          walletAvailability: { status: "available" }, progress: { status: "idle" },
           activeAccount: { status: "none" },
-          pendingWalletIdentitySessions: { limit: 5, items: [], truncated: false },
+          pendingWalletConnections: { limit: 5, items: [], truncated: false },
           pendingReviewSessions: { limit: 5, items: [{ reviewSessionId: "review_1" }], truncated: false }
-        }
-      },
-      {
-        name: "wallet identity creation",
-        userAnswerUse: walletIdentityUserAnswerUse({ hasOpenFields: true }),
-        sourceShape: {
-          walletSessionId: "wallet_1",
-          walletUrl: "http://127.0.0.1:4173/wallet/wallet_1#token",
-          openTarget: "system_browser",
-          accessScope: "same_machine_loopback",
-          status: "pending",
-          expiresAt: "2026-05-11T00:05:00.000Z",
-          lastActivityAt: "2026-05-11T00:00:00.000Z",
-          pollingHint: {}
-        }
-      },
-      {
-        name: "wallet identity connected",
-        userAnswerUse: walletIdentityUserAnswerUse({ hasAccount: true, hasWaitOutcome: true }),
-        sourceShape: {
-          waitOutcome: "status_reached",
-          walletSessionId: "wallet_1",
-          status: "connected",
-          account: "0x1",
-          chain: "sui:mainnet",
-          expiresAt: "2026-05-11T00:05:00.000Z",
-          lastActivityAt: "2026-05-11T00:00:00.000Z",
-          pollingHint: {}
-        }
-      },
-      {
-        name: "wallet identity failed",
-        userAnswerUse: walletIdentityUserAnswerUse({ hasFailure: true }),
-        sourceShape: {
-          walletSessionId: "wallet_1",
-          status: "failed",
-          failureReason: "wallet_provider_error",
-          failureDetail: "redacted",
-          expiresAt: "2026-05-11T00:05:00.000Z",
-          lastActivityAt: "2026-05-11T00:00:00.000Z",
-          pollingHint: {}
         }
       },
       {
         name: "execution polling without result",
         userAnswerUse: executionResultUserAnswerUse(),
         sourceShape: {
+          walletAvailability: { status: "available" }, progress: { status: "idle" },
           reviewSessionId: "review_1",
           status: "blocked",
           statusCategory: "user_action_required",
           lastActivityAt: "2026-05-11T00:00:00.000Z",
+          pollingStatus: "blocked",
           pollingHint: {
             finalStatuses: [],
             userActionRequiredStatuses: [],
@@ -640,11 +591,13 @@ describe("userAnswerUse field references", () => {
         name: "execution polling with result",
         userAnswerUse: executionResultUserAnswerUse({ hasExecutionResult: true, hasWaitOutcome: true }),
         sourceShape: {
+          walletAvailability: { status: "available" }, progress: { status: "idle" },
           waitOutcome: "status_reached",
           reviewSessionId: "review_1",
-          status: "success",
+          status: "ready_for_wallet_review",
           statusCategory: "final",
           lastActivityAt: "2026-05-11T00:00:00.000Z",
+          pollingStatus: "completed",
           pollingHint: {
             finalStatuses: [],
             userActionRequiredStatuses: [],
@@ -657,8 +610,9 @@ describe("userAnswerUse field references", () => {
         name: "review status without review state",
         userAnswerUse: reviewStatusUserAnswerUse(false),
         sourceShape: {
+          walletAvailability: { status: "available" }, progress: { status: "idle" },
           reviewSessionId: "review_1",
-          internalStatus: "proposed",
+          status: "proposed",
           pollingStatus: "pending",
           statusCategory: "non_terminal",
           lastActivityAt: "2026-05-11T00:00:00.000Z"
@@ -668,8 +622,9 @@ describe("userAnswerUse field references", () => {
         name: "review status with review state",
         userAnswerUse: reviewStatusUserAnswerUse(true, true),
         sourceShape: {
+          walletAvailability: { status: "available" }, progress: { status: "idle" },
           reviewSessionId: "review_1",
-          internalStatus: "ready_for_wallet_review",
+          status: "ready_for_wallet_review",
           pollingStatus: "awaiting_signature",
           statusCategory: "non_terminal",
           reviewState: {
@@ -690,7 +645,7 @@ describe("userAnswerUse field references", () => {
         name: "review activity list",
         userAnswerUse: reviewActivityListUserAnswerUse(),
         sourceShape: {
-          activities: [{ reviewSessionId: "review_1", currentStatus: "ready_for_wallet_review", updatedAt: "2026-05-11T00:00:00.000Z" }],
+          activities: [{ reviewSessionId: "review_1", reviewStatus: "ready_for_wallet_review", updatedAt: "2026-05-11T00:00:00.000Z" }],
           dataScope: {},
           accountSource: "active_account_context",
           lowSampleWarning: false,
@@ -712,14 +667,14 @@ describe("userAnswerUse field references", () => {
       },
       {
         name: "review session detail",
-        userAnswerUse: reviewSessionDetailUserAnswerUse(true),
+        userAnswerUse: reviewSessionDetailUserAnswerUse({ hasCurrentRequest: true, hasCurrentExecution: true, hasHistoricalExecution: true }),
         sourceShape: {
           session: { reviewSessionId: "review_1" },
           planJson: {},
           intentJson: {},
           stateSnapshots: [],
           transitions: [],
-          execution: { resultJson: {} },
+          request: { execution: {} }, requestCount: 1, requests: [{ execution: {} }],
           dataScope: {},
           accountSource: "active_account_context",
           lowSampleWarning: false,
@@ -940,12 +895,12 @@ describe("userAnswerUse field references", () => {
   });
 
   it("omits optional answer fields from response-specific guidance when those fields are absent", () => {
-    const reviewDetail = reviewSessionDetailUserAnswerUse(false);
+    const reviewDetail = reviewSessionDetailUserAnswerUse({ hasCurrentRequest: false, hasCurrentExecution: false, hasHistoricalExecution: false });
     expect(reviewDetail.canAnswer).not.toEqual(expect.arrayContaining(["stored_review_execution_result"]));
     expect(reviewDetail.cannotAnswer).toEqual(
-      expect.arrayContaining(["stored_review_execution_result_without_execution_field"])
+      expect.arrayContaining(["chain_execution_result_without_execution_field"])
     );
-    expect(reviewDetail.answerFields).not.toEqual(expect.arrayContaining(["execution", "execution.resultJson"]));
+    expect(reviewDetail.answerFields).not.toEqual(expect.arrayContaining(["request.execution", "requests[].execution"]));
 
     const transaction = inspectSuiTransactionUserAnswerUse({
       hasSender: false,

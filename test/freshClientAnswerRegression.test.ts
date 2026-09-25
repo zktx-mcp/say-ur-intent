@@ -1,3 +1,7 @@
+import { walletWorkflowFixture } from "./fixtures/walletWorkflow.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerActionTools } from "../src/mcp/tools/action/prepareSuiActionReview.js";
+import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { mainnetCoins } from "@mysten/deepbook-v3";
@@ -312,24 +316,14 @@ function createFreshClientReviewPlan(id: string): ActionPlan {
   };
 }
 
-async function createReadyFreshClientReviewSession(sessions: InMemorySessionStore) {
-  const { session: walletSession } = await sessions.createWalletIdentitySession(
-    new Date("2026-05-11T00:00:00.000Z")
-  );
-  await sessions.recordWalletIdentityOpened(walletSession.id, new Date("2026-05-11T00:00:01.000Z"));
-  await sessions.recordWalletIdentityConnecting(walletSession.id, new Date("2026-05-11T00:00:02.000Z"));
-  await sessions.recordWalletIdentityResult(
-    walletSession.id,
-    { status: "connected", account: accountAddress, chain: "sui:mainnet" },
-    new Date("2026-05-11T00:00:03.000Z")
-  );
+async function createReadyFreshClientReviewSession(sessions: InMemorySessionStore, activityStore: InMemoryActivityStore) {
+  await activityStore.setActiveAccount(accountAddress, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
 
   const reviewPlan = createFreshClientReviewPlan("plan_fresh_client_ready");
   const { session: reviewSession } = await sessions.createReviewSession(
     [reviewPlan],
     new Date("2026-05-11T00:01:00.000Z")
   );
-  await sessions.recordReviewPageOpened(reviewSession.id, new Date("2026-05-11T00:01:01.000Z"));
   await sessions.recordWalletConnected(reviewSession.id, accountAddress, new Date("2026-05-11T00:01:02.000Z"));
   const readySession = await sessions.recordReviewState(
     reviewSession.id,
@@ -474,7 +468,7 @@ const scenarioInvokers: Record<string, ScenarioInvoker> = {
   deepbook_inventory_discovery_not_detail_inventory: async (scenario) => {
     const { client, server, activityStore } = await connectFreshClient();
     try {
-      await activityStore.setActiveAccount(accountAddress, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
+      await activityStore.setActiveAccount(accountAddress, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
       return textPayload(
         await client.callTool({
           name: scenario.tool,
@@ -486,44 +480,24 @@ const scenarioInvokers: Record<string, ScenarioInvoker> = {
     }
   },
   deepbook_swap_review_signing_blocked: async (scenario) => {
-    const { client, server, activityStore } = await connectFreshClient();
+    const f = await walletWorkflowFixture();
+    const server = new McpServer({ name: "fresh-review", version: "1" });
+    registerActionTools(server, { sessions: f.sessions, activityStore: f.activity, cards: { store: f.cards }, logger });
+    const client = new Client({ name: "fresh-review-client", version: "1" }, { capabilities: { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } } });
+    const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(b); await client.connect(a);
     try {
-      // A swap review is account-bound: prepare refuses without a connected
-      // wallet account, so the connect-first flow sets one before preparing.
-      await activityStore.setActiveAccount(accountAddress, "wallet_identity", new Date("2026-05-11T00:00:00.000Z"));
-      return textPayload(
-        await client.callTool({
-          name: scenario.tool,
-          arguments: {
-            intent: {
-              type: "swap",
-              from: { symbol: "SUI", amount: "1" },
-              to: { symbol: "USDC" },
-              maxSlippageBps: 50,
-              protocol: "deep"
-            }
-          }
-        })
-      );
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
+      await f.run(() => f.activity.setActiveAccount(f.account, "wallet_connection"));
+      return textPayload(await f.run(() => client.callTool({ name: scenario.tool, arguments: {
+        intent: { type: "swap", from: { symbol: "SUI", amount: "1" }, to: { symbol: "USDC" }, maxSlippageBps: 50, protocol: "deep" }
+      } })));
+    } finally { await client.close(); await server.close(); f.close(); }
   },
   execution_wait_user_action_required_not_final: async (scenario) => {
-    const { client, server, sessions } = await connectFreshClient({
+    const { client, server, sessions, activityStore } = await connectFreshClient({
       sessionTtlMs: DURABLE_SESSION_TTL_MS
     });
     try {
-      const { session: walletSession } = await sessions.createWalletIdentitySession(
-        new Date("2026-05-11T00:00:00.000Z")
-      );
-      await sessions.recordWalletIdentityOpened(walletSession.id, new Date("2026-05-11T00:00:01.000Z"));
-      await sessions.recordWalletIdentityConnecting(walletSession.id, new Date("2026-05-11T00:00:02.000Z"));
-      await sessions.recordWalletIdentityResult(
-        walletSession.id,
-        { status: "connected", account: accountAddress, chain: "sui:mainnet" },
-        new Date("2026-05-11T00:00:03.000Z")
-      );
+      await activityStore.setActiveAccount(accountAddress, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
 
       const reviewPlan: ActionPlan = {
         id: "plan_fresh_client_wait",
@@ -545,7 +519,6 @@ const scenarioInvokers: Record<string, ScenarioInvoker> = {
         [reviewPlan],
         new Date("2026-05-11T00:01:00.000Z")
       );
-      await sessions.recordReviewPageOpened(reviewSession.id, new Date("2026-05-11T00:01:01.000Z"));
       await sessions.recordWalletConnected(reviewSession.id, accountAddress, new Date("2026-05-11T00:01:02.000Z"));
       await sessions.recordReviewState(
         reviewSession.id,
@@ -572,11 +545,11 @@ const scenarioInvokers: Record<string, ScenarioInvoker> = {
     }
   },
   review_status_ready_not_signing_or_safety: async (scenario) => {
-    const { client, server, sessions } = await connectFreshClient({
+    const { client, server, sessions, activityStore } = await connectFreshClient({
       sessionTtlMs: DURABLE_SESSION_TTL_MS
     });
     try {
-      const { reviewSession } = await createReadyFreshClientReviewSession(sessions);
+      const { reviewSession } = await createReadyFreshClientReviewSession(sessions, activityStore);
       return textPayload(
         await client.callTool({
           name: scenario.tool,
@@ -588,11 +561,11 @@ const scenarioInvokers: Record<string, ScenarioInvoker> = {
     }
   },
   execution_result_absent_not_execution_proof: async (scenario) => {
-    const { client, server, sessions } = await connectFreshClient({
+    const { client, server, sessions, activityStore } = await connectFreshClient({
       sessionTtlMs: DURABLE_SESSION_TTL_MS
     });
     try {
-      const { reviewSession } = await createReadyFreshClientReviewSession(sessions);
+      const { reviewSession } = await createReadyFreshClientReviewSession(sessions, activityStore);
       return textPayload(
         await client.callTool({
           name: scenario.tool,
@@ -631,19 +604,6 @@ const scenarioInvokers: Record<string, ScenarioInvoker> = {
       await Promise.allSettled([client.close(), server.close()]);
     }
   },
-  wallet_identity_capture_not_login_or_signing: async (scenario) => {
-    const { client, server } = await connectFreshClient();
-    try {
-      return textPayload(
-        await client.callTool({
-          name: scenario.tool,
-          arguments: {}
-        })
-      );
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
-  }
 };
 
 describe("fresh-client answer regression", () => {

@@ -35,26 +35,6 @@ ${options.body}
 </html>`;
 }
 
-export function reviewHtml(sessionId: string): string {
-  return pageDocument({
-    title: "Say Ur Intent Review",
-    css: "review.css",
-    js: "review.js",
-    ui: true,
-    body: `    <div id="review-app" data-review-session-id="${escapeHtml(sessionId)}"></div>`
-  });
-}
-
-export function connectHtml(sessionId: string): string {
-  return pageDocument({
-    title: "Say Ur Intent Connect",
-    css: "connect.css",
-    js: "connect.js",
-    ui: true,
-    body: `    <div id="connect-app" data-wallet-session-id="${escapeHtml(sessionId)}"></div>`
-  });
-}
-
 export function settingsHtml(sessionId: string): string {
   return pageDocument({
     title: "Say Ur Intent Settings",

@@ -14,6 +14,7 @@ async function main(): Promise<void> {
   const bootConfig = loadBootConfig();
   const control = await loadControlIdentity(bootConfig.activityDatabasePath, {
     network: bootConfig.network, chainIdentifier: bootConfig.expectedChainIdentifier,
+    walletConnectProjectId: process.env.SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID ?? null,
     grpcOverride: process.env.SUI_GRPC_URL ?? null, graphqlOverride: process.env.SUI_GRAPHQL_URL ?? null
   });
   let shared: ReviewServerLifecycle | undefined;
@@ -25,7 +26,7 @@ async function main(): Promise<void> {
   try {
     shared = await startOrDeferReviewServer((port) => startSharedServer({
       port, control,
-      createApplication: () => createRuntimeApplication(bootConfig, logger),
+      createApplication: (instanceId) => createRuntimeApplication(bootConfig, logger, instanceId),
       onError: (error) => logger.error("shared server request failed", { error: error instanceof Error ? error.message : "unknown error" })
     }), bootConfig.reviewPort, {
       probeIdentity: async (port) => {
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
     const stdio = new StdioServerTransport();
     bridge = await startSharedStdio({ stdio, port: bootConfig.reviewPort, control,
       onError: (error) => logger.error("MCP transport failed", { error: error.message }) });
-    const closeForClient = () => { void close().catch((error: unknown) => logger.error("shutdown failed", { error: String(error) })); };
+    const closeForClient = () => { void close().catch(() => logger.error("shutdown failed", { stage: "runtime_close" })).finally(() => process.exit(0)); };
     const protocolClosed = stdio.onclose;
     stdio.onclose = () => { protocolClosed?.(); closeForClient(); };
     process.stdin.once("end", closeForClient);

@@ -39,7 +39,6 @@ export const humanReadableReviewEvidenceSchema = z.object({
   actionKind: z.string().min(1).max(120),
   network: z.literal("sui:mainnet"),
   fields: z.array(z.enum(WALLET_REVIEW_REQUIRED_HUMAN_FIELDS)).min(WALLET_REVIEW_REQUIRED_HUMAN_FIELDS.length),
-  boundToCommitment: suiTransactionDigestSchema,
   source: z.literal("review_model_or_adapter_equivalent"),
   purpose: z.literal("human_review_before_wallet_authorization"),
   review: humanReadableReviewSummarySchema,
@@ -59,13 +58,6 @@ export const humanReadableReviewEvidenceSchema = z.object({
       code: "custom",
       path: ["fields"],
       message: "Human-readable review fields must include every required review field"
-    });
-  }
-  if (value.boundToCommitment !== value.transactionDigest) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["boundToCommitment"],
-      message: "boundToCommitment must equal transactionDigest"
     });
   }
   if (
@@ -124,7 +116,6 @@ export function createHumanReadableReviewEvidence(input: {
       actionKind: input.actionKind,
       network: "sui:mainnet",
       fields: [...WALLET_REVIEW_REQUIRED_HUMAN_FIELDS],
-      boundToCommitment: input.transactionMaterialDigest.transactionDigest,
       source: "review_model_or_adapter_equivalent",
       purpose: "human_review_before_wallet_authorization",
       review: input.review,
@@ -154,8 +145,7 @@ export function verifyHumanReadableReviewEvidence(input: {
     evidence.planId !== input.transactionMaterial.planId ||
     evidence.account !== input.transactionMaterial.account ||
     evidence.expiresAt !== input.transactionMaterial.expiresAt ||
-    evidence.transactionDigest !== input.transactionMaterialDigest.transactionDigest ||
-    evidence.boundToCommitment !== input.transactionMaterialDigest.transactionDigest
+    evidence.transactionDigest !== input.transactionMaterialDigest.transactionDigest
   ) {
     throw new Error("human-readable review evidence must match material and digest identity");
   }
@@ -185,7 +175,7 @@ export function verifyHumanReadableReviewEvidence(input: {
 
   adapterHumanReadableReviewSchema.parse({
     fields: evidence.fields,
-    boundToCommitment: evidence.boundToCommitment,
+    transactionDigest: evidence.transactionDigest,
     source: evidence.source,
     purpose: evidence.purpose
   });

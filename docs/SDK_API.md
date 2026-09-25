@@ -8,15 +8,15 @@ This document records the pinned SDK APIs used by the current runtime. The sourc
 - `@modelcontextprotocol/sdk`: `1.29.0`
 - `@mysten/sui`: `2.17.0`
 - `@mysten/deepbook-v3`: `1.3.6`
-- `@mysten/dapp-kit-core`: `1.3.2`
 - `@flowx-finance/sdk`: `2.1.0`
-- `@stelis/agent-q-provider-sui`: `0.2.2`
+- `@walletconnect/sign-client`, `@walletconnect/types`, `@walletconnect/utils`: `2.23.10`
+- `qrcode`: `1.5.4`
 - `@zktx.io/ptb-model`: `0.5.0`
 - `mermaid`: `11.12.0`
 
 ## MCP Apps
 
-`@modelcontextprotocol/ext-apps` is pinned to `1.7.5`, with MCP SDK `1.29.0`. The server uses `registerAppTool`, `registerAppResource` and `getUiCapability`; the view uses `App` for host-mediated calls and teardown. Account, Receipt and Chart are separate self-contained resources, so an account card does not load the PTB or chart renderer. The server keeps app-only permissions out of model content.
+`@modelcontextprotocol/ext-apps` is pinned to `1.7.5`, with MCP SDK `1.29.0`. The server uses `registerAppTool`, `registerAppResource` and `getUiCapability`; the view uses `App` for host-mediated calls and teardown. Account, Receipt, Chart, Connect and Review are separate self-contained resources, so an account card does not load the PTB or chart renderer. The server keeps app-only permissions out of model content.
 
 The shared server uses the pinned MCP SDK Streamable HTTP transport behind authenticated loopback access. Stdio clients forward tool, resource and prompt requests with their original client identity and capabilities. Ordinary MCP input schemas remain unchanged by the transport; the 64 KiB card/HTTP input limit includes the card call envelope.
 
@@ -115,7 +115,7 @@ type BaseQuantityOut = {
 };
 ```
 
-The pinned SDK accepts `number | bigint` quote inputs. Its high-level quote query objects include an input echo field (`baseQuantity` or `quoteQuantity`) produced with `Number(inputRaw)`, plus display quote fields (`baseOut`, `quoteOut`, and `deepRequired`) produced after scalar division and `Number(...)` conversion. Say Ur Intent does not use those high-level query objects as the canonical quote source for adapter preparation. It uses the pinned SDK transaction builder quote functions, requests `client.core.simulateTransaction` command results, and parses raw `u64` return values. The simulated public Move entrypoint is `pool::get_quote_quantity_out` for base-to-quote reads and `pool::get_base_quantity_out` for quote-to-base reads; both delegate to `pool::get_quantity_out`, whose official Move source defines the return order as `base_quantity_out`, `quote_quantity_out`, and `deep_quantity_required`. Public `quote` fields are exact decimal display strings derived from those raw values through pinned DeepBook scalars; `rawQuote` carries the raw evidence. `read.quote_deepbook_action` marks the input as raw `u64`, while `read.quote_deepbook_display_amount` marks the input as a source display amount converted to raw `u64`. Raw quote evidence is not an effective price, price-impact calculation, quote-vs-mid slippage calculation, venue comparison, best-route claim, fiat cash-out estimate, external market lookup, USDC/USD peg assumption, P&L, cost basis, final min-out, signing data, or signing readiness. The account-bound DeepBook review may derive a fresh raw quote policy from this evidence and use that derived policy for local unsigned transaction material build, while keeping bytes internal until the local review page requests the digest-gated handoff for a `ready_for_wallet_review` session. MCP and ordinary review-status outputs still do not contain transaction bytes, signing data, or signing readiness. When the digest commitment stage completes, it is derived from the locally stored transaction bytes through pinned SDK `Transaction.from(...).getDigest()` and remains an internal binding, not a public signing artifact.
+The pinned SDK accepts `number | bigint` quote inputs. Its high-level quote query objects include an input echo field (`baseQuantity` or `quoteQuantity`) produced with `Number(inputRaw)`, plus display quote fields (`baseOut`, `quoteOut`, and `deepRequired`) produced after scalar division and `Number(...)` conversion. Say Ur Intent does not use those high-level query objects as the canonical quote source for adapter preparation. It uses the pinned SDK transaction builder quote functions, requests `client.core.simulateTransaction` command results, and parses raw `u64` return values. The simulated public Move entrypoint is `pool::get_quote_quantity_out` for base-to-quote reads and `pool::get_base_quantity_out` for quote-to-base reads; both delegate to `pool::get_quantity_out`, whose official Move source defines the return order as `base_quantity_out`, `quote_quantity_out`, and `deep_quantity_required`. Public `quote` fields are exact decimal display strings derived from those raw values through pinned DeepBook scalars; `rawQuote` carries the raw evidence. `read.quote_deepbook_action` marks the input as raw `u64`, while `read.quote_deepbook_display_amount` marks the input as a source display amount converted to raw `u64`. Raw quote evidence is not an effective price, price-impact calculation, quote-vs-mid slippage calculation, venue comparison, best-route claim, fiat cash-out estimate, external market lookup, USDC/USD peg assumption, P&L, cost basis, final min-out, signing data, or signing readiness. The account-bound DeepBook review may derive a fresh raw quote policy from this evidence and use that derived policy for local unsigned transaction material build, while keeping bytes private to the backend until a scoped user selection admits a WalletConnect request for that reviewed revision. MCP and ordinary review-status outputs still do not contain transaction bytes, signing data, or signing readiness. When the digest commitment stage completes, it is derived from the locally stored transaction bytes through pinned SDK `Transaction.from(...).getDigest()` and remains an internal binding, not a public signing artifact.
 
 ## Runtime Boundary
 
@@ -126,3 +126,29 @@ The pinned SDK accepts `number | bigint` quote inputs. Its high-level quote quer
 - The gRPC endpoint is verified during runtime startup. The GraphQL endpoint is verified when saved, imported, or first used by Sui activity tools.
 - `fetchedAt` fields are ISO 8601 UTC strings produced by `new Date().toISOString()`.
 - Read-only tools may inspect mainnet state but must not create signable transaction material.
+
+## WalletConnect and signature verification
+
+The owner initializes pinned SignClient with its public `storage` injection,
+private session persistence, silent SDK logging and telemetry disabled. It uses
+`connect`, `session.get`, `session_update/session_delete/session_expire` events,
+and `request` on chain `sui:mainnet`, method `sui_signTransaction`.
+Pinned `session_event` does not update approved namespaces itself: account/chain
+selection events explicitly invalidate stored review/submission authority even
+when the approved account set stays unchanged. Requests carry
+`{ transaction: <stored BCS base64>, address }`; responses require
+`{ transactionBytes: <BCS base64>, signature }`. No SDK source patch or automatic
+sign-and-execute fallback is used.
+
+The backend reconstructs the returned transaction with `Transaction.from`,
+recomputes its digest and calls pinned `verifyTransactionSignature` with the
+admitted address and verified Sui client (including schemes requiring online
+verification). Submission uses `client.core.executeTransaction` exactly once
+per admitted attempt. `waitForTransaction` supplies separately verified chain
+facts; its absence/timeout does not prove execution failure.
+
+SDK session storage persists only the pinned connection namespaces. History,
+requests and unknown queue keys are volatile. The SDK has no supported complete
+in-process disposal; its owner process lifetime bounds callbacks and storage.
+Actual target-wallet acceptance of the serialization is an integration
+requirement, not something inferred from these SDK APIs or a rejected request.

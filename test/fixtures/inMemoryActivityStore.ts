@@ -1,3 +1,4 @@
+import { TRANSACTION_REQUEST_STATUSES, type TransactionRequest } from "../../src/core/session/transactionRequest.js";
 import { parseSuiAddress } from "../../src/core/suiAddress.js";
 import { assertNoForbiddenMcpFields } from "../../src/core/action/forbiddenFields.js";
 import { actionPlanSchema } from "../../src/core/action/schemas.js";
@@ -33,8 +34,6 @@ import type {
   ReviewSessionEvidenceInput,
   ReviewSessionDetailInput,
   ReviewSessionDetailResult,
-  ReviewExecutionInput,
-  ReviewExecutionRecord,
   ReviewStateSnapshotInput,
   ReviewTransitionInput
 } from "../../src/core/activity/activityStore.js";
@@ -48,12 +47,11 @@ import {
   compareExternalActivityTransactionsDescending,
   transactionTimestampInHalfOpenRange
 } from "../../src/core/activity/externalActivityTransactionStream.js";
-import type { ActionPlan, ExecutionResult, InternalSessionStatus, ReviewState } from "../../src/core/action/types.js";
+import type { ActionPlan, InternalSessionStatus, ReviewState } from "../../src/core/action/types.js";
 
 export class InMemoryActivityStore implements ActivityStore {
   private readonly accountsByAddress = new Map<string, AccountRecord>();
-  private readonly reviewExecutions = new Map<string, ReviewExecutionRecord>();
-  private readonly reviewExecutionResults = new Map<string, ExecutionResult>();
+  readonly requests = new Map<string, TransactionRequest>();
   private nextAccountId = 1;
   private activeAccount: ActiveAccountRecord | undefined;
   readonly reviewSessions: ReviewSessionEvidenceInput[] = [];
@@ -103,7 +101,7 @@ export class InMemoryActivityStore implements ActivityStore {
 
   async setActiveAccount(
     address: string,
-    source: "wallet_identity",
+    source: "wallet_connection",
     now = new Date()
   ): Promise<ActiveAccountRecord> {
     const account = await this.upsertAccount(address, source, now);
@@ -184,54 +182,14 @@ export class InMemoryActivityStore implements ActivityStore {
     }
   }
 
-  async recordReviewExecution(input: ReviewExecutionInput): Promise<ReviewExecutionRecord> {
-    assertNoForbiddenMcpFields(input.result);
-    const account = this.upsertAccountAt(input.account, "review_execution", input.recordedAt);
-    this.assertReviewSessionAccount(input.reviewSessionId, account.address);
-    const existing = this.reviewExecutions.get(input.reviewSessionId);
-    if (existing) {
-      if (isSameReviewExecution(existing, account.id, input)) {
-        return { ...existing };
-      }
-      if (!canAdvanceReviewExecution(existing, account.id, input)) {
-        throw new Error(`Conflicting review execution evidence: ${input.reviewSessionId}`);
-      }
-    }
-    const record: ReviewExecutionRecord = {
-      reviewSessionId: input.reviewSessionId,
-      planId: input.planId,
-      accountId: account.id,
-      account: account.address,
-      status: input.status,
-      txDigest: input.txDigest,
-      explorerUrl: input.explorerUrl,
-      failureReason: input.failureReason,
-      recordedAt: existing?.recordedAt ?? input.recordedAt,
-      updatedAt: input.recordedAt
-    };
-    this.reviewExecutions.set(input.reviewSessionId, record);
-    this.reviewExecutionResults.set(input.reviewSessionId, input.result);
-    const session = this.reviewSessionState.get(input.reviewSessionId);
-    if (session) {
-      session.currentStatus = input.status;
-      session.updatedAt = input.recordedAt;
-      session.account = account.address;
-    }
-    this.reviewTransitions.push({
-      reviewSessionId: input.reviewSessionId,
-      event: "result_recorded",
-      fromStatus: input.fromStatus,
-      toStatus: input.status,
-      account: account.address,
-      reason: input.failureReason,
-      transitionedAt: input.recordedAt
-    });
-    return { ...record };
+  // Snapshot fixture only: real request admission is exercised against SQLite.
+  setRequest(request: TransactionRequest): void {
+    this.assertReviewSessionAccount(request.reviewSessionId, request.account);
+    this.requests.set(request.attemptId, structuredClone(request));
   }
-
-  async getReviewExecution(reviewSessionId: string): Promise<ReviewExecutionRecord | undefined> {
-    const record = this.reviewExecutions.get(reviewSessionId);
-    return record ? { ...record } : undefined;
+  private currentRequest(id: string): TransactionRequest | undefined {
+    return [...this.requests.values()].filter((request) => request.reviewSessionId === id)
+      .sort((a, b) => b.reviewRevision - a.reviewRevision)[0];
   }
 
   async listReviewActivity(filter: ReviewActivityListFilter): Promise<ReviewActivityListResult> {
@@ -242,7 +200,9 @@ export class InMemoryActivityStore implements ActivityStore {
       return listResult(scope, from, to, [], false, 0);
     }
     const rows = this.scopedRows(scope, from, to)
-      .filter((row) => !filter.status || row.currentStatus === filter.status)
+      .filter((row) => (!filter.reviewStatus || row.reviewStatus === filter.reviewStatus) &&
+        (!filter.requestStatus || row.requestStatus === filter.requestStatus) &&
+        (!filter.executionStatus || row.executionStatus === filter.executionStatus))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.reviewSessionId.localeCompare(a.reviewSessionId));
     return listResult(scope, from, to, rows.slice(0, limit), rows.length > limit, rows.length);
   }
@@ -256,27 +216,29 @@ export class InMemoryActivityStore implements ActivityStore {
     const rows = this.scopedRows(scope, from, to);
     const rowIds = new Set(rows.map((row) => row.reviewSessionId));
     const transitions = this.reviewTransitions.filter((transition) => rowIds.has(transition.reviewSessionId));
-    const currentStatusCounts = statusCount(rows.map((row) => row.currentStatus));
+    const reviewStatusCounts = statusCount(rows.map((row) => row.reviewStatus));
+    const requests = rows.flatMap((row) => this.currentRequest(row.reviewSessionId) ?? []);
+    const requestStatusCounts = TRANSACTION_REQUEST_STATUSES.map((requestStatus) => ({ requestStatus, count: requests.filter((r) => r.requestStatus === requestStatus).length }));
     const summary: ReviewFunnelSummary = {
       total: rows.length,
       opened: distinctTransitionCount(transitions, (transition) => transition.event === "opened"),
       walletConnected: distinctTransitionCount(transitions, (transition) => transition.event === "wallet_connected"),
       stateComputed: distinctTransitionCount(transitions, (transition) => transition.event === "state_computed"),
-      currentStatusCounts,
+      reviewStatusCounts, requestStatusCounts,
+      executionStatusCounts: { success: requests.filter((r) => r.execution?.status === "success").length,
+        failure: requests.filter((r) => r.execution?.status === "failure").length },
+      withoutRequest: rows.length - requests.length,
+      withoutExecutionResult: rows.length - requests.filter((r) => r.execution).length,
       everReachedReviewStateCounts: {
         ready_for_wallet_review: distinctTransitionCount(transitions, (transition) => transition.toStatus === "ready_for_wallet_review"),
         blocked: distinctTransitionCount(transitions, (transition) => transition.toStatus === "blocked"),
         refresh_required: distinctTransitionCount(transitions, (transition) => transition.toStatus === "refresh_required")
       },
-      signedPending: distinctTransitionCount(
-        transitions,
-        (transition) => transition.event === "result_recorded" && transition.toStatus === "signed_pending_result"
-      ),
-      success: currentStatusCounts.success,
-      failure: currentStatusCounts.failure,
-      expiredBeforeResult: rows.filter((row) => row.currentStatus === "expired" && !this.reviewExecutions.has(row.reviewSessionId)).length,
-      avgCreatedToSignedSeconds: averageSeconds(rows, transitions, "created"),
-      avgOpenedToSignedSeconds: averageSeconds(rows, transitions, "opened")
+      everAwaitedChainResult: distinctTransitionCount(transitions, (transition) => transition.toStatus === "awaiting_chain_result"),
+      expiredWithoutExecutionResult: rows.filter((row) => row.reviewStatus === "expired" &&
+        ![...this.requests.values()].some((r) => r.reviewSessionId === row.reviewSessionId && r.execution)).length,
+      avgCreatedToSignatureVerifiedSeconds: averageSeconds(rows, transitions, "created"),
+      avgOpenedToSignatureVerifiedSeconds: averageSeconds(rows, transitions, "opened")
     };
     return funnelResult(scope, from, to, summary, rows.length);
   }
@@ -306,7 +268,8 @@ export class InMemoryActivityStore implements ActivityStore {
       )
       .sort((a, b) => a.transitionedAt.localeCompare(b.transitionedAt))
       .slice(0, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS + 1);
-    const execution = this.reviewExecutions.get(input.reviewSessionId);
+    const requests = [...this.requests.values()].filter((r) => r.reviewSessionId === input.reviewSessionId);
+    const request = this.currentRequest(input.reviewSessionId);
     const recordCount = this.scopedRows(scope).length;
     return {
       dataScope: { account: scope.account, recordCount },
@@ -319,7 +282,8 @@ export class InMemoryActivityStore implements ActivityStore {
         actionKind: row.actionKind,
         adapterId: row.adapterId,
         protocol: row.protocol,
-        currentStatus: row.currentStatus,
+        reviewStatus: row.reviewStatus,
+        ...(request ? { currentAttemptId: request.attemptId } : {}),
         account: row.account,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt
@@ -328,6 +292,7 @@ export class InMemoryActivityStore implements ActivityStore {
       intentJson: (state.input.plan.adapterData as { requestedIntent?: unknown }).requestedIntent,
       stateSnapshots: snapshots.slice(0, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS).map((snapshot, index) => ({
         id: index + 1,
+        reviewRevision: snapshot.reviewRevision,
         planId: snapshot.state.planId,
         account: snapshot.state.account,
         status: snapshot.state.status,
@@ -340,6 +305,7 @@ export class InMemoryActivityStore implements ActivityStore {
       transitions: transitions.slice(0, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS).map((transition, index) => ({
         id: index + 1,
         event: transition.event,
+        domain: "review",
         fromStatus: transition.fromStatus,
         toStatus: transition.toStatus,
         isNoOp: transition.fromStatus !== undefined && transition.fromStatus === transition.toStatus,
@@ -347,14 +313,11 @@ export class InMemoryActivityStore implements ActivityStore {
         reason: transition.reason,
         transitionedAt: transition.transitionedAt
       })),
-      execution: execution
-        ? {
-            ...execution,
-            resultJson: this.reviewExecutionResults.get(input.reviewSessionId) ?? inputMissingExecutionResult(execution)
-          }
-        : undefined,
+      ...(request ? { request } : {}), requestCount: requests.length,
+      requests: requests.slice(0, REVIEW_ACTIVITY_DETAIL_MAX_ITEMS),
       truncated: {
         activities: false,
+        requests: requests.length > REVIEW_ACTIVITY_DETAIL_MAX_ITEMS,
         snapshots: snapshots.length > REVIEW_ACTIVITY_DETAIL_MAX_ITEMS,
         transitions: transitions.length > REVIEW_ACTIVITY_DETAIL_MAX_ITEMS
       }
@@ -563,7 +526,7 @@ export class InMemoryActivityStore implements ActivityStore {
     }
     if (!this.activeAccount) {
       throw new ActivityStoreReadError("active_account_not_set", "Active account read context is not set", {
-        action: "connect_wallet_identity"
+        action: "connect_wallet_connection"
       });
     }
     return {
@@ -586,19 +549,20 @@ export class InMemoryActivityStore implements ActivityStore {
       .filter(([, value]) => !from || value.input.createdAt >= from)
       .filter(([, value]) => !to || value.input.createdAt <= to)
       .map(([reviewSessionId, value]) => {
-        const execution = this.reviewExecutions.get(reviewSessionId);
+        const request = this.currentRequest(reviewSessionId);
         return {
           reviewSessionId,
           planId: value.input.plan.id,
           actionKind: value.input.plan.actionKind,
           adapterId: value.input.plan.adapterId,
           protocol: value.input.plan.protocol,
-          currentStatus: value.currentStatus as InternalSessionStatus,
+          reviewStatus: value.currentStatus as InternalSessionStatus,
           account: scope.account,
           createdAt: value.input.createdAt,
           updatedAt: value.updatedAt,
-          executionStatus: execution?.status,
-          txDigest: execution?.txDigest,
+          ...(request ? { currentAttemptId: request.attemptId, requestStatus: request.requestStatus,
+            reviewRevision: request.reviewRevision, transactionDigest: request.transactionDigest,
+            ...(request.execution ? { executionStatus: request.execution.status } : {}) } : {}),
           snapshotCount: this.reviewStateSnapshots.filter((snapshot) => snapshot.reviewSessionId === reviewSessionId).length,
           transitionCount: this.reviewTransitions.filter((transition) => transition.reviewSessionId === reviewSessionId).length
         };
@@ -745,18 +709,18 @@ function emptySummary(): ReviewFunnelSummary {
     opened: 0,
     walletConnected: 0,
     stateComputed: 0,
-    currentStatusCounts: statusCount([]),
+    reviewStatusCounts: statusCount([]),
+    requestStatusCounts: TRANSACTION_REQUEST_STATUSES.map((requestStatus) => ({ requestStatus, count: 0 })),
+    executionStatusCounts: { success: 0, failure: 0 }, withoutRequest: 0, withoutExecutionResult: 0,
     everReachedReviewStateCounts: {
       ready_for_wallet_review: 0,
       blocked: 0,
       refresh_required: 0
     },
-    signedPending: 0,
-    success: 0,
-    failure: 0,
-    expiredBeforeResult: 0,
-    avgCreatedToSignedSeconds: null,
-    avgOpenedToSignedSeconds: null
+    everAwaitedChainResult: 0,
+    expiredWithoutExecutionResult: 0,
+    avgCreatedToSignatureVerifiedSeconds: null,
+    avgOpenedToSignatureVerifiedSeconds: null
   };
 }
 
@@ -768,9 +732,6 @@ function statusCount(statuses: string[]): Record<InternalSessionStatus, number> 
     ready_for_wallet_review: 0,
     refresh_required: 0,
     blocked: 0,
-    signed_pending_result: 0,
-    success: 0,
-    failure: 0,
     expired: 0
   };
   for (const status of statuses) {
@@ -797,8 +758,7 @@ function averageSeconds(
     const signed = transitions
       .filter((transition) =>
         transition.reviewSessionId === row.reviewSessionId &&
-        transition.event === "result_recorded" &&
-        transition.toStatus === "signed_pending_result"
+        transition.event === "signature_verified"
       )
       .map((transition) => transition.transitionedAt)
       .sort()[0];
@@ -816,48 +776,6 @@ function averageSeconds(
     return null;
   }
   return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 1000) / 1000;
-}
-
-function inputMissingExecutionResult(execution: ReviewExecutionRecord): ExecutionResult {
-  throw new ActivityStoreReadError("internal_error", "Execution result JSON is missing from the in-memory fixture", {
-    reviewSessionId: execution.reviewSessionId
-  });
-}
-
-function isSameReviewExecution(
-  existing: ReviewExecutionRecord,
-  accountId: number,
-  input: ReviewExecutionInput
-): boolean {
-  return (
-    existing.planId === input.planId &&
-    existing.accountId === accountId &&
-    existing.status === input.status &&
-    nullableString(existing.txDigest) === nullableString(input.txDigest) &&
-    nullableString(existing.explorerUrl) === nullableString(input.explorerUrl) &&
-    nullableString(existing.failureReason) === nullableString(input.failureReason)
-  );
-}
-
-function canAdvanceReviewExecution(
-  existing: ReviewExecutionRecord,
-  accountId: number,
-  input: ReviewExecutionInput
-): boolean {
-  if (existing.planId !== input.planId || existing.accountId !== accountId) {
-    return false;
-  }
-  if (existing.status !== "signed_pending_result") {
-    return false;
-  }
-  if (input.status === "signed_pending_result") {
-    return false;
-  }
-  return nullableString(existing.txDigest) === null || nullableString(existing.txDigest) === nullableString(input.txDigest);
-}
-
-function nullableString(value: string | null | undefined): string | null {
-  return value ?? null;
 }
 
 function reasonForReviewState(state: ReviewState): string | undefined {

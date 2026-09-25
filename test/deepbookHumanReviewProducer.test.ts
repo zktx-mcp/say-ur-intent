@@ -74,7 +74,6 @@ describe("DeepBook human-readable review producer", () => {
     expect(outcome.evidence).toMatchObject({
       materialId: fixture.material.handle.materialId,
       transactionDigest: fixture.material.digest.transactionDigest,
-      boundToCommitment: fixture.material.digest.transactionDigest,
       review: {
         kind: "swap_human_readable_review",
         proposedAction: {

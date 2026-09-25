@@ -86,6 +86,7 @@
     "gasPayment": "Payment object",
     "graph": "Transaction graph",
     "graphTip": "A diagram of this transaction's programmable transaction block (PTB), derived from public on-chain data. It is a diagnostic view only, not transaction input, signing, or a safety verdict.",
+    "graphReviewTip": "A diagram of the locally prepared transaction used for this review and simulation. It is pre-signing evidence, not a chain execution result, signing input, or a safety verdict.",
     "graphRendering": "Rendering the transaction graph…",
     "graphFailed": "The transaction graph could not be rendered",
     "graphZoomIn": "Zoom in",

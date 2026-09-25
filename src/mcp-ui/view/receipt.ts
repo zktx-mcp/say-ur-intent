@@ -6,7 +6,7 @@ import { element } from "../../../review-app/src/ui/ui.js";
 import type { CardRenderer } from "./lifecycle.js";
 import "../../../review-app/src/receipt.css";
 
-export const receiptRenderer: CardRenderer = {
+export const receiptRenderer = {
   title: "Transaction result",
   controls(snapshot, submit) {
     const form = document.createElement("form");
@@ -30,4 +30,4 @@ export const receiptRenderer: CardRenderer = {
     if (notice) node.prepend(element("p", "ui-note", notice));
     return { node, dispose: () => disposePtbGraphs(node) };
   }
-};
+} satisfies CardRenderer;
