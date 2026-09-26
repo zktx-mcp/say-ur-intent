@@ -8,9 +8,6 @@ import { SUI_MAINNET_WALLET_CHAIN, SUI_SIGN_TRANSACTION_METHOD,
 import { openWalletConnectStorage } from "./walletConnectStorage.js";
 
 const signedResponse = z.object({ transactionBytes: z.string().min(1), signature: z.string().min(1) }).strict();
-export class WalletConnectConfigurationError extends Error {
-  constructor() { super("WalletConnect project ID format is invalid."); }
-}
 function transportError(error: unknown): Error {
   const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
   return ["USER_REJECTED", "USER_REJECTED_CHAINS", "USER_REJECTED_METHODS", "USER_REJECTED_EVENTS"]
@@ -34,7 +31,7 @@ export async function createWalletConnectTransport(options: {
   projectId: string; dataDirectory: string; metadata: { name: string; description: string; url: string };
   onSdkStart?: () => void;
 }): Promise<WalletTransport> {
-  if (!/^[0-9a-f]{32}$/i.test(options.projectId)) throw new WalletConnectConfigurationError();
+  if (!/^[0-9a-f]{32}$/i.test(options.projectId)) throw new Error("WalletConnect project ID format is invalid.");
   const owner = openWalletConnectStorage(options.dataDirectory);
   // SDK log bodies can contain pairing credentials and serialized requests.
   // Product failure stages are recorded by the caller without these values.

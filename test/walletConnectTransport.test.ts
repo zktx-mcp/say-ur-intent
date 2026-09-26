@@ -24,6 +24,12 @@ beforeEach(() => {
 });
 const open = () => createWalletConnectTransport({ projectId: "1".repeat(32), dataDirectory: "unused-fixture", metadata: { name: "Fixture", description: "No network", url: "https://example.invalid" } });
 
+it("validates the project identifier before initializing the SDK", async () => {
+  await expect(createWalletConnectTransport({ projectId: "invalid", dataDirectory: "unused-fixture",
+    metadata: { name: "Fixture", description: "No network", url: "https://example.invalid" } })).rejects.toThrow("project ID format is invalid");
+  expect(sdk.init).not.toHaveBeenCalled();
+});
+
 it("uses the pinned Sui sign-only RPC with unchanged stored BCS and selected address", async () => {
   sdk.sessions.set("approved", approved()); sdk.request.mockResolvedValue({ transactionBytes: "AQID", signature: "fixture-signature" });
   const transport = await open();

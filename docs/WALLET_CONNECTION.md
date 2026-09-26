@@ -44,13 +44,14 @@ never restores product authority.
 
 Chat navigation and frame recreation are not transitions. Local stopping does
 not claim that a remote wallet dialog closed. A late approval cannot revive a
-stopped connection. Missing SDK configuration keeps ordinary reads available
-and makes connection cards unavailable with an explicit explanation.
+stopped connection. An unavailable backend wallet service keeps ordinary reads
+available and makes connection cards unavailable with an explicit explanation.
 
-Connection setup distinguishes a missing project ID, an invalid ID format, and
-a backend initialization failure. An initialization failure does not establish
-that the ID is missing or incorrect. A failure to restore saved connections or
-subscribe to wallet changes disables wallet operations until backend restart;
+The product supplies its public WalletConnect project identifier without user
+configuration or an override. Shared Relay service limits can affect connection
+availability across installations. An initialization failure does not establish
+that the user omitted a setting or that a transaction failed. A failure to
+restore saved connections or subscribe to wallet changes disables wallet operations until backend restart;
 it cannot leave signing available without account/chain change observation.
 Stored review, request and verified execution facts remain readable through
 session tools and cards as well as ordinary evidence tools. `walletAvailability`

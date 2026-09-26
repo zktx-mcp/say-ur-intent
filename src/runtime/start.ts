@@ -8,13 +8,14 @@ import { loadControlIdentity } from "./shared/control.js";
 import { probeAuthenticatedServer } from "./shared/authenticatedFetch.js";
 import { startSharedServer } from "./shared/server.js";
 import { startSharedStdio } from "./shared/stdio.js";
+import { WALLETCONNECT_PROJECT_ID } from "./walletConnectConfig.js";
 
 async function main(): Promise<void> {
   const logger = createStderrLogger("runtime");
   const bootConfig = loadBootConfig();
   const control = await loadControlIdentity(bootConfig.activityDatabasePath, {
     network: bootConfig.network, chainIdentifier: bootConfig.expectedChainIdentifier,
-    walletConnectProjectId: process.env.SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID ?? null,
+    walletConnectProjectId: WALLETCONNECT_PROJECT_ID,
     grpcOverride: process.env.SUI_GRPC_URL ?? null, graphqlOverride: process.env.SUI_GRAPHQL_URL ?? null
   });
   let shared: ReviewServerLifecycle | undefined;

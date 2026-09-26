@@ -4,17 +4,8 @@ import { suiAddressStringSchema } from "../suiAddress.js";
 export const SUI_MAINNET_WALLET_CHAIN = "sui:mainnet" as const;
 export const SUI_SIGN_TRANSACTION_METHOD = "sui_signTransaction" as const;
 export const WALLET_CONNECTION_POLL_SECONDS = 5;
-// Owner-start diagnostics only; these are not persisted connection states.
-export type WalletStartupFailure = "configuration_missing" | "configuration_invalid" | "initialization_failed";
-export function walletStartupFailureMessage(reason: WalletStartupFailure): string {
-  switch (reason) {
-    case "configuration_missing": return "WalletConnect configuration is required. Configure the local backend, restart it, and request a new connection card.";
-    case "configuration_invalid": return "WalletConnect configuration is invalid. Check the project ID format, restart the local backend, and request a new connection card.";
-    case "initialization_failed": return "WalletConnect could not be initialized. Check the local backend initialization problem, restart it, and request a new connection card.";
-  }
-}
 export const walletUnavailableReasonSchema = z.enum([
-  "configuration_missing", "configuration_invalid", "initialization_failed", "restoration_failed", "wallet_state_unavailable"
+  "initialization_failed", "restoration_failed", "wallet_state_unavailable"
 ]);
 export type WalletUnavailableReason = z.infer<typeof walletUnavailableReasonSchema>;
 export const walletAvailabilitySchema = z.discriminatedUnion("status", [
@@ -27,7 +18,7 @@ export function walletUnavailable(reason: WalletUnavailableReason): Extract<Wall
     ? "Wallet connections could not be restored. Restart the local backend before using wallet operations."
     : reason === "wallet_state_unavailable"
       ? "Wallet state could not be confirmed. Restart the local backend before using wallet operations. Saved transaction facts remain available."
-      : walletStartupFailureMessage(reason);
+      : "WalletConnect could not be initialized. Check the local backend initialization problem, restart it, and request a new connection card.";
   return { status: "unavailable", reason, message };
 }
 export class WalletUnavailableError extends Error {

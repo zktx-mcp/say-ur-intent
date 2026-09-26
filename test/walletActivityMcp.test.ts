@@ -40,6 +40,21 @@ function data(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, a
 }
 
 describe("wallet cards, ordinary MCP and stored review activity", () => {
+  it("keeps ordinary preparation reads available with an initialization reason when the workflow is absent", async () => {
+    const { f, call, deps } = await harness();
+    const { session } = await f.run(() => f.sessions.createReviewSession([f.plan]));
+    f.workflow.stop(); delete deps.workflow;
+    for (const name of [TOOL_NAMES.sessionGetReviewStatus, TOOL_NAMES.sessionGetExecutionResult, TOOL_NAMES.sessionWaitExecutionResult]) {
+      const result = data(await call(name, { reviewSessionId: session.id }));
+      expect(result).toMatchObject({ reviewSessionId: session.id, status: "proposed", plans: [f.plan],
+        walletAvailability: { status: "unavailable", reason: "initialization_failed" } });
+    }
+    expect(data(await call(TOOL_NAMES.sessionGetInteractionStatus))).toMatchObject({
+      walletAvailability: { status: "unavailable", reason: "initialization_failed" }
+    });
+    expect(f.connect).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+  });
+
   it("rejects a removed protocol before creating a review or requesting a signature", async () => {
     const { f, call } = await harness();
     await f.approve();
@@ -208,14 +223,14 @@ it("keeps prior attempts while a newly reviewed revision becomes the current req
   expect(f.submit).toHaveBeenCalledOnce();
 });
 
-it("returns completed facts across ordinary and card reads after a replacement owner's restore fails", async () => {
+it.each(["initialization_failed", "restoration_failed"] as const)("returns completed facts across ordinary and card reads after %s", async (reason) => {
   const { f, call, deps } = await harness(true, true), { card: connectCard, connection } = await f.approve(), ready = await f.prepare(connection.connectionId);
   await f.act(ready.card, { action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: ready.session.reviewRevision });
   await vi.waitFor(() => expect(f.run(() => f.records.currentRequest(ready.session.id))?.requestStatus).toBe("completed"));
   const saved = f.run(() => f.records.currentRequest(ready.session.id))!, reads = f.chainRead.mock.calls.length;
   f.workflow.stop();
   const next = new WalletWorkflow({ ownerId: "restoring-owner", records: f.run(() => f.activity.createWalletWorkflowStore("restoring-owner")),
-    sessions: f.sessions, transport: { ...f.transport, restore: async () => { throw new Error("PRIVATE-RESTORE"); } },
+    sessions: f.sessions, ...(reason === "restoration_failed" ? { transport: { ...f.transport, restore: async () => { throw new Error("PRIVATE-RESTORE"); } } } : {}),
     computation: f.computation, verifyReceipt: f.verifyReceipt, verifyNetwork: f.verifyNetwork, submitTransaction: f.submit,
     assertCurrent: f.access.assertCurrent, logger: f.logger, now: f.now });
   await f.run(() => next.start());
@@ -225,7 +240,7 @@ it("returns completed facts across ordinary and card reads after a replacement o
   cleanups.push(async () => { next.stop(); nextCards.stop(); });
   for (const name of [TOOL_NAMES.sessionGetReviewStatus, TOOL_NAMES.sessionGetExecutionResult, TOOL_NAMES.sessionWaitExecutionResult]) {
     const response = data(await call(name, { reviewSessionId: ready.session.id }));
-    expect(response).toMatchObject({ request: saved, executionResult: saved.execution, walletAvailability: { status: "unavailable", reason: "restoration_failed" }, progress: { status: "idle" } });
+    expect(response).toMatchObject({ request: saved, executionResult: saved.execution, walletAvailability: { status: "unavailable", reason }, progress: { status: "idle" } });
     if (name === TOOL_NAMES.sessionWaitExecutionResult) expect(response.waitOutcome).toBe("status_reached");
   }
   expect(data(await call(TOOL_NAMES.sessionGetInteractionStatus))).toMatchObject({ walletAvailability: { status: "unavailable" } });

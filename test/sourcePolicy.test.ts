@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { unnegatedClaims, unsupportedJsonRpcClaims } from "./helpers/documentClaims.js";
 
 import {
   DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE,
@@ -1833,18 +1834,9 @@ describe("source policy", () => {
     expect(source).not.toMatch(/P&L is supported/i);
     expect(source).not.toMatch(/cost basis[\s\S]{0,120}(profit would be|profit is|calculate profit)/i);
     const boundedHistoryTerms =
-      /background index|complete wallet history|P&L|raw GraphQL payload|non-known party address|signing readiness|route recommendation|protocol support|position inventory|supported-protocol list/i;
-    const negativeContext = /\bnot\b|do not|does not|must not|\bcreate no\b|out of scope|unsupported/i;
-    let listIntroduction = "";
-    for (const line of source.split("\n")) {
-      if (line.trim() === "") continue;
-      const listItem = /^\s*[-*]\s/.test(line);
-      // Markdown list items inherit their introductory sentence's negation.
-      // A new non-list paragraph ends that context.
-      if (!listItem) listIntroduction = /:\s*$/.test(line) ? line : "";
-      if (boundedHistoryTerms.test(line)) {
-        expect(listItem ? `${listIntroduction}\n${line}` : line).toMatch(negativeContext);
-      }
+      /background index|complete wallet history|P&L|raw GraphQL payload|non-known party address|signing readiness|route recommendation|protocol support|(?:wallet )?position inventory|supported-protocol list/i;
+    for (const file of activitySurfaceFiles) {
+      expect(unnegatedClaims(readFileSync(join(process.cwd(), file), "utf8"), file, boundedHistoryTerms), file).toEqual([]);
     }
   });
 
@@ -2021,16 +2013,7 @@ describe("source policy", () => {
     ];
 
     for (const file of files) {
-      const lines = readFileSync(join(process.cwd(), file), "utf8").split("\n");
-      for (const line of lines) {
-        if (!/JSON-RPC/i.test(line)) {
-          continue;
-        }
-        if (/MCP JSON-RPC|stdout/i.test(line)) {
-          continue;
-        }
-        expect(line).toMatch(/do not set|rejects|not used|not supported|excluded/i);
-      }
+      expect(unsupportedJsonRpcClaims(readFileSync(join(process.cwd(), file), "utf8"), file), file).toEqual([]);
     }
   });
 });

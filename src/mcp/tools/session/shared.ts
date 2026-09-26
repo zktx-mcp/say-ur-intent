@@ -35,5 +35,5 @@ export async function readCurrentReview(deps: Pick<McpServerDeps, "workflow" | "
   explicitResult = false): Promise<ReviewSnapshot | undefined> {
   if (deps.workflow) return deps.workflow.readReview(id, explicitResult);
   const session = await deps.sessions.getReviewSession(id);
-  return session ? { session, hasReviewInput: false, walletAvailability: walletUnavailable("configuration_missing"), progress: { status: "idle" } } : undefined;
+  return session ? { session, hasReviewInput: false, walletAvailability: walletUnavailable("initialization_failed"), progress: { status: "idle" } } : undefined;
 }

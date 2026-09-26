@@ -19,6 +19,15 @@ This document records the pinned SDK APIs used by the current runtime. The sourc
 
 The shared server uses the pinned MCP SDK Streamable HTTP transport behind authenticated loopback access. Stdio clients forward tool, resource and prompt requests with their original client identity and capabilities. Ordinary MCP input schemas remain unchanged by the transport; the 64 KiB card/HTTP input limit includes the card call envelope.
 
+## WalletConnect Runtime
+
+The backend passes the product identifier from `src/runtime/walletConnectConfig.ts`
+to the pinned `SignClient.init`. The shared runtime's configuration identity uses
+the same value. There is no user project ID setting or environment override.
+Identifier-format validation remains before SDK initialization. Initialization,
+restoration and runtime-state failures remain separate from wallet approval and
+transaction results; public diagnostics do not include raw SDK error bodies.
+
 ## Sui gRPC Client
 
 Verified from `node_modules/@mysten/sui/src/grpc/index.ts`, `client.ts`, `core.ts`, and `node_modules/@mysten/sui/src/client/types.ts`.

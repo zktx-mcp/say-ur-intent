@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MCP_RESOURCES } from "../src/mcp/resources.js";
+import { unnegatedClaims } from "./helpers/documentClaims.js";
 
 function read(path: string): string {
   return readFileSync(join(process.cwd(), path), "utf8");
@@ -35,15 +36,6 @@ function goldenScenarioFiles(): string[] {
     .filter((file) => file.endsWith(".md"))
     .map((file) => `docs/golden-scenarios/${file}`)
     .sort();
-}
-
-function expectNegativeContextOnMatchingLines(source: string, pattern: RegExp, label: string): void {
-  const negativeContext = /\bnot\b|do not|does not|must not|unsupported|out of scope|unavailable|cannot/i;
-  for (const line of source.split("\n")) {
-    if (pattern.test(line)) {
-      expect(line, `${label} line lacks negative context: ${line}`).toMatch(negativeContext);
-    }
-  }
 }
 
 describe("documentation responsibility boundaries", () => {
@@ -224,20 +216,20 @@ describe("documentation responsibility boundaries", () => {
     const transactionLog = read("docs/TRANSACTION_ACTIVITY_LOG.md");
     expect(transactionLog).toMatch(/local transaction activity storage boundaries/i);
     expect(transactionLog).toMatch(/does not claim complete wallet history/i);
-    expectNegativeContextOnMatchingLines(
+    expect(unnegatedClaims(
       transactionLog,
-      /complete wallet history|P&L|profit|cost basis|signing readiness/i,
-      "TRANSACTION_ACTIVITY_LOG.md"
-    );
+      "docs/TRANSACTION_ACTIVITY_LOG.md",
+      /complete wallet history|P&L|profit|cost basis|signing readiness/i
+    )).toEqual([]);
 
     const walletIdentity = read("docs/WALLET_CONNECTION.md");
     expect(walletIdentity).toMatch(/active read account|read context/i);
     expect(walletIdentity).toMatch(/not login[\s\S]{0,100}custody[\s\S]{0,80}standing permission/i);
-    expectNegativeContextOnMatchingLines(
+    expect(unnegatedClaims(
       walletIdentity,
-      /login|authentication|signing authorization|custody|permission for transactions|private keys|executable transaction material/i,
-      "WALLET_CONNECTION.md"
-    );
+      "docs/WALLET_CONNECTION.md",
+      /login|authentication|signing authorization|custody|permission for transactions|private keys|executable transaction material/i
+    )).toEqual([]);
   });
 
   it("keeps golden answer allowed conclusions separate from forbidden conclusions", () => {

@@ -2,9 +2,10 @@ import { createRuntimeReviewDependencies } from "./reviewDependencies.js";
 import { acquireDataDirectoryOwner } from "./shared/ownerLease.js";
 import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { createWalletConnectTransport, WalletConnectConfigurationError } from "./walletConnectTransport.js";
+import { createWalletConnectTransport } from "./walletConnectTransport.js";
+import { WALLETCONNECT_PROJECT_ID } from "./walletConnectConfig.js";
 import { WalletWorkflow } from "../core/session/walletWorkflow.js";
-import type { WalletTransport, WalletStartupFailure } from "../core/session/walletConnection.js";
+import type { WalletTransport } from "../core/session/walletConnection.js";
 import { randomUUID } from "node:crypto";
 import { SqliteActivityStore } from "../core/activity/sqliteActivityStore.js";
 import { validateSupportedAdapterLifecycle } from "../adapters/adapterLifecycleValidators.js";
@@ -136,23 +137,18 @@ export async function createRuntimeApplication(bootConfig: BootConfig, logger: L
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION, network: SERVER_NETWORK } });
     const cardRecords = store.createCardRecordStore();
     let transport: WalletTransport | undefined;
-    let startupFailure: WalletStartupFailure | undefined = "configuration_missing";
-    const projectId = process.env.SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID;
-    if (projectId) {
-      try {
-        const metadata = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
-          name: string; description: string; homepage: string;
-        };
-        transport = await createWalletConnectTransport({ projectId, dataDirectory: dirname(bootConfig.activityDatabasePath), onSdkStart: () => { sdkStarted = true; },
-          metadata: { name: metadata.name, description: metadata.description, url: metadata.homepage } });
-        startupFailure = undefined;
-      } catch (error) {
-        startupFailure = error instanceof WalletConnectConfigurationError ? "configuration_invalid" : "initialization_failed";
-        logger.error("WalletConnect initialization unavailable", { stage: startupFailure });
-      }
+    try {
+      const metadata = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
+        name: string; description: string; homepage: string;
+      };
+      transport = await createWalletConnectTransport({ projectId: WALLETCONNECT_PROJECT_ID,
+        dataDirectory: dirname(bootConfig.activityDatabasePath), onSdkStart: () => { sdkStarted = true; },
+        metadata: { name: metadata.name, description: metadata.description, url: metadata.homepage } });
+    } catch {
+      logger.error("WalletConnect initialization unavailable", { stage: "initialization_failed" });
     }
     workflow = new WalletWorkflow({ records: workflowRecords, sessions, ownerId,
-      transport, startupFailure, computation: reviewComputationDeps, verifyReceipt: chainReceiptVerifier, readReceipt: publicChainReceiptReader, signatureClient: suiClient,
+      transport, computation: reviewComputationDeps, verifyReceipt: chainReceiptVerifier, readReceipt: publicChainReceiptReader, signatureClient: suiClient,
       assertCurrent: access.assertCurrent, runExternalEvent: (work) => access.run(work), logger,
       verifyNetwork: async () => {
         const actual = await suiClient.core.getChainIdentifier();

@@ -391,19 +391,19 @@ internal MCP Apps views; there is no external wallet/review page or browser
 signer. A client without a card surface can use ordinary reads but cannot start
 these UI workflows. See [Wallet Connection](WALLET_CONNECTION.md).
 
-Configure `SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID` in the local server environment
-with your own WalletConnect project ID before connecting a wallet. Missing or
-invalid configuration preserves ordinary reads and returns an unavailable
-connection card. Do not paste project credentials, pairing URIs or UI permission
-values into chat. Only the owner initializes the SDK; clients sharing an owner
-must have matching configuration.
+The package includes Say Ur Intent's WalletConnect project identifier. Wallet
+connection requires no project ID setting and offers no project ID override.
+The identifier is public, not a wallet credential. Installations share that
+project's Relay service limits; service availability is not guaranteed by a
+local configuration value. Only the backend owner initializes the SDK, and
+clients use the same product identifier when identifying that shared backend.
+Do not paste pairing URIs or UI permission values into chat.
 
-If the card reports missing or invalid configuration, check the project ID in
-the server environment and restart the local backend. If it reports an
-initialization or connection-restoration failure, check the backend's safe
-startup diagnostic and restart after resolving the problem. Those failures do
-not prove that the ID is missing. Opening another card does not retry SDK
-initialization. Ordinary reads remain available while wallet operations are
+If the card reports an initialization or connection-restoration failure, check
+the backend's safe startup diagnostic and restart after resolving the problem.
+These are backend service failures, not requests for a user project ID setting.
+Opening another card does not retry SDK initialization. Ordinary reads remain
+available while wallet operations are
 unavailable. Saved review and execution results remain readable. An unavailable
 wait means progress cannot currently be observed; it is not a transaction
 failure or a completed operation. Transactions already submitted can still be

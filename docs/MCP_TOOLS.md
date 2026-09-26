@@ -932,9 +932,11 @@ Connection observation uses 5 seconds and request observation 3 seconds.
 Session responses and workflow card data expose `walletAvailability` separately
 from stored review, request and chain facts. It is either `{status: "available"}`
 or `{status: "unavailable", reason, message}`. Reasons are
-`configuration_missing`, `configuration_invalid`, `initialization_failed`,
-`restoration_failed`, and `wallet_state_unavailable`. Availability describes the
-backend dependency, not account ownership, wallet approval or signing readiness.
+`initialization_failed`, `restoration_failed`, and `wallet_state_unavailable`.
+Initialization failure includes a missing backend wallet workflow or transport;
+the product supplies its WalletConnect identifier without a user setting.
+Availability describes the backend dependency, not account ownership, wallet
+approval or signing readiness.
 
 Target-specific `progress.status` is `idle`, `waiting`, or `unavailable`. The last
 includes `reason: "wallet_unavailable"` and a safe message. A wait returns

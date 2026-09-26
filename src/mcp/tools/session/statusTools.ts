@@ -34,7 +34,7 @@ export function registerSessionStatusTools(server: McpServer, deps: McpServerDep
       const reviews = states.flatMap((state) => state && isReviewInteractionPending(state) ? [reviewStatusResponse(state)] : []);
       const connections = deps.workflow?.pendingConnections() ?? [];
       return okToolResult({ activeAccount: activeAccountResponse(active), pendingWalletConnections: latest(connections),
-        pendingReviewSessions: latest(reviews), walletAvailability: deps.workflow?.walletAvailability() ?? walletUnavailable("configuration_missing"),
+        pendingReviewSessions: latest(reviews), walletAvailability: deps.workflow?.walletAvailability() ?? walletUnavailable("initialization_failed"),
         userAnswerUse: interactionStatusUserAnswerUse() });
     } catch (error) { return sessionStoreToolError(error, deps.logger); }
   });

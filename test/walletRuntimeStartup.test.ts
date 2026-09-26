@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi, type Mock } from "vitest";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,14 @@ import { createRuntimeApplication } from "../src/runtime/application.js";
 import { loadBootConfig } from "../src/runtime/config.js";
 import { TOOL_NAMES } from "../src/mcp/toolNames.js";
 import { CARD_METADATA_KEY, CARD_TOOLS } from "../src/mcp-ui/contracts.js";
+import { WALLETCONNECT_PROJECT_ID } from "../src/runtime/walletConnectConfig.js";
+import { walletAvailabilitySchema, walletUnavailableReasonSchema } from "../src/core/session/walletConnection.js";
+import { SUI_MAINNET_CHAIN_IDENTIFIER } from "../src/runtime/suiEndpoint.js";
+import type { ControlIdentity } from "../src/runtime/shared/control.js";
+
+// Fingerprint of the product owner's approved input, independent of the runtime constant.
+const approvedProjectFingerprint = "0878d5895848f26e5631d667db9f5473ebaf875775af53f190467b50f810147d";
+const fingerprint = (value: string) => createHash("sha256").update(value).digest("hex");
 
 const source = vi.hoisted(() => ({ failure: "", init: vi.fn(), connect: vi.fn(), request: vi.fn(),
   storage: [] as Array<() => void>, leases: [] as Array<Mock<() => void>> }));
@@ -84,14 +93,14 @@ afterEach(() => {
 });
 
 it.each([
-  { failure: "missing", project: undefined, initCalls: 0, message: "configuration is required" },
-  { failure: "invalid", project: "not-a-project-id", initCalls: 0, message: "configuration is invalid" },
-  { failure: "metadata", project: "1".repeat(32), initCalls: 0, message: "could not be initialized" },
-  { failure: "storage", project: "1".repeat(32), initCalls: 0, message: "could not be initialized" },
-  { failure: "init", project: "1".repeat(32), initCalls: 1, message: "could not be initialized" },
-  { failure: "restore", project: "1".repeat(32), initCalls: 1, message: "could not be restored" },
-  { failure: "none", project: "1".repeat(32), initCalls: 1, message: undefined }
-])("preserves $failure startup semantics through the real runtime and MCP cards", async ({ failure, project, initCalls, message }) => {
+  { label: "unset environment", failure: "none", project: undefined, initCalls: 1, reason: undefined, message: undefined },
+  { label: "invalid environment", failure: "none", project: "not-a-project-id", initCalls: 1, reason: undefined, message: undefined },
+  { label: "different environment", failure: "none", project: "1".repeat(32), initCalls: 1, reason: undefined, message: undefined },
+  { label: "metadata failure", failure: "metadata", project: undefined, initCalls: 0, reason: "initialization_failed", message: "could not be initialized" },
+  { label: "storage failure", failure: "storage", project: undefined, initCalls: 0, reason: "initialization_failed", message: "could not be initialized" },
+  { label: "SDK failure", failure: "init", project: undefined, initCalls: 1, reason: "initialization_failed", message: "could not be initialized" },
+  { label: "restore failure", failure: "restore", project: undefined, initCalls: 1, reason: "restoration_failed", message: "could not be restored" }
+])("handles $label through the real runtime and MCP cards", async ({ failure, project, initCalls, reason, message }) => {
   source.failure = failure; vi.stubEnv("SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID", project);
   const directory = mkdtempSync(join(tmpdir(), "say-startup-"));
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -104,8 +113,13 @@ it.each([
   try {
     const created = await call(TOOL_NAMES.sessionCreateWalletConnection);
     expect(source.init).toHaveBeenCalledTimes(initCalls);
+    expect(fingerprint(WALLETCONNECT_PROJECT_ID)).toBe(approvedProjectFingerprint);
+    if (initCalls) expect(fingerprint(source.init.mock.calls[0]![0].projectId)).toBe(approvedProjectFingerprint);
     if (message) expect(JSON.stringify(created)).toContain(message);
     expect(created.isError).not.toBe(true);
+    const interaction = await call(TOOL_NAMES.sessionGetInteractionStatus);
+    const availability = (interaction.structuredContent as { data: { walletAvailability: unknown } }).data.walletAvailability;
+    expect(walletAvailabilitySchema.parse(availability)).toMatchObject(reason ? { status: "unavailable", reason } : { status: "available" });
     {
       const card = (created.structuredContent as { data: { cardId: string; revision: number; state: string } }).data;
       expect(card.state).toBe(message ? "closed" : "ready");
@@ -121,6 +135,7 @@ it.each([
     expect((receipt.structuredContent as { data: { state: string } }).data.state).toBe("ready");
     expect(source.connect).not.toHaveBeenCalled(); expect(source.request).not.toHaveBeenCalled();
     expect(JSON.stringify([created, logger.error.mock.calls])).not.toContain("PRIVATE-");
+    expect(JSON.stringify([created, logger.error.mock.calls]).includes(WALLETCONNECT_PROJECT_ID)).toBe(false);
     if (project) expect(JSON.stringify([created, logger.error.mock.calls])).not.toContain(project);
   } finally {
     await app.close();
@@ -128,5 +143,56 @@ it.each([
     for (const close of source.storage.splice(0)) close();
     for (const close of source.leases.splice(0)) close();
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("uses the same approved project identity for stdio peers regardless of old environment settings", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "say-startup-identity-"));
+  const controls: ControlIdentity[] = [];
+  const processListeners = new Map(["SIGINT", "SIGTERM"].map((event) => [event, new Set(process.listeners(event))]));
+  const inputListeners = new Map(["end", "close"].map((event) => [event, new Set(process.stdin.listeners(event))]));
+  // Exercise start.ts and real control-key/identity generation. Only ownership
+  // acquisition and the stdio bridge are replaced; no relay or port is opened.
+  vi.doMock("../src/runtime/reviewServerAcquire.js", () => ({
+    startOrDeferReviewServer: async () => ({ deferred: true, close: async () => {} })
+  }));
+  vi.doMock("../src/runtime/shared/stdio.js", () => ({
+    startSharedStdio: async ({ control }: { control: ControlIdentity }) => {
+      controls.push(control);
+      return { close: async () => {} };
+    }
+  }));
+  vi.stubEnv("SAY_UR_INTENT_DATA_DIR", directory);
+  vi.stubEnv("SUI_GRPC_URL", undefined); vi.stubEnv("SUI_GRAPHQL_URL", undefined);
+  try {
+    for (const [index, project] of [undefined, "not-a-project-id", "1".repeat(32)].entries()) {
+      vi.stubEnv("SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID", project);
+      vi.resetModules();
+      await import("../src/runtime/start.js");
+      await vi.waitFor(() => expect(process.listenerCount("SIGTERM")).toBe(processListeners.get("SIGTERM")!.size + index + 1));
+    }
+    const expected = fingerprint(JSON.stringify({ network: "mainnet", chainIdentifier: SUI_MAINNET_CHAIN_IDENTIFIER,
+      walletConnectProjectId: WALLETCONNECT_PROJECT_ID, grpcOverride: null, graphqlOverride: null }));
+    expect(fingerprint(WALLETCONNECT_PROJECT_ID)).toBe(approvedProjectFingerprint);
+    expect(controls.map((control) => control.configurationId)).toEqual([expected, expected, expected]);
+    expect(new Set(controls.map((control) => control.databaseId)).size).toBe(1);
+    expect(new Set(controls.map((control) => control.key)).size).toBe(1);
+    expect(source.init.mock.calls.length).toBe(0);
+  } finally {
+    for (const [event, before] of processListeners) {
+      for (const listener of process.listeners(event)) if (!before.has(listener)) process.removeListener(event, listener);
+    }
+    for (const [event, before] of inputListeners) {
+      for (const listener of process.stdin.listeners(event)) if (!before.has(listener)) process.stdin.removeListener(event, listener);
+    }
+    vi.doUnmock("../src/runtime/reviewServerAcquire.js"); vi.doUnmock("../src/runtime/shared/stdio.js"); vi.resetModules();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("accepts only backend initialization, restoration and state failures in the public reason contract", () => {
+  expect(walletUnavailableReasonSchema.options).toEqual(["initialization_failed", "restoration_failed", "wallet_state_unavailable"]);
+  for (const reason of ["configuration_missing", "configuration_invalid"]) {
+    expect(walletUnavailableReasonSchema.safeParse(reason).success).toBe(false);
   }
 });

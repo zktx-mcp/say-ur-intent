@@ -14,7 +14,7 @@ import type { SessionStore } from "./sessionStore.js";
 import type { CardRecord, CardPreparation, ReceiptDisplay, WalletDisplay } from "./cardSession.js";
 import { SqliteWalletWorkflowStore, WorkflowConflict } from "./sqliteWalletWorkflowStore.js";
 import { isOwnedConnectedWallet, SUI_SIGN_TRANSACTION_METHOD, WalletUserRejectedError, WalletUnavailableError, walletUnavailable,
-  type WalletStartupFailure, type WalletTransport, type WalletSession, type WalletAvailability, type WalletUnavailableReason, type WorkflowProgress } from "./walletConnection.js";
+  type WalletTransport, type WalletSession, type WalletAvailability, type WalletUnavailableReason, type WorkflowProgress } from "./walletConnection.js";
 import { isInitialChainObservation, type TransactionRequest } from "./transactionRequest.js";
 import { projectConnectionView, projectReviewView, parseWorkflowAction, type WorkflowView, type PendingConnectionStatus } from "./workflowView.js";
 
@@ -34,7 +34,6 @@ export class WalletWorkflow {
     records: SqliteWalletWorkflowStore;
     sessions: SessionStore; ownerId: string;
     transport?: WalletTransport | undefined;
-    startupFailure?: WalletStartupFailure | undefined;
     computation: ReviewComputationDeps;
     verifyReceipt(input: VerifySuiChainReceiptInput): Promise<SuiChainReceiptVerificationResult>;
     readReceipt?: ((input: { digest: string; now: Date }) => Promise<PublicChainReceiptResult>) | undefined;
@@ -55,7 +54,7 @@ export class WalletWorkflow {
   walletAvailability(): WalletAvailability {
     this.assertCurrent();
     return this.walletReady && !this.walletFailure ? { status: "available" } :
-      walletUnavailable(this.walletFailure ?? this.options.startupFailure ?? "initialization_failed");
+      walletUnavailable(this.walletFailure ?? "initialization_failed");
   }
   private assertWalletAvailable(): void {
     const availability = this.walletAvailability();
@@ -81,7 +80,7 @@ export class WalletWorkflow {
     this.started = true;
     this.options.records.recover(this.now());
     const transport = this.options.transport;
-    if (!transport) { this.walletFailure = this.options.startupFailure ?? "configuration_missing"; return; }
+    if (!transport) { this.walletFailure = "initialization_failed"; return; }
     try {
       const sessions = await transport.restore(); this.assertCurrent();
       for (const session of sessions) {
@@ -213,7 +212,7 @@ export class WalletWorkflow {
     switch (action.action) {
       case "cancel": this.options.records.cancelInput(record); return;
       case "connect": {
-        if (!transport) throw new WalletUnavailableError(this.options.startupFailure ?? "configuration_missing");
+        if (!transport) throw new WalletUnavailableError("initialization_failed");
         const admitted = this.options.records.admitConnection(record, action);
         void this.connect(admitted.connection.connectionId).catch(() => this.report("connection"));
         return;
@@ -225,7 +224,7 @@ export class WalletWorkflow {
         this.options.records.useAccount(record, action, action.connectionId, action.account); return;
       }
       case "disconnect": {
-        if (!transport) throw new WalletUnavailableError(this.options.startupFailure ?? "configuration_missing");
+        if (!transport) throw new WalletUnavailableError("initialization_failed");
         const target = this.options.records.admitDisconnect(record, action, action.connectionId);
         void (async () => {
           try {
@@ -250,7 +249,7 @@ export class WalletWorkflow {
         return;
       }
       case "request_signature": {
-        if (!transport) throw new WalletUnavailableError(this.options.startupFailure ?? "configuration_missing");
+        if (!transport) throw new WalletUnavailableError("initialization_failed");
         const id = String(record.state.input.reviewSessionId);
         const connection = this.requireWallet(action.connectionId, action.account);
         const session = this.options.sessions.readReviewSession(id);
