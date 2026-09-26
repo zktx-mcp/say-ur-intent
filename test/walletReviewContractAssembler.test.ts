@@ -1,3 +1,4 @@
+import { testObjectFunding } from "./fixtures/transactionMaterial.js";
 import { describe, expect, it } from "vitest";
 import { deriveDeepbookSwapQuotePolicy } from "../src/adapters/deepbook/deepbookQuotePolicy.js";
 import { createReviewTimeSimulationProducer } from "../src/core/action/reviewTimeSimulationEvidence.js";
@@ -43,6 +44,7 @@ function testObjectOwnershipEvidence(input: {
 }): TransactionObjectOwnershipEvidence {
   return {
     evidenceVersion: TRANSACTION_OBJECT_OWNERSHIP_EVIDENCE_VERSION,
+    funding: testObjectFunding(walletAccount),
     materialId: input.materialId,
     reviewSessionId: "rs_1",
     planId: plan.id,
@@ -207,6 +209,30 @@ describe("assembleTransactionReviewData", () => {
     expect(outcome.contract.gas.unresolvedReason).toBeUndefined();
     expect(outcome.contract.expiry.status).toBe("current");
     expect(outcome.contract.outputBoundary.prohibited).toContain("transaction_bytes");
+  });
+
+  it.each([
+    { rebate: "200", net: undefined },
+    { rebate: "150", net: "0" }
+  ])("preserves gas budget without inventing gas spending when rebate is $rebate", async ({ rebate, net }) => {
+    const artifacts = await buildAssemblyArtifacts();
+    // Independent source values: costs are 100 + 50 MIST. Rebates produce
+    // either -50 MIST (no unsigned spending claim) or exactly zero MIST.
+    artifacts.reviewTimeSimulation.effects.gasCostSummary = {
+      computationCostRaw: "100", storageCostRaw: "50",
+      storageRebateRaw: rebate, nonRefundableStorageFeeRaw: "0"
+    };
+    const outcome = assembleTransactionReviewData(assemblyInputFrom(artifacts));
+    if (outcome.status !== "emitted") throw new Error(JSON.stringify(outcome));
+    expect(outcome.contract.gas.gasBudgetRaw).toBe(artifacts.reviewTimeSimulation.transaction.gasBudgetRaw);
+    expect(outcome.contract.gas.gasBudgetClaimId).toBeDefined();
+    expect(outcome.contract.gas.gasObjects).toHaveLength(1);
+    expect(outcome.contract.gas.gasUsedRaw).toBe(net);
+    expect(outcome.contract.evidenceClaims.filter((claim) => claim.factKind === "raw_quantity_amount" && claim.role === "gas_used"))
+      .toHaveLength(net === undefined ? 0 : 1);
+    expect(outcome.contract.gas.gasUsedClaimId === undefined).toBe(net === undefined);
+    expect(artifacts.reviewTimeSimulation.effects.gasCostSummary.storageRebateRaw).toBe(rebate);
+    expect(outcome.contract.simulation.status).toBe("success");
   });
 
   it("declines when the gas object is not an account-owned Coin<SUI> object", async () => {

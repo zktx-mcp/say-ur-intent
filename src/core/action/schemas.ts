@@ -4,7 +4,7 @@ import { suiAddressStringSchema } from "../suiAddress.js";
 import { makeRawU64StringSchema, makeSignedRawIntegerStringSchema } from "../numeric/rawU64.js";
 import { normalizeCoinType } from "../read/coinMetadata.js";
 import { BLOCKED_REASONS, REFRESH_REASONS, REVIEW_PREPARATION_STATUSES } from "./types.js";
-import { ptbVisualizationArtifactSchema, transactionReviewDataSchema } from "./signableAdapterContract.js";
+import { reviewSimulationProviderSchema, ptbVisualizationArtifactSchema, transactionReviewDataSchema } from "./signableAdapterContract.js";
 export { transactionExecutionSummarySchema } from "../session/transactionRequest.js";
 
 export const unknownRecordSchema = z.record(z.string(), z.unknown());
@@ -144,7 +144,7 @@ export const transactionSimulationObjectChangeSchema = z.object({
 }).strict();
 
 const transactionSimulationSummaryBaseSchema = z.object({
-  provider: z.literal("client.core.simulateTransaction"),
+  provider: reviewSimulationProviderSchema,
   checksEnabled: z.boolean(),
   success: z.boolean(),
   gasCostSummary: transactionSimulationGasCostSummarySchema.optional(),

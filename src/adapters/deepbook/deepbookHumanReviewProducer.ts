@@ -1,3 +1,4 @@
+import { transactionFundingSummary } from "../../core/action/transactionFunding.js";
 import type {
   DeepbookSwapActionPlanIdentity,
   DeepbookSwapRequestedIntent
@@ -142,6 +143,8 @@ function buildDeepbookHumanReadableReview(
       }
     ],
     evidenceUsed: [
+      { id: "transaction_funding", label: "Transaction funding", source: "transaction_material",
+        summary: transactionFundingSummary(input.transactionObjectOwnership.funding) },
       {
         id: "deepbook_quote_policy",
         label: "Quote policy",

@@ -80,6 +80,8 @@ function reviewView(snapshot: CardSnapshot, display?: CardReceiptDisplay, act?: 
     }
     if (state) {
       const details = card("Transaction details"), gas = state.simulation?.gasCostSummary;
+      const funding = human?.evidenceUsed.find((fact) => fact.id === "transaction_funding");
+      if (funding) details.append(row(funding.label, funding.summary));
       if (gas && data.netGasMist !== undefined) for (const item of gasRows({ totalMist: data.netGasMist,
         computationMist: gas.computationCostRaw, storageMist: gas.storageCostRaw, storageRebateMist: gas.storageRebateRaw })) details.append(item);
       for (const change of state.simulation?.balanceChanges ?? []) {

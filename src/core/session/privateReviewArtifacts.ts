@@ -1,3 +1,4 @@
+import { transactionFundingEvidenceSchema } from "../action/transactionFunding.js";
 import type {
   LocalTransactionMaterialDigestCommitment,
   LocalTransactionMaterialHandle
@@ -64,6 +65,7 @@ export function clonePrivateReviewArtifacts(
       ? {
           transactionObjectOwnership: {
             ...artifacts.transactionObjectOwnership,
+            funding: transactionFundingEvidenceSchema.parse(structuredClone(artifacts.transactionObjectOwnership.funding)),
             objects: artifacts.transactionObjectOwnership.objects.map((object) => ({
               ...object,
               roles: [...object.roles]

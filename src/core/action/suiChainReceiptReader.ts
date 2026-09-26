@@ -1,3 +1,4 @@
+import { readCoinReservation } from "./transactionFunding.js";
 import type { SuiClientTypes } from "@mysten/sui/client";
 import { normalizeCoinType, type CoinUnit } from "../read/coinMetadata.js";
 import { suiTransactionDigestSchema } from "../suiAddress.js";
@@ -267,8 +268,12 @@ function firstPaymentObjectId(gasData: SuiClientTypes.TransactionData["gasData"]
   if (!Array.isArray(payment) || payment.length === 0) {
     return undefined;
   }
-  const first = asRecord(payment[0]);
-  return typeof first?.objectId === "string" ? first.objectId : undefined;
+  for (const item of payment) {
+    const ref = asRecord(item);
+    if (typeof ref?.objectId !== "string" || typeof ref.digest !== "string") continue;
+    try { if (!readCoinReservation(ref.digest)) return ref.objectId; } catch { /* Invalid refs do not establish gas object facts. */ }
+  }
+  return undefined;
 }
 
 // PTB inputs, simplified to a kind and (for object inputs) an object id. The exact

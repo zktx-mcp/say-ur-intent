@@ -1,3 +1,4 @@
+import { transactionFundingSummary } from "../../src/core/action/transactionFunding.js";
 import type { ActionPlan } from "../../src/core/action/types.js";
 import {
   createSwapHumanReadableReviewEvidence
@@ -86,6 +87,7 @@ export function createTestSwapHumanReadableReviewEvidence(input: {
         direction: input.swapQuotePolicy.quoteSource.direction
       }],
       evidenceUsed: [
+        { id: "transaction_funding", label: "Transaction funding", source: "transaction_material", summary: transactionFundingSummary(input.transactionObjectOwnership.funding) },
         {
           id: "swap_quote_policy",
           label: "Swap quote policy",

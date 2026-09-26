@@ -152,3 +152,18 @@ card permissions, SDK secrets, private request authority or live pending work.
 Local data replacement does not revoke the wallet app's connection approval.
 If a connection is no longer present in the product database, remove it in the
 wallet app; see [local data setup](MCP_SETUP.md#local-data-format).
+
+## Balance forms in a swap review
+
+A wallet can hold tokens as coin objects, address balances, or both. The backend
+uses the supported adapter's SDK to construct the transaction and verifies the
+funding form present in the stored material. Review details identify whether gas
+uses SUI coin objects, address balance, or an address-balance reservation with
+coin objects. A reservation is a limit, not a completed debit.
+
+The selected account must fund both the swap and its gas. A positive total wallet
+balance does not by itself prove that a particular withdrawal is covered. Source
+read failures and unsupported funding are not reported as confirmed insufficient
+funds. Balances can change after review; simulation and successful connection do
+not guarantee that the wallet will accept or the chain will execute a transaction.
+Every signature still requires the user's explicit card action and wallet approval.

@@ -51,7 +51,9 @@ Confirmed methods:
 
 `SimulateTransactionOptions.checksEnabled` defaults to enabled and can be set to `false` for debug/read inspection. Read-only DeepBook SDK methods use simulation internally and must not be presented as signing readiness.
 
-For review-time transaction simulation, use the runtime gRPC `client.core.simulateTransaction(...)` path with validation checks enabled. The required first-route review include set is `effects`, `balanceChanges`, `objectTypes`, and `transaction`: those fields provide status, gas used, changed-object context, raw balance deltas, sender, gas config, inputs, and command shape. Missing required fields must fail closed; do not infer readiness from partial simulation data. Do not request `bcs` for product-facing or stored review evidence, because raw transaction bytes are not an MCP or review-app output. `commandResults` remains scoped to read-only DeepBook raw quote extraction and is not swap review simulation evidence. Failed simulations are blocked pre-signing review facts, not wallet rejection, transaction submission failure, or automatic transient retry evidence. A thrown simulation call is refreshable only when it is classified as a transport, RPC, timeout, or endpoint availability failure; malformed transaction material, request-shape bugs, incomplete SDK results, and adapter defects must remain blocked.
+For review-time transaction simulation, use the public gRPC `client.transactionExecutionService.simulateTransaction` with validation checks enabled (`checks: ENABLED`), `doGasSelection: true`, and the complete stored BCS transaction. In the pinned core API, `doGasSelection: false` can let the node inject mock gas for an empty gas payment, changing the simulated digest. Require returned BCS to equal the submitted bytes and require the effects digest to match; selection must not change the reviewed material. Decode transaction facts from the identical returned BCS. Request effects, balance changes and object id/type facts, and require the normalized `effects`, `balanceChanges`, `objectTypes` and `transaction` evidence. Missing required fields must fail closed. Returned BCS is only a private equality check and must not enter public or stored review evidence; raw transaction bytes are not an MCP or review-app output. `commandResults` remains scoped to read-only DeepBook raw quote extraction using `client.core.simulateTransaction`, not swap review simulation evidence. Failed simulations are blocked pre-signing review facts, not wallet rejection, transaction submission failure, or automatic transient retry evidence. A thrown simulation call is refreshable only when it is classified as a transport, RPC, timeout, or endpoint availability failure; malformed transaction material, request-shape bugs, incomplete results, and adapter defects remain blocked.
+
+Only an explicit `effects.status.success: false` reports simulation failure. A missing transaction, effects, status, or boolean success value means the response cannot establish an outcome. Incomplete or inconsistent evidence blocks the review with a fixed explanation; internal validation and JavaScript error messages are not public review facts. A `success: true` response still requires all material and evidence checks above.
 
 ## DeepBook Read Methods
 
@@ -152,3 +154,24 @@ requests and unknown queue keys are volatile. The SDK has no supported complete
 in-process disposal; its owner process lifetime bounds callbacks and storage.
 Actual target-wallet acceptance of the serialization is an integration
 requirement, not something inferred from these SDK APIs or a rejected request.
+
+## Funding formats in Sui 2.17.0
+
+The pinned Transaction builder first resolves CoinWithBalance intents. With
+SuiGrpcClient, the SDK's gRPC resolver then asks the node to resolve transaction
+objects, gas payment, and expiration. The common client resolver is a separate
+SDK path; testing it alone does not establish the runtime's gRPC behavior.
+
+The source of truth for address-balance withdrawal and gas reservation formats
+is Sui mainnet-v1.72.5 `sui-types/src/coin_reservation.rs` and
+`transaction.rs`, together with the installed Sui 2.17.0 source. Its
+`utils/coin-reservation.ts` helper is not publicly exported. The local read-only
+funding verifier uses the SDK's public BCS, base58 and dynamic-field primitives
+for the documented reservation format; it does not replace SDK coin selection
+or import private package paths. Reservation epochs cover N and N+1.
+
+Address-balance gas uses an empty payment array with ValidDuring replay
+protection. A reservation reference can also fund a gas coin together with
+actual coin objects. Source reads and checks-enabled review simulation remain
+required; protocol feature availability alone does not prove wallet acceptance
+or execution success.

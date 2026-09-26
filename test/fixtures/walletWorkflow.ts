@@ -1,3 +1,5 @@
+import { BUILD_CHAIN } from "./deepbookBuildClient.js";
+import { SUI_TYPE_ARG } from "@mysten/sui/utils";
 import type { EventLogSink } from "../../src/core/eventlog/sink.js";
 import { readPublicChainReceipt } from "../../src/core/action/suiChainReceiptReader.js";
 import { DEFAULT_SUI_GRPC_URL, DEFAULT_SUI_GRAPHQL_URL } from "../../src/runtime/config.js";
@@ -21,7 +23,7 @@ import { createReadCardStore } from "../../src/mcp-ui/readCards.js";
 import { createDeepbookUsdcChartService } from "../../src/core/read/deepbookUsdcChartService.js";
 import { verifySuiChainReceipt, type SuiChainReceiptVerifierClient } from "../../src/core/action/suiChainReceiptVerifier.js";
 import { recordTestTransactionMaterial } from "./transactionMaterial.js";
-import { createSuccessfulReviewTimeSimulationClient, createFailedReviewTimeSimulationClient } from "./reviewTimeSimulation.js";
+import { withGrpcSimulation, createSuccessfulReviewTimeSimulationClient, createFailedReviewTimeSimulationClient } from "./reviewTimeSimulation.js";
 import { deepbookDisplayQuote } from "./deepbookQuote.js";
 import { RuntimeDataAccess } from "../../src/runtime/shared/dataAccess.js";
 import type { CardResponse } from "../../src/core/session/cardSession.js";
@@ -35,7 +37,8 @@ export function deferred<T>() {
 // Synthetic quote/object/simulation/wallet/chain sources. Core preparation,
 // SQLite admission, signature verification, receipt verification and projection
 // are real. These fixtures do not establish adapter-build or mainnet success.
-export async function walletWorkflowFixture(options: { receiptDetails?: boolean; eventLog?: EventLogSink } = {}) {
+export async function walletWorkflowFixture(options: { receiptDetails?: boolean; eventLog?: EventLogSink; addressBalance?: boolean } = {}) {
+  const chainIdentifier = options.addressBalance ? BUILD_CHAIN : "mainnet-chain";
   const directory = mkdtempSync(join(tmpdir(), "say-wallet-workflow-"));
   const access = new RuntimeDataAccess();
   let clock = Date.now();
@@ -81,8 +84,8 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
     disconnect: vi.fn(async () => { approved = undefined; }), stop: vi.fn(),
     onSessionChanged: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); } } };
   let sourceAccount = account;
-  const simulation = { core: { simulateTransaction: (input: Parameters<ReturnType<typeof createSuccessfulReviewTimeSimulationClient>["core"]["simulateTransaction"]>[0]) =>
-    createSuccessfulReviewTimeSimulationClient(sourceAccount).core.simulateTransaction(input) } };
+  const simulation = withGrpcSimulation({ core: { simulateTransaction: (input: Parameters<ReturnType<typeof createSuccessfulReviewTimeSimulationClient>["core"]["simulateTransaction"]>[0]) =>
+    createSuccessfulReviewTimeSimulationClient(sourceAccount).core.simulateTransaction(input) } });
   const digests = new Map<string, Awaited<ReturnType<typeof recordTestTransactionMaterial>>["digest"]>();
   let lastBytes: Uint8Array | undefined;
   const quote = vi.fn(async () => deepbookDisplayQuote({ fetchedAt: now().toISOString() }));
@@ -91,20 +94,22 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
       deepbookQuoteSource: { quoteDeepbookDisplayAmount: quote },
       deepbookTransactionMaterialProducer: async (input) => {
         const material = await recordTestTransactionMaterial({ materialStore, reviewSessionId: input.reviewSessionId,
-          planId: input.plan.id, account: input.account, now: input.now, expiresAt: new Date(input.now.getTime() + 30_000), includeSharedObject: true });
+          planId: input.plan.id, account: input.account, now: input.now, expiresAt: new Date(input.now.getTime() + 30_000), includeSharedObject: true, addressBalance: options.addressBalance });
         digests.set(input.reviewSessionId, material.digest);
         lastBytes = materialStore.getTransactionMaterial(material.handle, input.now)!.transactionBytes;
         return { status: "completed" as const, evidence: material.handle, checks: [] };
       },
       deepbookTransactionMaterialDigestProducer: async (input) => ({ status: "completed" as const, evidence: digests.get(input.materialHandle.reviewSessionId)!, checks: [] }),
       transactionObjectOwnershipProducer: createTransactionObjectOwnershipProducer({ materialStore,
+        fundingSource: { getCurrentSystemState: async () => ({ systemState: { epoch: "1" } }),
+          getBalance: async () => ({ balance: { coinType: SUI_TYPE_ARG, addressBalance: "2000000000" } }) },
         objectSource: { getObject: async ({ objectId }) => ({ object: { objectId,
           owner: objectId === `0x${"c".repeat(64)}` ? { $kind: "Shared" as const, Shared: { initialSharedVersion: "1" } } : { $kind: "AddressOwner" as const, AddressOwner: sourceAccount },
           type: objectId === `0x${"c".repeat(64)}` ? "0x2::clock::Clock" : "0x2::coin::Coin<0x2::sui::SUI>" } }) },
-        network: "mainnet", chainIdentifier: "mainnet-chain", expectedChainIdentifier: "mainnet-chain" }),
+        network: "mainnet", chainIdentifier, expectedChainIdentifier: chainIdentifier }),
       deepbookHumanReadableReviewProducer: createDeepbookSwapHumanReadableReviewProducer(),
       reviewTimeSimulationProducer: createReviewTimeSimulationProducer({ client: simulation, materialStore,
-        network: "mainnet", chainIdentifier: "mainnet-chain", expectedChainIdentifier: "mainnet-chain" }),
+        network: "mainnet", chainIdentifier, expectedChainIdentifier: chainIdentifier }),
       ptbVisualizationProducer: (input) => producePtbVisualizationArtifact({ materialStore, ...input })
     } }) };
   const submit = vi.fn(async (_bytes: Uint8Array, _signature: string) => ({}));
@@ -115,9 +120,9 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
     return (chainFailure ? failedChain : simulation).core.simulateTransaction({ transaction: lastBytes, checksEnabled: true,
       include: { transaction: true, effects: true, balanceChanges: true, objectTypes: true } });
   });
-  const chain: SuiChainReceiptVerifierClient = { core: { getChainIdentifier: async () => ({ chainIdentifier: "mainnet-chain" }),
+  const chain: SuiChainReceiptVerifierClient = { core: { getChainIdentifier: async () => ({ chainIdentifier }),
     getTransaction: chainRead, waitForTransaction: chainRead } };
-  const verifyReceipt = (input: Parameters<typeof verifySuiChainReceipt>[1]) => verifySuiChainReceipt({ client: chain, network: "mainnet", expectedChainIdentifier: "mainnet-chain" }, input);
+  const verifyReceipt = (input: Parameters<typeof verifySuiChainReceipt>[1]) => verifySuiChainReceipt({ client: chain, network: "mainnet", expectedChainIdentifier: chainIdentifier }, input);
   const verifyNetwork = vi.fn(async () => {});
   const workflow = new WalletWorkflow({ records, sessions, ownerId, transport, computation,
     verifyReceipt,
@@ -126,7 +131,7 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
         const result = await chainRead();
         return result.$kind === "Transaction" ? { ...result, Transaction: { ...result.Transaction, events: [] } } :
           { ...result, FailedTransaction: { ...result.FailedTransaction, events: [] } };
-      } } }, network: "mainnet", expectedChainIdentifier: "mainnet-chain"
+      } } }, network: "mainnet", expectedChainIdentifier: chainIdentifier
     }, input) } : {}),
     submitTransaction: submit, verifyNetwork, assertCurrent: access.assertCurrent,
     runExternalEvent: (work) => access.run(work), logger, now });

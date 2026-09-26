@@ -1,3 +1,4 @@
+import { testObjectFunding } from "./fixtures/transactionMaterial.js";
 import { describe, expect, it } from "vitest";
 import {
   createDeepbookSwapHumanReadableReviewProducer
@@ -548,6 +549,7 @@ async function buildHumanReviewFixture() {
   });
   const transactionObjectOwnership: TransactionObjectOwnershipEvidence = {
     evidenceVersion: TRANSACTION_OBJECT_OWNERSHIP_EVIDENCE_VERSION,
+    funding: testObjectFunding(account),
     materialId: material.handle.materialId,
     reviewSessionId: material.handle.reviewSessionId,
     planId: material.handle.planId,

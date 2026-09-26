@@ -1,3 +1,5 @@
+import { GrpcTypes } from "@mysten/sui/grpc";
+import { withGrpcSimulation } from "./fixtures/reviewTimeSimulation.js";
 import { describe, expect, it } from "vitest";
 import {
   createReviewTimeSimulationProducer,
@@ -54,12 +56,14 @@ describe("review-time simulation evidence", () => {
       },
       checksEnabled: true
     });
-    expect(client.calls[0]?.include).not.toHaveProperty("bcs");
+    expect(client.rpcCalls[0]).toMatchObject({ checks: 0, doGasSelection: true,
+      readMask: { paths: expect.arrayContaining(["transaction.transaction.bcs", "transaction.effects", "transaction.balance_changes", "transaction.objects.objects.object_type"]) } });
+    expect(client.rpcCalls[0]?.transaction?.bcs?.value).toEqual(materialStore.getTransactionMaterial(material.handle, new Date(material.handle.createdAt))!.transactionBytes);
     expect(outcome.evidence).toMatchObject({
-      evidenceVersion: "review-time-simulation-v1",
+      evidenceVersion: "review-time-simulation-v2",
       materialId: material.handle.materialId,
       transactionDigest: material.digest.transactionDigest,
-      provider: "client.core.simulateTransaction",
+      provider: "client.transactionExecutionService.simulateTransaction",
       checksEnabled: true,
       status: "success",
       requiredFields: ["effects", "balanceChanges", "objectTypes", "transaction"],
@@ -75,6 +79,7 @@ describe("review-time simulation evidence", () => {
       }
     });
     expect(verifyReviewTimeSimulationEvidence({
+        transactionBytes: materialStore.getTransactionMaterial(material.handle, new Date(material.handle.createdAt))!.transactionBytes,
       transactionMaterial: material.handle,
       transactionMaterialDigest: material.digest,
       evidence: outcome.evidence,
@@ -82,7 +87,7 @@ describe("review-time simulation evidence", () => {
     })).toEqual(outcome.evidence);
     const publicSummary = publicTransactionSimulationSummaryFromEvidence(outcome.evidence);
     expect(publicSummary).toMatchObject({
-      provider: "client.core.simulateTransaction",
+      provider: "client.transactionExecutionService.simulateTransaction",
       checksEnabled: true,
       success: true,
       gasCostSummary: {
@@ -159,11 +164,15 @@ describe("review-time simulation evidence", () => {
     expect(outcome).toMatchObject({
       status: "blocked",
       blockedReason: "object_resolution_failed",
-      checks: [{ id: "review_time_simulation_result_failed", status: "fail" }]
+      checks: [{ id: "review_time_simulation_result_failed", status: "fail",
+        message: "Review-time simulation did not succeed: The checked simulation rejected the transaction. No transaction was signed or submitted." }]
     });
   });
 
-  it("classifies failed simulation gas errors as blocked insufficient gas", async () => {
+  it.each([
+    [GrpcTypes.ExecutionError_ExecutionErrorKind.INSUFFICIENT_GAS, "insufficient_gas", "gas"],
+    [GrpcTypes.ExecutionError_ExecutionErrorKind.INSUFFICIENT_COIN_BALANCE, "insufficient_balance", "coin balance"]
+  ] as const)("classifies explicit failed simulation kind %s from its typed source", async (kind, blockedReason, asset) => {
     const materialStore = new InMemoryLocalTransactionMaterialStore();
     const material = await recordTestTransactionMaterial({
       materialStore,
@@ -175,7 +184,7 @@ describe("review-time simulation evidence", () => {
       expiresAt: new Date("2026-06-06T00:30:00.000Z")
     });
     const producer = createReviewTimeSimulationProducer({
-      client: createFailedReviewTimeSimulationClient("Insufficient gas payment"),
+      client: createFailedReviewTimeSimulationClient("private node description", kind),
       materialStore,
       network: "mainnet",
       chainIdentifier,
@@ -190,8 +199,54 @@ describe("review-time simulation evidence", () => {
 
     expect(outcome).toMatchObject({
       status: "blocked",
-      blockedReason: "insufficient_gas",
-      checks: [{ id: "review_time_simulation_result_failed", status: "fail" }]
+      blockedReason,
+      checks: [{ id: "review_time_simulation_result_failed", status: "fail",
+        message: `Review-time simulation did not succeed: The checked simulation reported insufficient ${asset}.` }]
+    });
+  });
+
+  it.each([
+    "transaction", "effects", "status", "success", "non_boolean_success",
+    "gasUsed", "computationCost", "storageCost", "storageRebate", "nonRefundableStorageFee",
+    "changedObjects_deleted_after_decode"
+  ] as const)("blocks incomplete or malformed %s without claiming transaction rejection", async (fault) => {
+    const materialStore = new InMemoryLocalTransactionMaterialStore();
+    const material = await recordTestTransactionMaterial({
+      materialStore, reviewSessionId: "review_1", planId: "plan_1", account,
+      now: new Date("2026-06-06T00:00:00.000Z"),
+      expiresAt: new Date("2026-06-06T00:30:00.000Z")
+    });
+    const client = createSuccessfulReviewTimeSimulationClient(account);
+    const simulate = client.transactionExecutionService.simulateTransaction;
+    client.transactionExecutionService.simulateTransaction = async (request) => {
+      // Mutate only the returned gRPC source, after the valid fixture is built.
+      const result = await simulate(request);
+      const tx = result.response.transaction!;
+      switch (fault) {
+        case "transaction": delete result.response.transaction; break;
+        case "effects": delete tx.effects; break;
+        case "status": delete tx.effects!.status; break;
+        case "success": delete tx.effects!.status!.success; break;
+        case "non_boolean_success": tx.effects!.status!.success = "false" as never; break;
+        case "gasUsed": delete tx.effects!.gasUsed; break;
+        case "changedObjects_deleted_after_decode":
+          // Real protobuf omission decodes to []; this models a malformed JS source.
+          Reflect.deleteProperty(tx.effects!, "changedObjects"); break;
+        default: delete tx.effects!.gasUsed![fault];
+      }
+      return result;
+    };
+    const outcome = await createReviewTimeSimulationProducer({
+      client, materialStore, network: "mainnet", chainIdentifier, expectedChainIdentifier: chainIdentifier
+    })({ transactionMaterial: material.handle, transactionMaterialDigest: material.digest,
+      now: new Date("2026-06-06T00:00:02.000Z") });
+
+    expect(client.rpcCalls).toHaveLength(1);
+    expect(outcome).toEqual({
+      status: "blocked", blockedReason: "object_resolution_failed",
+      checks: [{ id: "review_time_simulation_result_invalid", label: "Review-time simulation", status: "fail",
+        message: "Review-time simulation returned incomplete or unverifiable evidence. Nothing was signed or submitted.",
+        source: "simulation" }]
     });
   });
 
@@ -207,13 +262,13 @@ describe("review-time simulation evidence", () => {
       expiresAt: new Date("2026-06-06T00:30:00.000Z")
     });
     const producer = createReviewTimeSimulationProducer({
-      client: {
+      client: withGrpcSimulation({
         core: {
           async simulateTransaction() {
             throw new Error("gRPC unavailable");
           }
         }
-      },
+      }),
       materialStore,
       network: "mainnet",
       chainIdentifier,
@@ -245,13 +300,13 @@ describe("review-time simulation evidence", () => {
       expiresAt: new Date("2026-06-06T00:30:00.000Z")
     });
     const producer = createReviewTimeSimulationProducer({
-      client: {
+      client: withGrpcSimulation({
         core: {
           async simulateTransaction() {
             throw new Error("invalid simulateTransaction request shape");
           }
         }
-      },
+      }),
       materialStore,
       network: "mainnet",
       chainIdentifier,
@@ -284,7 +339,7 @@ describe("review-time simulation evidence", () => {
     });
     const baseClient = createSuccessfulReviewTimeSimulationClient(account);
     const producer = createReviewTimeSimulationProducer({
-      client: {
+      client: withGrpcSimulation({
         core: {
           async simulateTransaction(options) {
             const result = await baseClient.core.simulateTransaction(options);
@@ -300,7 +355,7 @@ describe("review-time simulation evidence", () => {
             };
           }
         }
-      },
+      }),
       materialStore,
       network: "mainnet",
       chainIdentifier,
@@ -333,7 +388,7 @@ describe("review-time simulation evidence", () => {
     });
     const baseClient = createSuccessfulReviewTimeSimulationClient(account);
     const producer = createReviewTimeSimulationProducer({
-      client: {
+      client: withGrpcSimulation({
         core: {
           async simulateTransaction(options) {
             const result = await baseClient.core.simulateTransaction(options);
@@ -352,7 +407,7 @@ describe("review-time simulation evidence", () => {
             };
           }
         }
-      },
+      }),
       materialStore,
       network: "mainnet",
       chainIdentifier,
@@ -402,6 +457,7 @@ describe("review-time simulation evidence", () => {
 
     expect(() =>
       verifyReviewTimeSimulationEvidence({
+        transactionBytes: materialStore.getTransactionMaterial(material.handle, new Date(material.handle.createdAt))!.transactionBytes,
         transactionMaterial: material.handle,
         transactionMaterialDigest: {
           ...material.digest,
@@ -442,6 +498,7 @@ describe("review-time simulation evidence", () => {
 
     expect(() =>
       verifyReviewTimeSimulationEvidence({
+        transactionBytes: materialStore.getTransactionMaterial(material.handle, new Date(material.handle.createdAt))!.transactionBytes,
         transactionMaterial: material.handle,
         transactionMaterialDigest: material.digest,
         evidence: {

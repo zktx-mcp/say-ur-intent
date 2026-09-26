@@ -1,3 +1,5 @@
+import { SUI_MAINNET_CHAIN_IDENTIFIER as BUILD_CHAIN } from "../../src/runtime/suiEndpoint.js";
+import type { TransactionFundingEvidence } from "../../src/core/action/transactionFunding.js";
 import { Inputs, Transaction } from "@mysten/sui/transactions";
 import type {
   LocalTransactionMaterialDigestCommitment,
@@ -7,19 +9,24 @@ import type {
 
 export async function buildTestTransactionBytes(
   account: string,
-  options: { includeSharedObject?: boolean | undefined; moveCallTarget?: string | undefined } = {}
+  options: { includeSharedObject?: boolean | undefined; moveCallTarget?: string | undefined; addressBalance?: boolean | undefined } = {}
 ): Promise<Uint8Array> {
   const transaction = new Transaction();
   transaction.setSender(account);
   transaction.setGasBudget(1000);
   transaction.setGasPrice(1);
-  transaction.setGasPayment([
+  transaction.setGasPayment(options.addressBalance ? [] : [
     {
       objectId: `0x${"b".repeat(64)}`,
       version: "1",
       digest: "7".repeat(44)
     }
   ]);
+  if (options.addressBalance) {
+    transaction.setExpiration({ ValidDuring: { minEpoch: "1", maxEpoch: "2", minTimestamp: null, maxTimestamp: null, chain: BUILD_CHAIN, nonce: 7 } });
+    const coin = transaction.moveCall({ target: "0x2::coin::redeem_funds", typeArguments: ["0x2::sui::SUI"], arguments: [transaction.withdrawal({ amount: 1000000000n })] });
+    transaction.transferObjects([coin], account);
+  }
   if (options.moveCallTarget) {
     transaction.moveCall({
       target: options.moveCallTarget,
@@ -51,6 +58,7 @@ export async function recordTestTransactionMaterial(input: {
   computedAt?: Date | undefined;
   expiresAt: Date;
   includeSharedObject?: boolean | undefined;
+  addressBalance?: boolean | undefined;
   moveCallTarget?: string | undefined;
 }): Promise<{
   handle: LocalTransactionMaterialHandle;
@@ -58,6 +66,7 @@ export async function recordTestTransactionMaterial(input: {
 }> {
   const transactionBytes = await buildTestTransactionBytes(input.account, {
     includeSharedObject: input.includeSharedObject,
+    addressBalance: input.addressBalance,
     moveCallTarget: input.moveCallTarget
   });
   const handle = input.materialStore.recordTransactionMaterial(
@@ -88,4 +97,12 @@ export async function recordTestTransactionMaterial(input: {
       expiresAt: handle.expiresAt
     }
   };
+}
+
+// Independent facts for buildTestTransactionBytes' fixed object-funded input.
+export function testObjectFunding(account: string, chainIdentifier = "mainnet-chain"): TransactionFundingEvidence {
+  const objectId = `0x${"b".repeat(64)}`;
+  return { sender: account, gasOwner: account, chainIdentifier, gasBudgetRaw: "1000", gasPriceRaw: "1",
+    gasMode: "coin_objects", gasPayments: [{ objectId, version: "1", digest: "7".repeat(44) }],
+    gasObjectIds: [objectId], reservations: [], withdrawals: [], expiration: { kind: "none" }, addressBalances: [] };
 }

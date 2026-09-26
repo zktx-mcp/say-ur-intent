@@ -4,6 +4,10 @@ import { SUI_TYPE_ARG } from "@mysten/sui/utils";
 import { makeCanonicalRawU64StringSchema } from "../numeric/rawU64.js";
 import { suiAddressStringSchema, suiTransactionDigestSchema } from "../suiAddress.js";
 
+export const REVIEW_TIME_SIMULATION_PROVIDER = "client.transactionExecutionService.simulateTransaction" as const;
+// Stored public history may retain the previous provider; new review evidence uses the provider above.
+export const reviewSimulationProviderSchema = z.enum(["client.core.simulateTransaction", REVIEW_TIME_SIMULATION_PROVIDER]);
+
 export const TRANSACTION_REVIEW_SCHEMA_VERSION =
   1;
 export const PTB_VISUALIZATION_CONTRACT_VERSION =
@@ -464,7 +468,7 @@ const simulationResultClaimSchema = z.object({
   id: evidenceIdSchema,
   factKind: z.literal("simulation_result"),
   sourceEvidenceId: evidenceIdSchema,
-  provider: z.literal("client.core.simulateTransaction"),
+  provider: reviewSimulationProviderSchema,
   checksEnabled: z.literal(true),
   simulatedAt: isoUtcStringSchema,
   status: z.enum(["success", "failed", "unavailable"]),
@@ -705,7 +709,7 @@ export const adapterObjectOwnershipEvidenceSchema = z.object({
 export const adapterSimulationEvidenceSchema = z.object({
   evidenceClaimId: evidenceIdSchema,
   transactionDigest: suiTransactionDigestSchema,
-  provider: z.literal("client.core.simulateTransaction"),
+  provider: reviewSimulationProviderSchema,
   checksEnabled: z.literal(true),
   simulatedAt: isoUtcStringSchema,
   status: z.enum(["success", "failed", "unavailable"]),

@@ -817,3 +817,18 @@ it("preserves a backend connection-expiry reason after signature verification", 
   expect(f.run(() => f.records.currentRequest(ready.session.id)?.reason)).toBe("The selected Sui wallet connection is unavailable.");
   expect(f.submit).not.toHaveBeenCalled(); expect(f.sign).toHaveBeenCalledOnce();
 });
+
+
+it("carries address-funded material through SQLite admission, real signature verification and one submission", async () => {
+  const f = await walletWorkflowFixture({ addressBalance: true }); fixtures.push(f);
+  const { connection } = await f.approve(); const ready = await f.prepare(connection.connectionId);
+  expect(ready.session.reviewState?.humanReadableReview?.evidenceUsed).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: "transaction_funding", summary: expect.stringContaining("SUI address balance") })
+  ]));
+  const input = { action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: ready.session.reviewRevision };
+  expect((await f.act(ready.card, input)).error).toBeUndefined();
+  await f.act(ready.card, input);
+  await vi.waitFor(() => expect(f.run(() => f.records.currentRequest(ready.session.id)?.requestStatus)).toBe("completed"));
+  expect(f.sign).toHaveBeenCalledOnce(); expect(f.submit).toHaveBeenCalledOnce();
+  expect(f.run(() => f.records.currentRequest(ready.session.id)?.execution?.status)).toBe("success");
+});

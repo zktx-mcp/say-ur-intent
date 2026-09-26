@@ -673,12 +673,20 @@ describe("review computation", () => {
     expect(JSON.stringify(computed.state)).not.toContain(computed.privateArtifacts?.humanReadableReview?.transactionDigest);
   });
 
-  it("advances review-time simulation, emits the wallet review contract, and reaches ready_for_wallet_review", async () => {
+  it.each(["complete", "missing_success"] as const)("maps %s simulation evidence into the review lifecycle and wallet contract", async (responseKind) => {
     const materialStore = new InMemoryLocalTransactionMaterialStore();
     let materialDigest: Awaited<ReturnType<typeof recordTestTransactionMaterial>>["digest"] | undefined;
     const simulationClient = createSuccessfulReviewTimeSimulationClient(
       "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     );
+    if (responseKind === "missing_success") {
+      const simulate = simulationClient.transactionExecutionService.simulateTransaction;
+      simulationClient.transactionExecutionService.simulateTransaction = async (request) => {
+        const result = await simulate(request);
+        delete result.response.transaction!.effects!.status!.success;
+        return result;
+      };
+    }
     const computed = await computeReviewStateWithPrivateArtifacts(
       {
         reviewSessionId: "review_1",
@@ -778,6 +786,28 @@ describe("review computation", () => {
       })
     );
 
+    if (responseKind === "missing_success") {
+      expect(simulationClient.rpcCalls).toHaveLength(1);
+      expect(computed.state).toMatchObject({
+        status: "blocked", blockedReason: "object_resolution_failed",
+        adapterLifecycle: {
+          completedStages: ["intent_normalized", "pool_resolved", "quote_evidence_fetched", "quote_policy_derived",
+            "transaction_material_build_or_verify", "digest_commitment", "object_ownership", "human_readable_review"],
+          missingStages: ["review_time_simulation"]
+        }
+      });
+      expect(computed.state.checks).toContainEqual({
+        id: "review_time_simulation_result_invalid", label: "Review-time simulation", status: "fail",
+        message: "Review-time simulation returned incomplete or unverifiable evidence. Nothing was signed or submitted.",
+        source: "simulation"
+      });
+      expect(computed.state.transactionReviewData).toBeUndefined();
+      expect(computed.state.simulation).toBeUndefined();
+      expect(computed.privateArtifacts?.reviewTimeSimulation).toBeUndefined();
+      expect(computed.privateArtifacts?.humanReadableReview).toBeDefined();
+      return;
+    }
+
     expect(computed.state).toMatchObject({
       status: "ready_for_wallet_review",
       adapterLifecycle: {
@@ -795,7 +825,7 @@ describe("review computation", () => {
         missingStages: []
       },
       simulation: {
-        provider: "client.core.simulateTransaction",
+        provider: "client.transactionExecutionService.simulateTransaction",
         checksEnabled: true,
         success: true,
         gasCostSummary: {

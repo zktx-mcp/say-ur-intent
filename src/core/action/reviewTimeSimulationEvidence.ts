@@ -1,8 +1,11 @@
+import { GrpcTypes } from "@mysten/sui/grpc";
+import { describeTransactionFunding, assertTransactionFundingMatches, transactionFundingDescriptionSchema } from "./transactionFunding.js";
 import type { SuiClientTypes } from "@mysten/sui/client";
 import { Transaction } from "@mysten/sui/transactions";
 import { z } from "zod";
 import { assertNoForbiddenMcpFields } from "./forbiddenFields.js";
 import {
+  REVIEW_TIME_SIMULATION_PROVIDER,
   WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS
 } from "./signableAdapterContract.js";
 import type {
@@ -36,7 +39,10 @@ import {
 } from "../session/transactionMaterialStore.js";
 
 export const REVIEW_TIME_SIMULATION_EVIDENCE_VERSION =
-  "review-time-simulation-v1";
+  "review-time-simulation-v2";
+
+const INVALID_SIMULATION_EVIDENCE_MESSAGE =
+  "Review-time simulation returned incomplete or unverifiable evidence. Nothing was signed or submitted.";
 
 const isoUtcStringSchema = z.string().refine((value) => {
   const parsed = new Date(value);
@@ -67,12 +73,19 @@ const simulationObjectChangeSchema = z.object({
 
 const simulationTransactionSummarySchema = z.object({
   sender: normalizedSuiAddressSchema,
-  gasPaymentCount: z.number().int().min(1),
+  funding: transactionFundingDescriptionSchema,
+  gasPaymentCount: z.number().int().min(0),
   inputCount: z.number().int().min(0),
   commandCount: z.number().int().min(0),
   gasBudgetRaw: makeRawU64StringSchema("gasBudgetRaw").optional(),
   gasPriceRaw: makeRawU64StringSchema("gasPriceRaw").optional()
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.sender !== value.funding.sender || value.gasPaymentCount !== value.funding.gasPayments.length ||
+      value.gasBudgetRaw !== value.funding.gasBudgetRaw || value.gasPriceRaw !== value.funding.gasPriceRaw ||
+      (value.gasPaymentCount === 0) !== (value.funding.gasMode === "address_balance")) {
+    ctx.addIssue({ code: "custom", message: "Simulation summary must match transaction funding" });
+  }
+});
 
 const simulationGasCostSummarySchema = z.object({
   computationCostRaw: makeRawU64StringSchema("computationCostRaw"),
@@ -89,7 +102,7 @@ export const reviewTimeSimulationEvidenceSchema = z.object({
   account: normalizedSuiAddressSchema,
   transactionDigest: suiTransactionDigestSchema,
   kind: z.literal("review_time_simulation"),
-  provider: z.literal("client.core.simulateTransaction"),
+  provider: z.literal(REVIEW_TIME_SIMULATION_PROVIDER),
   network: z.literal("sui:mainnet"),
   checksEnabled: z.literal(true),
   requiredFields: z.array(simulationRequiredFieldSchema).min(WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS.length),
@@ -139,18 +152,8 @@ export const reviewTimeSimulationEvidenceSchema = z.object({
 export type ReviewTimeSimulationEvidence = z.infer<typeof reviewTimeSimulationEvidenceSchema>;
 
 export type ReviewTimeSimulationClient = {
-  core: {
-    simulateTransaction(input: SuiClientTypes.SimulateTransactionOptions<{
-      transaction: true;
-      effects: true;
-      balanceChanges: true;
-      objectTypes: true;
-    }>): Promise<SuiClientTypes.SimulateTransactionResult<{
-      transaction: true;
-      effects: true;
-      balanceChanges: true;
-      objectTypes: true;
-    }>>;
+  transactionExecutionService: {
+    simulateTransaction(input: GrpcTypes.SimulateTransactionRequest): PromiseLike<{ response: GrpcTypes.SimulateTransactionResponse }>;
   };
 };
 
@@ -199,9 +202,11 @@ export function verifyReviewTimeSimulationEvidence(input: {
   transactionMaterial: LocalTransactionMaterialHandle;
   transactionMaterialDigest: LocalTransactionMaterialDigestCommitment;
   evidence: ReviewTimeSimulationEvidence;
+  transactionBytes: Uint8Array;
   now?: Date | undefined;
 }): ReviewTimeSimulationEvidence {
   const evidence = parseReviewTimeSimulationEvidence(input.evidence);
+  assertTransactionFundingMatches(describeTransactionFunding(Transaction.from(input.transactionBytes).getData(), input.transactionMaterial.account, evidence.transaction.funding.chainIdentifier), evidence.transaction.funding);
   const now = input.now ?? new Date();
   const nowMs = now.getTime();
   if (!Number.isFinite(nowMs)) {
@@ -321,16 +326,16 @@ export function createReviewTimeSimulationProducer(
 
     let simulationResult;
     try {
-      simulationResult = await options.client.core.simulateTransaction({
-        transaction: material.transactionBytes,
-        include: {
-          transaction: true,
-          effects: true,
-          balanceChanges: true,
-          objectTypes: true
-        },
-        checksEnabled: true
+      const result = await options.client.transactionExecutionService.simulateTransaction({
+        transaction: { bcs: { value: material.transactionBytes } },
+        checks: GrpcTypes.SimulateTransactionRequest_TransactionChecks.ENABLED,
+        // With false, the node may inject mock gas for empty payments. A fully
+        // specified BCS transaction stays immutable: verify returned bytes below.
+        doGasSelection: true,
+        readMask: { paths: ["transaction.transaction.bcs", "transaction.effects", "transaction.balance_changes",
+          "transaction.objects.objects.object_id", "transaction.objects.objects.object_type"] }
       });
+      simulationResult = result.response.transaction;
     } catch (error) {
       const classification = classifySimulationException(error);
       if (classification.status === "refresh_required") {
@@ -361,11 +366,26 @@ export function createReviewTimeSimulationProducer(
       };
     }
 
-    const simulatedTransaction = simulationResult.$kind === "Transaction"
-      ? simulationResult.Transaction
-      : simulationResult.FailedTransaction;
-    if (simulationResult.$kind !== "Transaction" || !simulatedTransaction.status.success) {
-      const failureReason = simulationFailureReason(simulatedTransaction.status);
+    const simulatedTransaction = simulationResult;
+    if (!simulatedTransaction?.effects?.status || typeof simulatedTransaction.effects.status.success !== "boolean") {
+      return {
+        status: "blocked",
+        blockedReason: "object_resolution_failed",
+        checks: [failReviewCheck(
+          "review_time_simulation_result_invalid",
+          "Review-time simulation",
+          INVALID_SIMULATION_EVIDENCE_MESSAGE,
+          "simulation"
+        )]
+      };
+    }
+    if (simulatedTransaction.effects.status.success === false) {
+      const failureKind = simulatedTransaction.effects.status.error?.kind;
+      const failureReason = failureKind === GrpcTypes.ExecutionError_ExecutionErrorKind.INSUFFICIENT_GAS
+        ? "The checked simulation reported insufficient gas."
+        : failureKind === GrpcTypes.ExecutionError_ExecutionErrorKind.INSUFFICIENT_COIN_BALANCE
+          ? "The checked simulation reported insufficient coin balance."
+          : "The checked simulation rejected the transaction. No transaction was signed or submitted.";
       const checks: [ReviewCheck, ...ReviewCheck[]] = [
         failReviewCheck(
           "review_time_simulation_result_failed",
@@ -376,7 +396,7 @@ export function createReviewTimeSimulationProducer(
       ];
       return {
         status: "blocked",
-        blockedReason: blockedReasonForSimulationFailure(failureReason),
+        blockedReason: blockedReasonForSimulationFailure(failureKind),
         checks
       };
     }
@@ -405,16 +425,19 @@ export function createReviewTimeSimulationProducer(
         transactionMaterial: parsed.transactionMaterial,
         transactionMaterialDigest: parsed.transactionMaterialDigest,
         recomputedTransactionDigest,
+        chainIdentifier: options.chainIdentifier,
         transaction: simulatedTransaction,
+        submittedBytes: material.transactionBytes,
         simulatedAt: input.now
       });
       verifyReviewTimeSimulationEvidence({
         transactionMaterial: parsed.transactionMaterial,
         transactionMaterialDigest: parsed.transactionMaterialDigest,
         evidence,
+        transactionBytes: material.transactionBytes,
         now: input.now
       });
-    } catch (error) {
+    } catch {
       return {
         status: "blocked",
         blockedReason: "object_resolution_failed",
@@ -422,7 +445,7 @@ export function createReviewTimeSimulationProducer(
           failReviewCheck(
             "review_time_simulation_result_invalid",
             "Review-time simulation",
-            error instanceof Error ? error.message : "Review-time simulation returned incomplete or invalid required fields.",
+            INVALID_SIMULATION_EVIDENCE_MESSAGE,
             "simulation"
           )
         ]
@@ -448,80 +471,64 @@ function createReviewTimeSimulationEvidenceFromTransaction(input: {
   transactionMaterial: LocalTransactionMaterialHandle;
   transactionMaterialDigest: LocalTransactionMaterialDigestCommitment;
   recomputedTransactionDigest: string;
-  transaction: SuiClientTypes.Transaction<{
-    transaction: true;
-    effects: true;
-    balanceChanges: true;
-    objectTypes: true;
-  }>;
+  chainIdentifier: string;
+  submittedBytes: Uint8Array;
+  transaction: GrpcTypes.ExecutedTransaction;
   simulatedAt: Date;
 }): ReviewTimeSimulationEvidence {
-  // The digest binding is recomputed locally from the exact bytes submitted to
-  // the simulation endpoint. Public fullnodes differ in whether they echo the
-  // transaction digest back, so node-provided digests are cross-checks only.
-  if (input.recomputedTransactionDigest !== input.transactionMaterialDigest.transactionDigest) {
-    throw new Error("simulated transaction digest must match the stored material digest");
+  const tx = input.transaction;
+  if (input.recomputedTransactionDigest !== input.transactionMaterialDigest.transactionDigest ||
+      (tx.digest !== undefined && tx.digest !== input.recomputedTransactionDigest)) {
+    throw new Error("simulation transaction digest must match stored material");
   }
-  const nodeDigest = input.transaction.digest;
-  if (nodeDigest !== undefined && nodeDigest !== input.transactionMaterialDigest.transactionDigest) {
-    throw new Error("simulation node returned a different transaction digest than the submitted bytes");
+  const returnedBytes = tx.transaction?.bcs?.value;
+  if (!(returnedBytes instanceof Uint8Array) || !Buffer.from(input.submittedBytes).equals(returnedBytes)) {
+    throw new Error("simulation must return exactly the submitted transaction bytes");
   }
-  const effectsDigest = input.transaction.effects?.transactionDigest;
-  if (effectsDigest !== undefined && effectsDigest !== input.transactionMaterialDigest.transactionDigest) {
+  if (!tx.effects || tx.effects.transactionDigest !== input.recomputedTransactionDigest) {
     throw new Error("simulated effects digest must match the stored material digest");
   }
-  if (!input.transaction.transaction) {
-    throw new Error("simulation result is missing parsed transaction data");
+  if (!Array.isArray(tx.balanceChanges) || !tx.objects || !Array.isArray(tx.objects.objects)) {
+    throw new Error("simulation is missing balance changes or object type evidence");
   }
-  if (!input.transaction.effects) {
-    throw new Error("simulation result is missing effects");
-  }
-  if (!input.transaction.balanceChanges) {
-    throw new Error("simulation result is missing balance changes");
-  }
-  if (!input.transaction.objectTypes) {
-    throw new Error("simulation result is missing object types");
-  }
-
-  const transactionSummary = summarizeSimulatedTransaction(input.transaction.transaction);
-  const evidence = {
+  const objectTypes = new Map(tx.objects.objects.map((object) => {
+    if (typeof object.objectType !== "string" || !object.objectType) throw new Error("simulation object type is missing");
+    return [normalizeSimulationAddress(object.objectId!, "object type id"), object.objectType];
+  }));
+  const gas = tx.effects.gasUsed;
+  const objectChanges = tx.effects.changedObjects.map((change) => ({
+    objectId: normalizeSimulationAddress(change.objectId!, "object change id"),
+    ...(objectTypes.has(change.objectId!) ? { objectType: objectTypes.get(change.objectId!)! } : {}),
+    inputState: simulationEnum(GrpcTypes.ChangedObject_InputObjectState, change.inputState),
+    outputState: simulationEnum(GrpcTypes.ChangedObject_OutputObjectState, change.outputState),
+    idOperation: simulationEnum(GrpcTypes.ChangedObject_IdOperation, change.idOperation)
+  }));
+  return reviewTimeSimulationEvidenceSchema.parse({
     evidenceVersion: REVIEW_TIME_SIMULATION_EVIDENCE_VERSION,
-    materialId: input.transactionMaterial.materialId,
-    reviewSessionId: input.transactionMaterial.reviewSessionId,
-    planId: input.transactionMaterial.planId,
-    account: input.transactionMaterial.account,
-    transactionDigest: input.transactionMaterialDigest.transactionDigest,
-    kind: "review_time_simulation",
-    provider: "client.core.simulateTransaction",
-    network: "sui:mainnet",
-    checksEnabled: true,
-    requiredFields: [...WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS],
-    missingFields: [],
-    status: "success",
-    simulatedAt: input.simulatedAt.toISOString(),
-    expiresAt: input.transactionMaterial.expiresAt,
-    effects: {
-      transactionDigest: input.transaction.effects.transactionDigest,
-      gasCostSummary: summarizeGasCost(input.transaction.effects.gasUsed),
-      changedObjectCount: input.transaction.effects.changedObjects.length
-    },
-    balanceChanges: input.transaction.balanceChanges.map((change) => ({
-      address: normalizeSimulationAddress(change.address, "balance change address"),
-      coinType: normalizeCoinType(change.coinType),
-      amount: change.amount
-    })),
-    objectChanges: input.transaction.effects.changedObjects.map((change) => ({
-      objectId: normalizeSimulationAddress(change.objectId, "object change objectId"),
-      ...(input.transaction.objectTypes[change.objectId]
-        ? { objectType: input.transaction.objectTypes[change.objectId] }
-        : {}),
-      inputState: change.inputState,
-      outputState: change.outputState,
-      idOperation: change.idOperation
-    })),
-    transaction: transactionSummary
-  } satisfies ReviewTimeSimulationEvidence;
-  return reviewTimeSimulationEvidenceSchema.parse(evidence);
+    materialId: input.transactionMaterial.materialId, reviewSessionId: input.transactionMaterial.reviewSessionId,
+    planId: input.transactionMaterial.planId, account: input.transactionMaterial.account,
+    transactionDigest: input.recomputedTransactionDigest, kind: "review_time_simulation",
+    provider: REVIEW_TIME_SIMULATION_PROVIDER, network: "sui:mainnet", checksEnabled: true,
+    requiredFields: [...WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS], missingFields: [], status: "success",
+    simulatedAt: input.simulatedAt.toISOString(), expiresAt: input.transactionMaterial.expiresAt,
+    effects: { transactionDigest: tx.effects.transactionDigest, gasCostSummary: summarizeGasCost({
+      computationCost: gas?.computationCost?.toString()!, storageCost: gas?.storageCost?.toString()!,
+      storageRebate: gas?.storageRebate?.toString()!, nonRefundableStorageFee: gas?.nonRefundableStorageFee?.toString()!
+    }), changedObjectCount: objectChanges.length },
+    balanceChanges: tx.balanceChanges.map((change) => ({ address: normalizeSimulationAddress(change.address!, "balance change address"),
+      coinType: normalizeCoinType(change.coinType!), amount: change.amount })), objectChanges,
+    transaction: summarizeSimulatedTransaction(Transaction.from(returnedBytes).getData(), input.transactionMaterial.account, input.chainIdentifier)
+  });
+}
+
+// Preserve the established simulation labels while reading the SDK's public
+// protobuf enums. Missing state is malformed evidence, not a guessed state.
+function simulationEnum(values: Record<number, string>, value: number | undefined): string {
+  if (value === undefined || values[value] === undefined) throw new Error("simulation object state is missing");
+  const name = values[value]!;
+  if (name === "ACCUMULATOR_WRITE") return "AccumulatorWriteV1";
+  if (name === "ID_OPERATION_UNKNOWN") return "None";
+  return name.split("_").map((word) => word[0] + word.slice(1).toLowerCase()).join("");
 }
 
 function summarizeGasCost(gasUsed: SuiClientTypes.GasCostSummary): ReviewTimeSimulationEvidence["effects"]["gasCostSummary"] {
@@ -538,7 +545,7 @@ function summarizeGasCost(gasUsed: SuiClientTypes.GasCostSummary): ReviewTimeSim
 }
 
 function summarizeSimulatedTransaction(
-  transaction: SuiClientTypes.TransactionData
+  transaction: SuiClientTypes.TransactionData, account: string, chainIdentifier: string
 ): ReviewTimeSimulationEvidence["transaction"] {
   if (transaction.sender === null || transaction.sender === undefined) {
     throw new Error("simulation transaction sender is missing");
@@ -551,6 +558,7 @@ function summarizeSimulatedTransaction(
   };
   return {
     sender,
+    funding: describeTransactionFunding(transaction, account, chainIdentifier),
     gasPaymentCount: Array.isArray(gasData.payment) ? gasData.payment.length : 0,
     inputCount: transaction.inputs.length,
     commandCount: transaction.commands.length,
@@ -571,29 +579,11 @@ function normalizeSimulationAddress(value: string, label: string): string {
   return normalized;
 }
 
-function simulationFailureReason(status: SuiClientTypes.ExecutionStatus): string {
-  if (status.success) {
-    return "simulation succeeded";
-  }
-  const error = status.error;
-  if (typeof error === "string") {
-    return error;
-  }
-  if (error && typeof error === "object") {
-    const maybeMessage = (error as { message?: unknown }).message;
-    if (typeof maybeMessage === "string" && maybeMessage.length > 0) {
-      return maybeMessage;
-    }
-    return JSON.stringify(error);
-  }
-  return "unknown simulation failure";
-}
-
-function blockedReasonForSimulationFailure(failureReason: string): BlockedReason {
-  if (/gas/i.test(failureReason)) {
+function blockedReasonForSimulationFailure(kind: GrpcTypes.ExecutionError_ExecutionErrorKind | undefined): BlockedReason {
+  if (kind === GrpcTypes.ExecutionError_ExecutionErrorKind.INSUFFICIENT_GAS) {
     return "insufficient_gas";
   }
-  if (/balance|coin|insufficient/i.test(failureReason)) {
+  if (kind === GrpcTypes.ExecutionError_ExecutionErrorKind.INSUFFICIENT_COIN_BALANCE) {
     return "insufficient_balance";
   }
   return "object_resolution_failed";

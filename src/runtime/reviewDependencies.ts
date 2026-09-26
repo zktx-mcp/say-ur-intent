@@ -27,6 +27,7 @@ export function createRuntimeReviewDependencies(options: {
           const transactionObjectOwnershipProducer = createTransactionObjectOwnershipProducer({
             materialStore: transactionMaterialStore,
             objectSource: suiClient,
+            fundingSource: suiClient.core,
             network: config.network,
             chainIdentifier,
             expectedChainIdentifier: config.expectedChainIdentifier

@@ -783,6 +783,7 @@ export class LocalSessionStore implements SessionStore {
           transactionMaterial: parsed.transactionMaterial,
           transactionMaterialDigest: parsed.transactionMaterialDigest,
           evidence: privateArtifacts.transactionObjectOwnership,
+          transactionBytes: parsed.transactionBytes,
           now
         })
       : undefined;
@@ -808,6 +809,7 @@ export class LocalSessionStore implements SessionStore {
           transactionMaterial: parsed.transactionMaterial,
           transactionMaterialDigest: parsed.transactionMaterialDigest,
           evidence: privateArtifacts.reviewTimeSimulation,
+          transactionBytes: parsed.transactionBytes,
           now
         })
       : undefined;

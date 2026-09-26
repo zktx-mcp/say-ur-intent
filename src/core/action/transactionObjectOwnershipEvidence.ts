@@ -1,3 +1,5 @@
+import { Transaction } from "@mysten/sui/transactions";
+import { transactionFundingEvidenceSchema, describeTransactionFunding, assertTransactionFundingMatches } from "./transactionFunding.js";
 import { z } from "zod";
 import { isValidStructTag, normalizeStructTag } from "@mysten/sui/utils";
 import {
@@ -21,7 +23,7 @@ import type {
 } from "../session/transactionMaterialStore.js";
 
 export const TRANSACTION_OBJECT_OWNERSHIP_EVIDENCE_VERSION =
-  "transaction-object-ownership-v1";
+  "transaction-object-ownership-v2";
 
 export const TRANSACTION_OBJECT_ROLES = [
   "gas_object",
@@ -80,11 +82,15 @@ export const transactionObjectOwnershipEvidenceSchema = z.object({
   planId: z.string().min(1),
   account: normalizedSuiAddressSchema,
   transactionDigest: suiTransactionDigestSchema,
+  funding: transactionFundingEvidenceSchema,
   objectCount: z.number().int().min(1),
   objects: z.array(transactionObjectOwnershipFactSchema).min(1),
   verifiedAt: isoUtcStringSchema,
   expiresAt: isoUtcStringSchema
 }).strict().superRefine((value, ctx) => {
+  if (value.account !== value.funding.sender) {
+    ctx.addIssue({ code: "custom", path: ["funding", "sender"], message: "Funding must match the ownership account" });
+  }
   if (value.objectCount !== value.objects.length) {
     ctx.addIssue({
       code: "custom",
@@ -152,9 +158,11 @@ export function verifyTransactionObjectOwnershipEvidence(input: {
   transactionMaterial: LocalTransactionMaterialHandle;
   transactionMaterialDigest: LocalTransactionMaterialDigestCommitment;
   evidence: TransactionObjectOwnershipEvidence;
+  transactionBytes: Uint8Array;
   now?: Date | undefined;
 }): TransactionObjectOwnershipEvidence {
   const evidence = parseTransactionObjectOwnershipEvidence(input.evidence);
+  assertTransactionFundingMatches(describeTransactionFunding(Transaction.from(input.transactionBytes).getData(), input.transactionMaterial.account, evidence.funding.chainIdentifier), evidence.funding);
   const now = input.now ?? new Date();
   const nowMs = now.getTime();
   if (!Number.isFinite(nowMs)) {
@@ -258,10 +266,12 @@ export function mapTransactionObjectOwnershipEvidenceToContractDraft(
     }
   }
 
-  if (gasObjectOwnershipLinks.length === 0) {
+  if (gasObjectOwnershipLinks.length !== evidence.funding.gasObjectIds.length ||
+      gasObjectOwnershipLinks.some((link) => !evidence.funding.gasObjectIds.includes(link.objectId)) ||
+      (gasObjectOwnershipLinks.length === 0 && evidence.funding.gasMode === "coin_objects")) {
     return {
       status: "unsupported",
-      reason: "contract mapping requires at least one owned Coin<SUI> gas object ownership link",
+      reason: "contract gas ownership links must cover exactly the real gas objects in the verified funding evidence",
       objectId: evidence.objects[0]?.objectId ?? "unknown",
       roles: evidence.objects[0]?.roles ?? [],
       ownership: evidence.objects[0]?.ownership ?? "unknown_owner"

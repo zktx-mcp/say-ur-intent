@@ -1,3 +1,4 @@
+import { transactionFundingSummary } from "./transactionFunding.js";
 import type {
   SwapHumanReadableReviewAmount
 } from "./types.js";
@@ -85,6 +86,11 @@ export function verifySwapHumanReadableReviewEvidence(input: {
     throw new Error("swap human-readable review evidence requires object ownership bound to the same transaction digest");
   }
 
+  const fundingFacts = evidence.review.evidenceUsed.filter((fact) => fact.id === "transaction_funding");
+  if (fundingFacts.length !== 1 || fundingFacts[0]?.source !== "transaction_material" ||
+    fundingFacts[0]?.summary !== transactionFundingSummary(input.transactionObjectOwnership.funding)) {
+    throw new Error("swap human-readable review must describe the verified transaction funding");
+  }
   assertSwapHumanReadableReviewProjectsQuotePolicy(evidence, input.swapQuotePolicy);
   assertSwapHumanReadableReviewParties(evidence);
   assertSwapHumanReadableReviewEvidenceSources(evidence);

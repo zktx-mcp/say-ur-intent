@@ -137,6 +137,10 @@ The adapter contract requires these fields:
   gas coin type, and raw MIST units. An unresolved gas status must point to a
   `gas_unresolved_status` claim. Gas object ownership must point to
   `object_ownership` claims whose ownership status is `owned_by_account`.
+  `gasUsedRaw` is the nonnegative net simulation cost. If storage rebates exceed
+  costs, omit this optional unsigned quantity and its claim; do not clamp it to
+  zero. The verified gas budget remains available, and the review simulation
+  retains the exact cost/rebate components and signed balance changes.
 - `expiry`: review-time expiry status. `current` and `expired` require
   `checkedAt`, `expiresAt`, and `evidenceClaimId`; `current` requires
   `expiresAt` after `checkedAt`, and `expired` requires `expiresAt` at or before
@@ -162,9 +166,10 @@ The adapter contract requires these fields:
 - `objectOwnership`: account-bound object ownership or shared-object facts. Each
   object must point to an `object_ownership` claim whose object id, owner account,
   and ownership status match the payload.
-- `simulation`: `client.core.simulateTransaction` with validation checks enabled
-  and the required fields `effects`, `balanceChanges`, `objectTypes`, and
-  `transaction`. The simulation payload must point to a `simulation_result`
+- `simulation`: the public Sui gRPC `transactionExecutionService.simulateTransaction`
+  with validation checks enabled, identical returned transaction BCS and matching
+  effects digest. The required normalized evidence fields are `effects`,
+  `balanceChanges`, `objectTypes`, and `transaction`. The simulation payload must point to a `simulation_result`
   claim whose provider, status, required fields, missing fields, and failure
   reason match the payload.
 - `humanReadableReview`: the fields a human must see before wallet
@@ -348,3 +353,35 @@ Tests must keep this contract in place before any adapter can use it:
 - documentation tests that keep PTB visualization described as visualization
   only, not transaction material, signing readiness, or payment execution
   readiness.
+
+## Transaction funding and ownership
+
+The supported swap adapters retain the SDK's coin-object and address-balance
+selection. The private ownership evidence verifies the stored transaction's
+sender, gas payer, real object references, address withdrawals, and gas funding
+against the reviewed account and verified mainnet source. The same description
+must match the checks-enabled simulation and the material rechecked for admission.
+
+An empty gas payment array means address-balance gas; it is not missing gas
+evidence. It requires a mainnet-bound ValidDuring epoch window and address SUI
+covering both explicit SUI withdrawals and the gas budget. A gas reservation
+reference is an address-balance reservation, not a Coin<SUI> object. Its account,
+asset, chain, amount and epoch are verified; any real gas coins alongside it
+retain their ownership/type checks. Explicit address withdrawals and reservations
+are summed per coin type without counting the gas budget twice. Observed balances
+are review-time facts, not locked funds or execution guarantees.
+
+Only real gas coins produce `gas.gasObjects` and object-ownership claims. The
+public optional field remains absent when no such objects are used. Private
+funding evidence is required in either case; omitting all funding checks does not
+produce a valid review. The existing human review evidence explains the funding
+form without publishing private artifacts or creating signing authority.
+
+Different gas owners, sponsor withdrawals, unsupported reservation formats, and
+unverified funding remain blocked. Both adapters still require the same quote,
+amount, ownership, human review, simulation, wallet approval, and digest checks.
+
+New review evidence names `client.transactionExecutionService.simulateTransaction`
+as its provider. The previous `client.core.simulateTransaction` provider remains
+parseable in stored public history; it is not a fallback for new reviews. Returned
+BCS is compared privately and is never added to evidence, cards, backups or logs.

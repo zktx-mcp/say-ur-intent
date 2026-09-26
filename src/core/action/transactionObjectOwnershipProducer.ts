@@ -1,3 +1,4 @@
+import { describeTransactionFunding, readTransactionFunding, TransactionFundingError, type TransactionFundingSource, type TransactionFundingEvidence } from "./transactionFunding.js";
 import { Transaction } from "@mysten/sui/transactions";
 import type { BlockedReason, RefreshReason, ReviewCheck } from "./types.js";
 import {
@@ -52,6 +53,7 @@ export type TransactionObjectOwnershipProducer = (
 export type TransactionObjectOwnershipProducerOptions = {
   materialStore: Pick<LocalTransactionMaterialStore, "getTransactionMaterial">;
   objectSource: TransactionObjectOwnershipObjectSource;
+  fundingSource?: TransactionFundingSource;
   network: "mainnet";
   chainIdentifier: string;
   expectedChainIdentifier: string;
@@ -152,9 +154,15 @@ export function createTransactionObjectOwnershipProducer(
     }
 
     let objectRefs: ExtractedObjectRef[];
+    let funding: TransactionFundingEvidence;
     try {
-      objectRefs = extractObjectRefsFromStoredTransactionBytes(material.transactionBytes);
-    } catch {
+      const description = describeTransactionFunding(Transaction.from(material.transactionBytes).getData(), materialHandle.account, options.chainIdentifier);
+      funding = await readTransactionFunding(description, options.fundingSource);
+      objectRefs = extractObjectRefsFromStoredTransactionBytes(material.transactionBytes, funding.gasObjectIds);
+    } catch (error) {
+      if (error instanceof TransactionFundingError) return { status: "blocked",
+        blockedReason: error.kind === "insufficient_balance" || error.kind === "insufficient_gas" ? error.kind : "object_resolution_failed",
+        checks: [failReviewCheck("transaction_funding_" + error.kind, "Transaction funding", error.message, error.kind === "unavailable" ? "network" : "wallet")] };
       return {
         status: "blocked",
         blockedReason: "object_resolution_failed",
@@ -162,7 +170,7 @@ export function createTransactionObjectOwnershipProducer(
           failReviewCheck(
             "transaction_object_ownership_refs_unavailable",
             "Object ownership refs",
-            "Object ownership evidence was not produced because the stored local transaction material did not expose a complete resolved transaction object reference set.",
+            "Transaction funding and object ownership could not be verified because the stored material has invalid or unsupported account, gas, withdrawal, expiration or object references.",
             "adapter"
           )
         ]
@@ -184,21 +192,6 @@ export function createTransactionObjectOwnershipProducer(
         ]
       };
     }
-    if (![...objectRoles.values()].some((roles) => roles.includes("gas_object"))) {
-      return {
-        status: "blocked",
-        blockedReason: "insufficient_gas",
-        checks: [
-          failReviewCheck(
-            "transaction_object_ownership_gas_missing",
-            "Gas object ownership",
-            "Object ownership evidence requires at least one gas object from the stored local transaction material.",
-            "wallet"
-          )
-        ]
-      };
-    }
-
     const facts: TransactionObjectOwnershipFact[] = [];
     for (const [objectId, roles] of objectRoles) {
       let response: Awaited<ReturnType<TransactionObjectOwnershipObjectSource["getObject"]>>;
@@ -225,9 +218,7 @@ export function createTransactionObjectOwnershipProducer(
 
     const invalidFact = facts.find((fact) => !isAcceptableOwnershipFact(fact));
     if (invalidFact) {
-      const blockedReason: BlockedReason = invalidFact.roles.includes("gas_object")
-        ? "insufficient_gas"
-        : "object_resolution_failed";
+      const blockedReason: BlockedReason = "object_resolution_failed";
       return {
         status: "blocked",
         blockedReason,
@@ -251,6 +242,7 @@ export function createTransactionObjectOwnershipProducer(
         planId: materialHandle.planId,
         account: materialHandle.account,
         transactionDigest: materialDigest.transactionDigest,
+        funding,
         objectCount: facts.length,
         objects: facts,
         verifiedAt: input.now.toISOString(),
@@ -263,9 +255,7 @@ export function createTransactionObjectOwnershipProducer(
     if (contractMapping.status === "unsupported") {
       return {
         status: "blocked",
-        blockedReason: contractMapping.roles.includes("gas_object")
-          ? "insufficient_gas"
-          : "object_resolution_failed",
+        blockedReason: "object_resolution_failed",
         checks: [
           failReviewCheck(
             "transaction_object_ownership_contract_mapping_unsupported",
@@ -292,15 +282,12 @@ export function createTransactionObjectOwnershipProducer(
   };
 }
 
-function extractObjectRefsFromStoredTransactionBytes(transactionBytes: Uint8Array): ExtractedObjectRef[] {
+function extractObjectRefsFromStoredTransactionBytes(transactionBytes: Uint8Array, gasObjectIds: readonly string[]): ExtractedObjectRef[] {
   const transaction = Transaction.from(transactionBytes);
   const data = transaction.getData();
   const refs: ExtractedObjectRef[] = [];
 
-  const payments = data.gasData.payment ?? [];
-  for (const payment of payments) {
-    refs.push({ objectId: parseSuiObjectId(payment.objectId), role: "gas_object" });
-  }
+  for (const objectId of gasObjectIds) refs.push({ objectId, role: "gas_object" });
 
   for (const input of data.inputs) {
     const inputKind = enumKind(input, [

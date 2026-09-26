@@ -1106,3 +1106,27 @@ prompts (Claude Desktop, Claude Code, and others) exposes them without extra
 configuration.
 
 Prompts are explicit runtime-facing workflows. Tool descriptions remain concise, literal, and instruction-free; do not move behavioral policy into tool descriptions.
+
+### Funding facts in supported swap reviews
+
+The human review's `transaction_funding` evidence describes the verified funding
+form of the stored transaction: actual coin objects, address balances, or a mix.
+`gas.gasObjects` describes real gas coins only and can be absent for address-balance
+gas or reservation-only funding. Absence of a gas object does not establish a
+balance shortfall. Source verification failure is distinct from confirmed
+insufficient balance. Use the review's checks and stored status for those facts.
+
+Wallet balance responses retain total, coin-object and address-balance values.
+They remain balance snapshots, not payment or signing readiness. Receipt gas
+costs remain independently read chain facts; a reservation identifier is never
+presented as a real gas payment object.
+
+Storage rebates can exceed simulated gas costs when coin objects are merged.
+In that case, the optional unsigned `transactionReviewData.gas.gasUsedRaw` is
+absent, not zero. The gas budget, simulation cost/rebate components and signed
+balance changes remain available; the Review card displays the signed net cost.
+
+A deterministic protocol rejection during SDK build-time simulation is reported
+as a simulation rejection, not proof of missing account objects or funds. Refresh
+or a new user-selected constraint does not establish success until the complete
+review is recomputed. The backend does not relax slippage to make a build pass.

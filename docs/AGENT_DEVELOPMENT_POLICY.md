@@ -593,8 +593,11 @@ Keep account-independent planning separate from account-bound review.
 - Recompute account-bound checks after wallet connection in the review layer.
 - Use full transaction simulation for review-time effects, gas, object changes,
   and balance changes.
-- For Sui SDK v2 code, review-time simulation means
-  `client.core.simulateTransaction(...)` with validation checks enabled.
+- For Sui SDK v2 code, review-time simulation uses the public Sui gRPC
+  `transactionExecutionService.simulateTransaction` with `checks: ENABLED`
+  and `doGasSelection: true`. Send the stored transaction BCS and require
+  identical returned BCS and an effects digest matching the stored material.
+  Mock-gas simulation and rewritten transactions are not review evidence.
 - Treat dev-inspection/debug simulation as separate from review-time transaction
   simulation; do not present debug inspection as signing readiness.
 

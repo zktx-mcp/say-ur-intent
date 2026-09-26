@@ -1,3 +1,4 @@
+import { testObjectFunding } from "./fixtures/transactionMaterial.js";
 import { describe, expect, it } from "vitest";
 import { Inputs, Transaction } from "@mysten/sui/transactions";
 import {
@@ -192,7 +193,8 @@ describe("transaction object ownership producer", () => {
     expect(outcome).toMatchObject({
       status: "completed",
       evidence: {
-        evidenceVersion: "transaction-object-ownership-v1",
+        evidenceVersion: "transaction-object-ownership-v2",
+      funding: testObjectFunding(account),
         materialId: material.handle.materialId,
         account,
         transactionDigest: material.digest.transactionDigest,
@@ -307,7 +309,7 @@ describe("transaction object ownership producer", () => {
 
     expect(outcome).toMatchObject({
       status: "blocked",
-      blockedReason: "insufficient_gas",
+      blockedReason: "object_resolution_failed",
       checks: [{ id: "transaction_object_ownership_unverified", status: "fail" }]
     });
   });
@@ -337,7 +339,7 @@ describe("transaction object ownership producer", () => {
 
     expect(outcome).toMatchObject({
       status: "blocked",
-      blockedReason: "insufficient_gas",
+      blockedReason: "object_resolution_failed",
       checks: [{ id: "transaction_object_ownership_contract_mapping_unsupported", status: "fail" }]
     });
   });
@@ -366,7 +368,7 @@ describe("transaction object ownership producer", () => {
 
     expect(outcome).toMatchObject({
       status: "blocked",
-      blockedReason: "insufficient_gas",
+      blockedReason: "object_resolution_failed",
       checks: [{ id: "transaction_object_ownership_contract_mapping_unsupported", status: "fail" }]
     });
   });
@@ -589,7 +591,8 @@ describe("transaction object ownership producer", () => {
 
   it("does not map owned ImmOrOwnedObject refs to contract input coins without coin object type evidence", async () => {
     const evidence: TransactionObjectOwnershipEvidence = {
-      evidenceVersion: "transaction-object-ownership-v1",
+      evidenceVersion: "transaction-object-ownership-v2",
+      funding: testObjectFunding(account),
       materialId: "txmat_test",
       reviewSessionId: "review_1",
       planId: "plan_1",

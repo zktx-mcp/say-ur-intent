@@ -1,3 +1,4 @@
+import { assertTransactionFundingMatches } from "./transactionFunding.js";
 import {
   adapterEvidenceClaimSchema,
   adapterInputProvenanceSchema,
@@ -144,7 +145,7 @@ export function mapReviewTimeSimulationEvidenceToContractDraft(
     id: sourceId,
     kind: "review_time_simulation",
     network: "sui:mainnet",
-    source: "Checks-enabled client.core.simulateTransaction run over stored local transaction material",
+    source: "Checks-enabled Sui gRPC simulation with identical returned transaction bytes and effects digest",
     verifiedAt: evidence.simulatedAt,
     fields: [...WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS]
   }) as AdapterSourceOfTruth;
@@ -193,12 +194,6 @@ export function mapReviewTimeSimulationGasToContractDraft(
     BigInt(summary.computationCostRaw) +
     BigInt(summary.storageCostRaw) -
     BigInt(summary.storageRebateRaw);
-  if (gasUsed < 0n) {
-    return {
-      status: "unsupported",
-      reason: "net gas used is negative (storage rebate exceeds costs); unsigned gas evidence unavailable"
-    };
-  }
 
   const sourceReferences: AdapterSourceOfTruth[] = [];
   const evidenceClaims: Array<Extract<AdapterEvidenceClaim, { factKind: "raw_quantity_amount" }>> = [];
@@ -206,22 +201,26 @@ export function mapReviewTimeSimulationGasToContractDraft(
 
   const gasUsedSourceId = "review_time_simulation_gas_used_source";
   const gasUsedClaimId = "review_time_simulation_gas_used_claim";
-  sourceReferences.push(adapterSourceOfTruthSchema.parse({
-    id: gasUsedSourceId,
-    kind: "review_time_simulation",
-    network: "sui:mainnet",
-    source: "Gas cost summary components from checks-enabled simulation of stored local transaction material",
-    verifiedAt: evidence.simulatedAt,
-    fields: ["gasUsedRaw", "asset", "amountRole"]
-  }) as AdapterSourceOfTruth);
-  evidenceClaims.push(adapterEvidenceClaimSchema.parse({
-    id: gasUsedClaimId,
-    factKind: "raw_quantity_amount",
-    sourceEvidenceId: gasUsedSourceId,
-    role: "gas_used",
-    asset: gasAsset,
-    rawAmount: gasUsed.toString()
-  }) as Extract<AdapterEvidenceClaim, { factKind: "raw_quantity_amount" }>);
+  // A storage rebate can make net gas negative. Keep the verified budget and
+  // simulation components; do not invent an unsigned zero or a spending claim.
+  if (gasUsed >= 0n) {
+    sourceReferences.push(adapterSourceOfTruthSchema.parse({
+      id: gasUsedSourceId,
+      kind: "review_time_simulation",
+      network: "sui:mainnet",
+      source: "Gas cost summary components from checks-enabled simulation of stored local transaction material",
+      verifiedAt: evidence.simulatedAt,
+      fields: ["gasUsedRaw", "asset", "amountRole"]
+    }) as AdapterSourceOfTruth);
+    evidenceClaims.push(adapterEvidenceClaimSchema.parse({
+      id: gasUsedClaimId,
+      factKind: "raw_quantity_amount",
+      sourceEvidenceId: gasUsedSourceId,
+      role: "gas_used",
+      asset: gasAsset,
+      rawAmount: gasUsed.toString()
+    }) as Extract<AdapterEvidenceClaim, { factKind: "raw_quantity_amount" }>);
+  }
 
   const gasBudgetRaw = evidence.transaction.gasBudgetRaw;
   let gasBudgetClaimId: string | undefined;
@@ -249,8 +248,7 @@ export function mapReviewTimeSimulationGasToContractDraft(
   const gas = adapterGasEvidenceSchema.parse({
     source: "review_time_simulation",
     checkedAt: evidence.simulatedAt,
-    gasUsedRaw: gasUsed.toString(),
-    gasUsedClaimId,
+    ...(gasUsed >= 0n ? { gasUsedRaw: gasUsed.toString(), gasUsedClaimId } : {}),
     ...(gasBudgetRaw !== undefined && gasBudgetClaimId
       ? { gasBudgetRaw, gasBudgetClaimId }
       : {}),
@@ -347,6 +345,9 @@ export function assembleTransactionReviewData(
   if (pool.status === "declined") {
     return pool;
   }
+
+  try { assertTransactionFundingMatches(input.reviewTimeSimulation.transaction.funding, input.objectOwnership.funding); }
+  catch { return { status: "declined", reason: "simulation and ownership funding evidence differ" }; }
 
   const simulation = mapReviewTimeSimulationEvidenceToContractDraft(input.reviewTimeSimulation);
   const gas = mapReviewTimeSimulationGasToContractDraft(

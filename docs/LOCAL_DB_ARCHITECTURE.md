@@ -269,3 +269,16 @@ Raw session tokens are not stored in SQLite. Live session records store token ha
 The local settings table is not a secret store. It stores only allowlisted local preferences such as the Sui mainnet gRPC and GraphQL endpoints. It must not store database paths, tokens, credentials, private keys, mnemonics, seeds, or arbitrary API keys. Environment overrides such as `SUI_GRPC_URL` and `SUI_GRAPHQL_URL` can temporarily supersede stored endpoints without mutating the database.
 
 Review intent capture follows one adapter convention: if an adapter wants the original requested intent materialized for activity queries, it must place that object at `ActionPlan.adapterData.requestedIntent`. The full `plan_json` remains the canonical action plan, and `intent_json` is only the query-friendly copy of that adapter-supplied intent.
+
+### Private funding evidence
+
+Ownership and simulation private artifacts use their v2 evidence formats to
+bind transaction funding to the stored material. They cover real coin objects,
+address withdrawals, gas reservations, and their observed balance/epoch facts.
+They are deeply copied and revalidated before admission, and are excluded from
+public backup. They introduce no table, column, or DB format migration.
+
+Old private evidence is not upgraded into funding proof. Existing owner recovery
+removes private material; a new review recomputes it. Historical public reviews,
+admitted request facts, chain results and backup remain readable. Reading history
+does not re-query funding or confer new signing authority.

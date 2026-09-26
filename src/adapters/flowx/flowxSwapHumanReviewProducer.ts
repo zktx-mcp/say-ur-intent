@@ -1,3 +1,4 @@
+import { transactionFundingSummary } from "../../core/action/transactionFunding.js";
 import type { FlowxSwapActionPlanIdentity, FlowxSwapRequestedIntent } from "./flowxSwapIntent.js";
 import type { FlowxSwapQuotePolicyOk } from "./flowxSwapQuotePolicy.js";
 import type { FlowxSwapPairEvidence } from "./flowxSwapReviewEvidence.js";
@@ -126,6 +127,8 @@ function buildFlowxHumanReadableReview(
       }
     ],
     evidenceUsed: [
+      { id: "transaction_funding", label: "Transaction funding", source: "transaction_material",
+        summary: transactionFundingSummary(input.transactionObjectOwnership.funding) },
       {
         id: "flowx_quote_policy",
         label: "Quote policy",

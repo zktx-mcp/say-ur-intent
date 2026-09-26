@@ -130,7 +130,7 @@ export type TransactionSimulationObjectChange = {
 };
 
 export type TransactionSimulationSummary = {
-  provider: "client.core.simulateTransaction";
+  provider: "client.core.simulateTransaction" | "client.transactionExecutionService.simulateTransaction";
   checksEnabled: boolean;
   success: boolean;
   gasCostSummary?: TransactionSimulationGasCostSummary;

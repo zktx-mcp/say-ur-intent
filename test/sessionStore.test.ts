@@ -1,3 +1,4 @@
+import { testObjectFunding } from "./fixtures/transactionMaterial.js";
 import { describe, expect, it, vi } from "vitest";
 import {
   TRANSACTION_OBJECT_OWNERSHIP_EVIDENCE_VERSION,
@@ -170,6 +171,7 @@ function testObjectOwnershipEvidence(input: {
 }): TransactionObjectOwnershipEvidence {
   return {
     evidenceVersion: TRANSACTION_OBJECT_OWNERSHIP_EVIDENCE_VERSION,
+    funding: testObjectFunding(walletAccount),
     materialId: input.materialId,
     reviewSessionId: input.reviewSessionId,
     planId: plan.id,

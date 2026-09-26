@@ -1,3 +1,4 @@
+import { SimulationError } from "@mysten/sui/client";
 import { DeepBookClient, mainnetCoins } from "@mysten/deepbook-v3";
 import type { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Transaction } from "@mysten/sui/transactions";
@@ -329,7 +330,7 @@ export function createDeepbookSwapTransactionMaterialProducer(
           failReviewCheck(
             "deepbook_transaction_material_build_failed",
             "Transaction material build",
-            buildFailureMessage(blockedReason),
+            buildFailureMessage(blockedReason, error),
             "adapter"
           )
         ]
@@ -436,12 +437,15 @@ function blockedReasonForBuildError(error: unknown): BlockedReason {
   return "object_resolution_failed";
 }
 
-function buildFailureMessage(blockedReason: BlockedReason): string {
+function buildFailureMessage(blockedReason: BlockedReason, error: unknown): string {
   if (blockedReason === "insufficient_balance") {
     return "DeepBook transaction material build failed before wallet handoff because the account does not have enough source or fee assets.";
   }
   if (blockedReason === "insufficient_gas") {
     return "DeepBook transaction material build failed before wallet handoff because a usable gas payment could not be resolved.";
   }
-  return "DeepBook transaction material build failed before wallet handoff because required account-bound objects could not be resolved.";
+  if (error instanceof SimulationError && error.executionError) {
+    return "DeepBook transaction was rejected during build-time simulation. Refresh the review or inspect its selected constraints. Nothing was signed or submitted.";
+  }
+  return "DeepBook transaction material could not be built and verified. Nothing was signed or submitted.";
 }

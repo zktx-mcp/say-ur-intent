@@ -1,10 +1,14 @@
+import { GrpcTypes } from "@mysten/sui/grpc";
 import type { SuiClientTypes } from "@mysten/sui/client";
 import { Transaction } from "@mysten/sui/transactions";
 import type {
   ReviewTimeSimulationClient
 } from "../../src/core/action/reviewTimeSimulationEvidence.js";
 
-export type ReviewTimeSimulationClientFixture = ReviewTimeSimulationClient & {
+export type CoreSimulationFixture = { core: { simulateTransaction(input: SuiClientTypes.SimulateTransactionOptions<{ transaction: true; effects: true; balanceChanges: true; objectTypes: true }>): Promise<SuiClientTypes.SimulateTransactionResult<{ transaction: true; effects: true; balanceChanges: true; objectTypes: true }>> } };
+
+export type ReviewTimeSimulationClientFixture = CoreSimulationFixture & ReviewTimeSimulationClient & {
+  rpcCalls: GrpcTypes.SimulateTransactionRequest[];
   calls: Array<SuiClientTypes.SimulateTransactionOptions<{
     transaction: true;
     effects: true;
@@ -14,10 +18,10 @@ export type ReviewTimeSimulationClientFixture = ReviewTimeSimulationClient & {
 };
 
 export function createSuccessfulReviewTimeSimulationClient(
-  account: string
+  account: string, sourceEffects: { gasObjectId?: string | null } = {}
 ): ReviewTimeSimulationClientFixture {
   const calls: ReviewTimeSimulationClientFixture["calls"] = [];
-  return {
+  return withGrpcSimulation<CoreSimulationFixture & Pick<ReviewTimeSimulationClientFixture, "calls">>({
     calls,
     core: {
       async simulateTransaction(options) {
@@ -29,7 +33,7 @@ export function createSuccessfulReviewTimeSimulationClient(
         const transaction = Transaction.from(transactionBytes);
         const digest = await transaction.getDigest();
         const transactionData = transaction.getData() as SuiClientTypes.TransactionData;
-        const gasObjectId = transactionData.gasData.payment?.[0]?.objectId ?? `0x${"b".repeat(64)}`;
+        const gasObjectId = sourceEffects.gasObjectId === undefined ? transactionData.gasData.payment?.[0]?.objectId : sourceEffects.gasObjectId;
         const gasObjectType = "0x2::coin::Coin<0x2::sui::SUI>";
         return {
           $kind: "Transaction",
@@ -60,7 +64,7 @@ export function createSuccessfulReviewTimeSimulationClient(
               eventsDigest: null,
               dependencies: [],
               lamportVersion: null,
-              changedObjects: [
+              changedObjects: gasObjectId ? [
                 {
                   objectId: gasObjectId,
                   inputState: "Exists",
@@ -73,14 +77,12 @@ export function createSuccessfulReviewTimeSimulationClient(
                   outputOwner: null,
                   idOperation: "None"
                 }
-              ],
+              ] : [],
               unchangedConsensusObjects: [],
               auxiliaryDataDigest: null
             },
             events: undefined,
-            objectTypes: {
-              [gasObjectId]: gasObjectType
-            },
+            objectTypes: gasObjectId ? { [gasObjectId]: gasObjectType } : {},
             transaction: transactionData,
             bcs: undefined
           },
@@ -88,14 +90,14 @@ export function createSuccessfulReviewTimeSimulationClient(
         };
       }
     }
-  };
+  });
 }
 
 export function createFailedReviewTimeSimulationClient(
-  message = "simulated transaction failed"
+  message = "simulated transaction failed", errorKind: GrpcTypes.ExecutionError_ExecutionErrorKind = GrpcTypes.ExecutionError_ExecutionErrorKind.EXECUTION_ERROR_KIND_UNKNOWN
 ): ReviewTimeSimulationClientFixture {
   const calls: ReviewTimeSimulationClientFixture["calls"] = [];
-  return {
+  return withGrpcSimulation<CoreSimulationFixture & Pick<ReviewTimeSimulationClientFixture, "calls">>({
     calls,
     core: {
       async simulateTransaction(options) {
@@ -115,7 +117,7 @@ export function createFailedReviewTimeSimulationClient(
             epoch: "1",
             status: {
               success: false,
-              error: { message }
+              error: { message, $kind: "Unknown", Unknown: null }
             } as SuiClientTypes.ExecutionStatus,
             balanceChanges: [],
             effects: {
@@ -123,7 +125,7 @@ export function createFailedReviewTimeSimulationClient(
               version: 1,
               status: {
                 success: false,
-                error: { message }
+                error: { message, $kind: "Unknown", Unknown: null }
               } as SuiClientTypes.ExecutionStatus,
               gasUsed: {
                 computationCost: "0",
@@ -149,5 +151,39 @@ export function createFailedReviewTimeSimulationClient(
         };
       }
     }
-  };
+  }, { failureKind: errorKind });
+}
+
+// Source adapter only: model the public RPC response from the existing synthetic
+// chain facts. Product verification and SDK parsing are never replaced.
+export function withGrpcSimulation<T extends CoreSimulationFixture>(client: T, source: { failureKind?: GrpcTypes.ExecutionError_ExecutionErrorKind } = {}): T & ReviewTimeSimulationClient & { rpcCalls: GrpcTypes.SimulateTransactionRequest[] } {
+  const rpcCalls: GrpcTypes.SimulateTransactionRequest[] = [];
+  return Object.assign(client, { rpcCalls, transactionExecutionService: {
+    async simulateTransaction(request: GrpcTypes.SimulateTransactionRequest) {
+      rpcCalls.push(request);
+      const bytes = request.transaction?.bcs?.value;
+      if (!bytes) throw new Error("Missing source simulation bytes");
+      const result = await client.core.simulateTransaction({ transaction: bytes,
+        checksEnabled: request.checks === GrpcTypes.SimulateTransactionRequest_TransactionChecks.ENABLED,
+        include: { transaction: true, effects: true, balanceChanges: true, objectTypes: true } });
+      const tx = result.$kind === "Transaction" ? result.Transaction : result.FailedTransaction;
+      const returned = tx.transaction ? await Transaction.from(JSON.stringify(tx.transaction)).build() : undefined;
+      const inputStates = { Exists: GrpcTypes.ChangedObject_InputObjectState.EXISTS, DoesNotExist: GrpcTypes.ChangedObject_InputObjectState.DOES_NOT_EXIST, Unknown: GrpcTypes.ChangedObject_InputObjectState.UNKNOWN };
+      const outputStates = { ObjectWrite: GrpcTypes.ChangedObject_OutputObjectState.OBJECT_WRITE, PackageWrite: GrpcTypes.ChangedObject_OutputObjectState.PACKAGE_WRITE, DoesNotExist: GrpcTypes.ChangedObject_OutputObjectState.DOES_NOT_EXIST, AccumulatorWriteV1: GrpcTypes.ChangedObject_OutputObjectState.ACCUMULATOR_WRITE, Unknown: GrpcTypes.ChangedObject_OutputObjectState.UNKNOWN };
+      const operations = { None: GrpcTypes.ChangedObject_IdOperation.NONE, Created: GrpcTypes.ChangedObject_IdOperation.CREATED, Deleted: GrpcTypes.ChangedObject_IdOperation.DELETED, Unknown: GrpcTypes.ChangedObject_IdOperation.ID_OPERATION_UNKNOWN };
+      const transaction = GrpcTypes.ExecutedTransaction.create({
+        ...(tx.digest === undefined ? {} : { digest: tx.digest }),
+        ...(returned ? { transaction: { bcs: { value: returned } } } : {}),
+        effects: { transactionDigest: tx.effects.transactionDigest,
+          status: { success: tx.status.success, ...(tx.status.error ? { error: { description: tx.status.error.message, kind: source.failureKind ?? GrpcTypes.ExecutionError_ExecutionErrorKind.EXECUTION_ERROR_KIND_UNKNOWN } } : {}) },
+          gasUsed: { computationCost: BigInt(tx.effects.gasUsed.computationCost), storageCost: BigInt(tx.effects.gasUsed.storageCost),
+            storageRebate: BigInt(tx.effects.gasUsed.storageRebate), nonRefundableStorageFee: BigInt(tx.effects.gasUsed.nonRefundableStorageFee) },
+          changedObjects: tx.effects.changedObjects.map((item) => ({ objectId: item.objectId,
+            inputState: inputStates[item.inputState], outputState: outputStates[item.outputState], idOperation: operations[item.idOperation] })) },
+        balanceChanges: tx.balanceChanges.map((item) => ({ address: item.address, coinType: item.coinType, amount: item.amount })),
+        ...(tx.objectTypes ? { objects: { objects: Object.entries(tx.objectTypes).map(([objectId, objectType]) => ({ objectId, objectType })) } } : {})
+      });
+      return { response: GrpcTypes.SimulateTransactionResponse.create({ transaction }) };
+    }
+  } });
 }
