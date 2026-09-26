@@ -22,15 +22,6 @@ const descriptorMetadata = buildSupportedReviewAdapterDescriptors({
     deepbookHumanReadableReviewProducer: unusedProducer,
     reviewTimeSimulationProducer: unusedProducer,
     ptbVisualizationProducer: unusedProducer
-  },
-  flowx: {
-    flowxQuoteSource: { getSwapRoutesForBuild: unusedProducer },
-    flowxTransactionMaterialProducer: unusedProducer,
-    flowxTransactionMaterialDigestProducer: unusedProducer,
-    transactionObjectOwnershipProducer: unusedProducer,
-    flowxHumanReadableReviewProducer: unusedProducer,
-    reviewTimeSimulationProducer: unusedProducer,
-    ptbVisualizationProducer: unusedProducer
   }
 });
 
@@ -65,10 +56,10 @@ describe("adapter prompt surfaces", () => {
     const single = actionGroups(ADAPTER_PROMPT_SURFACES.filter((surface) => surface.protocolSlug === "deep"));
     expect(single.get("swap")).toHaveLength(1);
 
-    expect(actionGroups(ADAPTER_PROMPT_SURFACES).get("swap")).toHaveLength(2);
+    expect(actionGroups(ADAPTER_PROMPT_SURFACES).get("swap")).toHaveLength(1);
 
     const contested = [...ADAPTER_PROMPT_SURFACES, competitor];
-    expect(actionGroups(contested).get("swap")).toHaveLength(3);
+    expect(actionGroups(contested).get("swap")).toHaveLength(2);
 
     // No protocol chosen: the prompt must list options and forbid silent
     // venue selection.

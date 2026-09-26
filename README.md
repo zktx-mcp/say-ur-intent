@@ -43,14 +43,13 @@ choices remain with the user, and what claims are unsupported.
 
 Say Ur Intent is one product, but it must be read at two distinct layers. Do not collapse them:
 
-- **Implemented:** Sui mainnet read evidence, non-signable external proposal review, and account-bound DeepBook and FlowX swap review using protocol-agnostic adapters. Five internal cards use the same SQLite state and permission model. The backend verifies stored material, ownership, quote/policy provenance, human-readable facts, simulation and PTB evidence before an explicit user request. WalletConnect carries bytes only between the backend and wallet; ordinary MCP responses expose facts, request status and observed execution results. Settings remains a local token page; its card and the next package release are sequenced separately.
+- **Implemented:** Sui mainnet read evidence, non-signable external proposal review, and account-bound DeepBook swap review using protocol-agnostic adapters. Five internal cards use the same SQLite state and permission model. The backend verifies stored material, ownership, quote/policy provenance, human-readable facts, simulation and PTB evidence before an explicit user request. WalletConnect carries bytes only between the backend and wallet; ordinary MCP responses expose facts, request status and observed execution results. Settings remains a local token page; its card and the next package release are sequenced separately.
 - **Never (permanently unsupported at every layer):** no private-key custody, no MCP or AI autonomous execution, no forwarding of opaque external transaction bytes to a wallet, no silent settlement-token or route choice, no fiat cash-out, no P&L, no peg guarantee.
 
 In one sentence: Say Ur Intent is a local-first Sui intent evidence and review layer that progresses from verified evidence to user-controlled wallet signing only after Say Ur Intent independently builds or verifies the transaction material and shows a human-readable local review.
 
-DeepBook and FlowX are the current Sui liquidity and price sources in this
-release: DeepBook provides scoped conversion, price, and orderbook evidence, and
-FlowX provides indicative CLMM route quotes. Wallet and Sui balance reads
+DeepBook provides the current scoped Sui conversion, price, and orderbook
+evidence through the shared protocol adapter contracts. Wallet and Sui balance reads
 describe held assets. They do not define the whole product.
 
 Say Ur Intent does not custody funds, hold private keys, or autonomously trade
@@ -95,11 +94,10 @@ The current release can run as a local stdio MCP server and expose mainnet Sui D
 - USD-denominated settlement asset groups derived from pinned DeepBook SDK registry metadata;
 - intent evidence with response summaries for natural-language USD-denominated payment coverage, balance-total, and shortfall questions;
 - DeepBook pools, tokens, mid price, orderbook context, raw quotes, display-amount quotes, and account inventory;
-- FlowX CLMM pools and indicative single-hop swap route quotes from the chain-verified pinned registry;
 - user-requested bounded Sui transaction digest lookup, account activity scans, sent-function activity scans with known-wallet-only persistence, and stored normalized activity summaries;
 - read-only external proposal review sessions that display proposed action, asset flow, recipient or target, freshness, missing evidence, user choices, unsupported claims, and non-signable reason;
 - local Say Ur Intent review evidence and review-session status reads;
-- account-bound DeepBook/FlowX review with verified material, digest, ownership, policy, human-readable facts, simulation and PTB visualization, followed by explicit card selection and wallet approval through the backend;
+- account-bound DeepBook review with verified material, digest, ownership, policy, human-readable facts, simulation and PTB visualization, followed by explicit card selection and wallet approval through the backend;
 - separately recorded request state and chain success/failure, shown in the Review card and available through ordinary reads;
 - a Receipt card for server-read facts about any transaction digest, independent of signing.
 
@@ -129,7 +127,7 @@ External proposal execution is not implemented. Further local analysis views
 beyond the current inline review receipt and internal Receipt card are
 not implemented. Transaction material review, backend WalletConnect requests under user control,
 signature verification, single submission and independent receipt observation
-are implemented for the account-bound DeepBook and FlowX swap review
+are implemented for the account-bound DeepBook swap review
 through a plan-factory registry.
 
 External proposal ingestion is implemented only for read-only local review

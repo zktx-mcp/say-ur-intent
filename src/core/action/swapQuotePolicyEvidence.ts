@@ -15,7 +15,6 @@ import {
   SUI_METADATA_UNIT_SOURCE,
   normalizeCoinType
 } from "../read/coinMetadata.js";
-import { FLOWX_CLMM_UNIT_SOURCE } from "../read/flowxRegistry.js";
 
 export const SWAP_QUOTE_POLICY_EVIDENCE_VERSION =
   "swap-quote-policy-v1";
@@ -40,7 +39,7 @@ const quotePolicyAssetSchema = z.object({
   symbol: z.string().min(1).max(64),
   coinType: coinTypeSchema,
   decimals: z.number().int().min(0).max(255),
-  unitSource: z.enum([DEEPBOOK_SCALAR_UNIT_SOURCE, FLOWX_CLMM_UNIT_SOURCE, SUI_METADATA_UNIT_SOURCE])
+  unitSource: z.enum([DEEPBOOK_SCALAR_UNIT_SOURCE, SUI_METADATA_UNIT_SOURCE])
 }).strict();
 
 const quotePolicyRawAmountSchema = z.object({
@@ -360,13 +359,6 @@ function mapUnitSource(
       sourceReferencesKind: "pinned_sdk_registry",
       unitClaimSource: "pinned_sdk_metadata",
       sourceDescription: "Pinned DeepBook mainnet coin metadata scalar used for quote raw units"
-    };
-  }
-  if (unitSource === FLOWX_CLMM_UNIT_SOURCE) {
-    return {
-      sourceReferencesKind: "pinned_sdk_registry",
-      unitClaimSource: "pinned_sdk_metadata",
-      sourceDescription: "Pinned FlowX mainnet registry (chain-verified) used for quote raw units"
     };
   }
   if (unitSource === "sui_core_getCoinMetadata") {

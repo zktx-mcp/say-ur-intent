@@ -25,18 +25,10 @@ describe("intent plan factories", () => {
     }
   });
 
-  it("requires an explicit protocol now that two protocols register swap", () => {
-    const resolution = resolveIntentPlanFactory(INTENT_PLAN_FACTORIES, "swap");
-    expect(resolution).toMatchObject({
-      status: "protocol_choice_required",
-      available: ["deep", "flowx"]
+  it("rejects the removed protocol instead of substituting another adapter", () => {
+    expect(resolveIntentPlanFactory(INTENT_PLAN_FACTORIES, "swap", "flowx")).toEqual({
+      status: "unknown_protocol", protocolSlug: "flowx", available: ["deep"]
     });
-    const flowx = resolveIntentPlanFactory(INTENT_PLAN_FACTORIES, "swap", "flowx");
-    expect(flowx.status).toBe("resolved");
-    if (flowx.status === "resolved") {
-      expect(flowx.factory.adapterId).toBe("flowx-swap");
-      expect(flowx.factory.protocol).toBe("FlowXCLMM");
-    }
   });
 
   it("refuses to pick a venue silently once two protocols share an action", () => {
@@ -44,7 +36,7 @@ describe("intent plan factories", () => {
     const resolution = resolveIntentPlanFactory(contested, "swap");
     expect(resolution).toMatchObject({
       status: "protocol_choice_required",
-      available: ["deep", "flowx", "other"]
+      available: ["deep", "other"]
     });
     const explicit = resolveIntentPlanFactory(contested, "swap", "other");
     expect(explicit.status).toBe("resolved");
@@ -52,7 +44,7 @@ describe("intent plan factories", () => {
 
   it("reports unknown protocols with the available slugs", () => {
     const resolution = resolveIntentPlanFactory(INTENT_PLAN_FACTORIES, "swap", "nope");
-    expect(resolution).toMatchObject({ status: "unknown_protocol", available: ["deep", "flowx"] });
+    expect(resolution).toMatchObject({ status: "unknown_protocol", available: ["deep"] });
   });
 
   it("reports unsupported action kinds", () => {
@@ -89,15 +81,12 @@ describe("intent plan factories", () => {
       (surface) => surface.protocolSlug
     );
     // The user picks a venue from these surfaces, so they must offer the same
-    // order; "deep before flowx" lives in three registries and would otherwise
-    // drift.
-    expect(factoryOrder).toEqual(["deep", "flowx"]);
+    // registered order, independent of how many adapters are installed.
+    expect(factoryOrder).toEqual(["deep"]);
     expect(surfaceOrder).toEqual(factoryOrder);
     // The status list leads with the swap venues in the same order before the
     // notes-only margin entry.
-    const statusSwapVenues = SUPPORTED_PROTOCOLS.map((protocol) => protocol.id).filter(
-      (id) => id === "deepbook-v3" || id === "flowx-clmm"
-    );
-    expect(statusSwapVenues).toEqual(["deepbook-v3", "flowx-clmm"]);
+    const statusSwapVenues = SUPPORTED_PROTOCOLS.filter((protocol) => protocol.support === "read_and_local_review").map((protocol) => protocol.id);
+    expect(statusSwapVenues).toEqual(["deepbook-v3"]);
   });
 });

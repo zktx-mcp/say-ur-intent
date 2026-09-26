@@ -3,7 +3,7 @@
 This document defines the contract boundary for wallet-review adapters.
 It is a product and implementation contract, not a current feature announcement.
 
-The backend builds local account-bound DeepBook/FlowX transaction material and
+The backend builds local account-bound DeepBook transaction material and
 binds its Sui digest to verified review evidence. Only explicit user selection
 and wallet approval allow the backend WalletConnect request. Returned bytes and
 signer must match the admission before submission. No model or card receives
@@ -15,7 +15,7 @@ The source-level schema for this contract lives in
 ## Current Status
 
 The contract schema is implemented in TypeScript and Zod, and the runtime
-DeepBook and FlowX account-bound swap reviews emit it. When an account-bound review
+DeepBook account-bound swap reviews emit it. When an account-bound review
 completes every evidence stage (local unsigned transaction material, internal
 digest commitment, object ownership, quote/policy provenance, human-readable
 review facts, and review-time simulation), the review layer assembles those
@@ -378,7 +378,7 @@ produce a valid review. The existing human review evidence explains the funding
 form without publishing private artifacts or creating signing authority.
 
 Different gas owners, sponsor withdrawals, unsupported reservation formats, and
-unverified funding remain blocked. Both adapters still require the same quote,
+unverified funding remain blocked. Supported adapters still require the same quote,
 amount, ownership, human review, simulation, wallet approval, and digest checks.
 
 New review evidence names `client.transactionExecutionService.simulateTransaction`

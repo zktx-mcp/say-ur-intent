@@ -208,13 +208,15 @@ describe("DeepBook transaction material producer", () => {
     });
   });
 
-  it("does not echo raw SDK build errors into public review checks", async () => {
+  it.each([
+    "transaction bytes: abc private key material",
+    "gas payment RPC unavailable",
+    "RPC failed while checking insufficient balance"
+  ])("does not infer a shortage or echo an opaque SDK build error: %s", async (message) => {
     const materialStore = new InMemoryLocalTransactionMaterialStore();
+    const client = createDeepbookBuildClient({ expectedChainIdentifier, buildError: new Error(message) });
     const producer = createDeepbookSwapTransactionMaterialProducer({
-      client: createDeepbookBuildClient({
-        expectedChainIdentifier,
-        buildError: new Error("transaction bytes: abc private key material")
-      }),
+      client,
       network: "mainnet",
       chainIdentifier: expectedChainIdentifier,
       expectedChainIdentifier,
@@ -242,8 +244,10 @@ describe("DeepBook transaction material producer", () => {
       now: new Date("2026-05-15T00:00:29.000Z")
     });
 
-    expect(outcome.status).toBe("blocked");
-    expect(outcome.checks[0].message).not.toMatch(/transaction bytes: abc|private key material/i);
+    expect(client.transactionExecutionService.simulateTransaction).toHaveBeenCalledOnce();
+    expect(outcome).toMatchObject({ status: "blocked", blockedReason: "object_resolution_failed" });
+    expect(outcome.checks[0].message).toBe("DeepBook transaction material could not be built and verified. Nothing was signed or submitted.");
+    expect(outcome.checks[0].message).not.toContain(message);
   });
 
   it("fails closed when the stored local material is unavailable for digest commitment", async () => {

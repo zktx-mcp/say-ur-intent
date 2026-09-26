@@ -499,18 +499,16 @@ describe("MCP discoverability", () => {
         "inspect-supported-sui-actions",
         "prepare-reviewable-sui-action",
         "swap",
-        "swap-deep",
-        "swap-flowx"
+        "swap-deep"
       ]);
       // Adapter prompt surfaces take exactly one free-text intent argument;
       // the static prompts stay zero-argument. No prompt claims signing
       // support.
       for (const prompt of result.prompts) {
         if (prompt.name === "swap") {
-          // Two protocols register swap, so the bare action carries the
-          // protocol-choice argument; it never picks a venue silently.
-          expect((prompt.arguments ?? []).map((argument) => argument.name)).toEqual(["intent", "protocol"]);
-        } else if (prompt.name === "swap-deep" || prompt.name === "swap-flowx") {
+          // The current single adapter provides the bare action shorthand.
+          expect((prompt.arguments ?? []).map((argument) => argument.name)).toEqual(["intent"]);
+        } else if (prompt.name === "swap-deep") {
           expect((prompt.arguments ?? []).map((argument) => argument.name)).toEqual(["intent"]);
         } else {
           expect(prompt.arguments ?? []).toEqual([]);
@@ -657,6 +655,8 @@ describe("MCP discoverability", () => {
         expect(status.data.implementedTools).not.toContain(failClosedTool);
       }
       expect(reportedToolNames).toEqual(registeredToolNames);
+      expect(registeredToolNames).not.toContain("read.list_flowx_pools");
+      expect(registeredToolNames).not.toContain("read.quote_flowx_swap");
     } finally {
       await server.close();
     }

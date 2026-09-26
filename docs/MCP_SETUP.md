@@ -514,7 +514,7 @@ with its owner process; the port is not a browser-wallet authorization origin.
 
 - Product-facing behavior is mainnet-only.
 - Wallet-account reads require an active account read context from wallet connection.
-- Account-bound DeepBook/FlowX review requires all evidence stages. The internal
+- Account-bound DeepBook review requires all evidence stages. The internal
   Review card then allows an explicit WalletConnect request under user control.
   Requests and observed chain results are separate; missing results remain
   unknown and are not resubmitted automatically.
@@ -644,7 +644,7 @@ The Claude Code, Claude Desktop, Codex, and Cursor snippets above were checked a
 
 Set `SMOKE_SWAP_PROTOCOL`, `SMOKE_SWAP_FROM_SYMBOL`, `SMOKE_SWAP_TO_SYMBOL` and
 `SMOKE_SWAP_AMOUNT_DISPLAY` together to opt into read-only account-bound review
-computation. Protocol is explicitly `deep` or `flowx`; none is silently selected.
+computation. Protocol is explicitly `deep`; the smoke does not silently select a protocol.
 A partially configured group is an error. `SMOKE_SWAP_MAX_SLIPPAGE_BPS` keeps the
 existing explicit override. The script uses the same runtime review composition,
 material store and evidence validation as the product, and records whether

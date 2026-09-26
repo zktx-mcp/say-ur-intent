@@ -3,10 +3,6 @@ import {
   DEEPBOOK_SWAP_ACTION_KIND,
   DEEPBOOK_SWAP_ADAPTER_ID
 } from "./deepbook/deepbookSwapIntent.js";
-import {
-  FLOWX_SWAP_ACTION_KIND,
-  FLOWX_SWAP_ADAPTER_ID
-} from "./flowx/flowxSwapIntent.js";
 
 /**
  * One slash-prompt surface contributed by a review adapter.
@@ -66,16 +62,6 @@ export const ADAPTER_PROMPT_SURFACES: readonly AdapterPromptSurface[] = [
     protocolSlug: "deep",
     title: "DeepBook Swap Review",
     description: 'Prepare a reviewable DeepBook mainnet swap from a one-line intent, e.g. "10 sui to usdc".',
-    intentArgDescription: 'Swap intent in one line, any language, e.g. "10 sui to usdc" or "10 수이 usdc로 환전"',
-    exampleIntents: ["10 sui to usdc", "10 수이 usdc로 환전"],
-    toolName: "action.prepare_sui_action_review"
-  },
-  {
-    adapterId: FLOWX_SWAP_ADAPTER_ID,
-    action: FLOWX_SWAP_ACTION_KIND,
-    protocolSlug: "flowx",
-    title: "FlowX Swap Review",
-    description: 'Prepare a reviewable FlowX CLMM mainnet swap from a one-line intent, e.g. "10 sui to usdc".',
     intentArgDescription: 'Swap intent in one line, any language, e.g. "10 sui to usdc" or "10 수이 usdc로 환전"',
     exampleIntents: ["10 sui to usdc", "10 수이 usdc로 환전"],
     toolName: "action.prepare_sui_action_review"

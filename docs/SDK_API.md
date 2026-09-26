@@ -8,7 +8,6 @@ This document records the pinned SDK APIs used by the current runtime. The sourc
 - `@modelcontextprotocol/sdk`: `1.29.0`
 - `@mysten/sui`: `2.17.0`
 - `@mysten/deepbook-v3`: `1.3.6`
-- `@flowx-finance/sdk`: `2.1.0`
 - `@walletconnect/sign-client`, `@walletconnect/types`, `@walletconnect/utils`: `2.23.10`
 - `qrcode`: `1.5.4`
 - `@zktx.io/ptb-model`: `0.5.0`
@@ -54,6 +53,13 @@ Confirmed methods:
 For review-time transaction simulation, use the public gRPC `client.transactionExecutionService.simulateTransaction` with validation checks enabled (`checks: ENABLED`), `doGasSelection: true`, and the complete stored BCS transaction. In the pinned core API, `doGasSelection: false` can let the node inject mock gas for an empty gas payment, changing the simulated digest. Require returned BCS to equal the submitted bytes and require the effects digest to match; selection must not change the reviewed material. Decode transaction facts from the identical returned BCS. Request effects, balance changes and object id/type facts, and require the normalized `effects`, `balanceChanges`, `objectTypes` and `transaction` evidence. Missing required fields must fail closed. Returned BCS is only a private equality check and must not enter public or stored review evidence; raw transaction bytes are not an MCP or review-app output. `commandResults` remains scoped to read-only DeepBook raw quote extraction using `client.core.simulateTransaction`, not swap review simulation evidence. Failed simulations are blocked pre-signing review facts, not wallet rejection, transaction submission failure, or automatic transient retry evidence. A thrown simulation call is refreshable only when it is classified as a transport, RPC, timeout, or endpoint availability failure; malformed transaction material, request-shape bugs, incomplete results, and adapter defects remain blocked.
 
 Only an explicit `effects.status.success: false` reports simulation failure. A missing transaction, effects, status, or boolean success value means the response cannot establish an outcome. Incomplete or inconsistent evidence blocks the review with a fixed explanation; internal validation and JavaScript error messages are not public review facts. A `success: true` response still requires all material and evidence checks above.
+
+During transaction building, the SDK's `SimulationError.executionError` does
+not preserve every gRPC error kind. A build error can establish a returned
+simulation rejection without establishing a specific funding shortfall. Build
+error text is not used to infer insufficient gas or coin balance. Explicit
+shortfalls remain available from verified funding reads and the typed error
+kinds returned directly by review-time simulation.
 
 ## DeepBook Read Methods
 

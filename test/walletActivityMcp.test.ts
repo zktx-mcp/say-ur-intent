@@ -40,6 +40,25 @@ function data(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, a
 }
 
 describe("wallet cards, ordinary MCP and stored review activity", () => {
+  it("rejects a removed protocol before creating a review or requesting a signature", async () => {
+    const { f, call } = await harness();
+    await f.approve();
+    const before = f.run(() => f.sessions.reviewSessionIds());
+    const result = await call(TOOL_NAMES.actionPrepareSuiActionReview, { intent: {
+      type: "swap", protocol: "flowx", from: { symbol: "SUI", amount: "1" },
+      to: { symbol: "USDC" }, maxSlippageBps: 50
+    } });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse((result.content as Array<{ text: string }>)[0]!.text)).toMatchObject({
+      ok: false, error: { kind: "input_invalid", details: {
+        reason: "unknown_protocol", protocol: "flowx", availableProtocols: ["deep"]
+      } }
+    });
+    expect(f.run(() => f.sessions.reviewSessionIds())).toEqual(before);
+    expect(f.sign).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+  });
+
   it("reports the same pending disconnect through card, get, wait and interaction tools", async () => {
     const { f, call } = await harness(), { connection } = await f.approve();
     const pending = deferred<void>(); vi.mocked(f.transport.disconnect).mockImplementationOnce(() => pending.promise);

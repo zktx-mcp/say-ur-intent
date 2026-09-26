@@ -6,12 +6,6 @@ import {
   DEEPBOOK_SWAP_ADAPTER_ID,
   DEEPBOOK_SWAP_PROTOCOL
 } from "./deepbook/deepbookSwapIntent.js";
-import {
-  createFlowxSwapActionPlan,
-  FLOWX_SWAP_ACTION_KIND,
-  FLOWX_SWAP_ADAPTER_ID,
-  FLOWX_SWAP_PROTOCOL
-} from "./flowx/flowxSwapIntent.js";
 
 /**
  * Protocol-neutral swap intent. The optional `protocol` field carries the
@@ -59,13 +53,6 @@ export const INTENT_PLAN_FACTORIES: readonly IntentPlanFactory[] = [
     protocolSlug: "deep",
     protocol: DEEPBOOK_SWAP_PROTOCOL,
     createPlan: (intent, now) => createDeepbookSwapActionPlan({ ...intent, type: "swap" }, now)
-  },
-  {
-    adapterId: FLOWX_SWAP_ADAPTER_ID,
-    actionKind: FLOWX_SWAP_ACTION_KIND,
-    protocolSlug: "flowx",
-    protocol: FLOWX_SWAP_PROTOCOL,
-    createPlan: (intent, now) => createFlowxSwapActionPlan({ ...intent, type: "swap" }, now)
   }
 ];
 

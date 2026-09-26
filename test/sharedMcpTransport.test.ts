@@ -88,8 +88,8 @@ it("preserves MCP discovery, completions and private results across clients and 
     expect((await a.listResourceTemplates()).resourceTemplates).toEqual([]);
     expect((await a.readResource({ uri: "fixture://state" })).contents).toEqual([{ uri: "fixture://state", text: "first" }]);
     expect((await a.listPrompts()).prompts.some((prompt) => prompt.name === "swap")).toBe(true);
-    expect(JSON.stringify(await a.getPrompt({ name: "swap", arguments: { intent: "10 sui to usdc" } }))).toContain("Do not pick a protocol on your own");
-    expect((await a.complete({ ref: { type: "ref/prompt", name: "swap" }, argument: { name: "protocol", value: "f" } })).completion.values).toEqual(["flowx"]);
+    expect(JSON.stringify(await a.getPrompt({ name: "swap", arguments: { intent: "10 sui to usdc" } }))).toContain("action.prepare_sui_action_review");
+    expect((await a.complete({ ref: { type: "ref/prompt", name: "swap" }, argument: { name: "intent", value: "" } })).completion.values).toEqual(["10 sui to usdc", "10 수이 usdc로 환전"]);
     const result = await b.callTool({ name: "fixture.call", arguments: { hold: false } });
     expect(result.structuredContent).toEqual({ owner: "first" });
     expect(result._meta).toEqual({ privateSentinel: "view-only" });

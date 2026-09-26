@@ -43,17 +43,6 @@ export function unsupportedDeepbookSwapPlanIdentityCheck(): ReviewCheck {
   };
 }
 
-export function unsupportedFlowxSwapPlanIdentityCheck(): ReviewCheck {
-  return {
-    id: "flowx_swap_plan_identity_invalid",
-    label: "FlowX plan identity",
-    status: "fail",
-    message:
-      "This action plan is labelled for the FlowX swap adapter but does not match the FlowXCLMM swap review identity.",
-    source: "adapter"
-  };
-}
-
 export function externalProposalReviewOnlyCheck(): ReviewCheck {
   return {
     id: "external_proposal_review_only",

@@ -9,8 +9,7 @@ import {
 } from "../suiAddress.js";
 
 export const LOCAL_TRANSACTION_MATERIAL_KINDS = [
-  "deepbook_swap_transaction_data",
-  "flowx_swap_transaction_data"
+  "deepbook_swap_transaction_data"
 ] as const;
 
 export const LOCAL_TRANSACTION_MATERIAL_SOURCES = [

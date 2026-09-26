@@ -216,7 +216,7 @@ It is not an MCP tool, not a CI check, not packaged product functionality, not r
 
 Set `SMOKE_SWAP_PROTOCOL`, `SMOKE_SWAP_FROM_SYMBOL`, `SMOKE_SWAP_TO_SYMBOL` and
 `SMOKE_SWAP_AMOUNT_DISPLAY` together to opt into read-only account-bound review
-computation. Protocol is explicitly `deep` or `flowx`; none is silently selected.
+computation. Protocol is explicitly `deep`; the smoke does not silently select a protocol.
 A partially configured group is an error. `SMOKE_SWAP_MAX_SLIPPAGE_BPS` keeps the
 existing explicit override. The script uses the same runtime review composition,
 material store and evidence validation as the product, and records whether

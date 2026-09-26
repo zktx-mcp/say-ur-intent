@@ -21,7 +21,6 @@ const sourceFiles = [
 const toolFiles = [
   "src/mcp/tools/account/index.ts",
   "src/mcp/tools/read/deepbookReadTools.ts",
-  "src/mcp/tools/read/flowxReadTools.ts",
   "src/mcp/tools/read/reviewActivityTools.ts",
   "src/mcp/tools/read/serverStatusTools.ts",
   "src/mcp/tools/read/transactionActivityTools.ts",
@@ -1266,7 +1265,7 @@ describe("source policy", () => {
     ];
     const source = files.map((file) => readFileSync(join(process.cwd(), file), "utf8")).join("\n");
 
-    expect(source).toMatch(/account-bound DeepBook and FlowX swap review/i);
+    expect(source).toMatch(/account-bound DeepBook swap review/i);
     expect(source).toMatch(/protocol-agnostic adapters|protocol-agnostic adapter contracts|descriptor contract/i);
     const deepBookOwnedPhrases = [
       ["DeepBook", "signable", "adapter"],

@@ -3,9 +3,6 @@ import { buildSupportedReviewAdapters } from "../adapters/reviewAdapters.js";
 import { validateSupportedAdapterLifecycle } from "../adapters/adapterLifecycleValidators.js";
 import { createDeepbookSwapTransactionMaterialDigestProducer, createDeepbookSwapTransactionMaterialProducer } from "../adapters/deepbook/deepbookTransactionMaterialProducer.js";
 import { createDeepbookSwapHumanReadableReviewProducer } from "../adapters/deepbook/deepbookHumanReviewProducer.js";
-import { createFlowxSwapTransactionMaterialDigestProducer, createFlowxSwapTransactionMaterialProducer } from "../adapters/flowx/flowxSwapTransactionMaterialProducer.js";
-import { createFlowxSwapHumanReadableReviewProducer } from "../adapters/flowx/flowxSwapHumanReviewProducer.js";
-import { createFlowxSwapReviewQuoteSource } from "../core/read/flowxQuoteClient.js";
 import { createTransactionObjectOwnershipProducer } from "../core/action/transactionObjectOwnershipProducer.js";
 import { createReviewTimeSimulationProducer } from "../core/action/reviewTimeSimulationEvidence.js";
 import { producePtbVisualizationArtifact } from "../core/action/ptbVisualizationProducer.js";
@@ -61,24 +58,6 @@ export function createRuntimeReviewDependencies(options: {
               }),
               transactionObjectOwnershipProducer,
               deepbookHumanReadableReviewProducer: createDeepbookSwapHumanReadableReviewProducer(),
-              reviewTimeSimulationProducer,
-              ptbVisualizationProducer: (vizInput) =>
-                producePtbVisualizationArtifact({ materialStore: transactionMaterialStore, ...vizInput })
-            },
-            flowx: {
-              flowxQuoteSource: createFlowxSwapReviewQuoteSource(),
-              flowxTransactionMaterialProducer: createFlowxSwapTransactionMaterialProducer({
-                client: suiClient,
-                network: config.network,
-                chainIdentifier,
-                expectedChainIdentifier: config.expectedChainIdentifier,
-                materialStore: transactionMaterialStore
-              }),
-              flowxTransactionMaterialDigestProducer: createFlowxSwapTransactionMaterialDigestProducer({
-                materialStore: transactionMaterialStore
-              }),
-              transactionObjectOwnershipProducer,
-              flowxHumanReadableReviewProducer: createFlowxSwapHumanReadableReviewProducer(),
               reviewTimeSimulationProducer,
               ptbVisualizationProducer: (vizInput) =>
                 producePtbVisualizationArtifact({ materialStore: transactionMaterialStore, ...vizInput })

@@ -17,7 +17,7 @@ Target repository structure:
 - `src/adapters/`: protocol-specific adapter implementations. Shared review,
   material, ownership, simulation, acceptance, and handoff contracts should stay
   protocol-agnostic unless a concrete implementation proves otherwise. DeepBook
-  and FlowX are the current signable swap adapter implementations; additional
+  is the current signable swap adapter implementation; additional
   protocol support must be added through adapter contracts rather than a
   custom-only product path.
 - `src/mcp/`: MCP server and tool definitions.
@@ -792,8 +792,8 @@ only one in isolation:
   cannot be answered from the returned evidence.
 - Protocol breadth: additional protocol adapters registered through the
   descriptor contract; protocol names appear in public docs only after a
-  concrete support decision. A second protocol is why the bare action prompt
-  asks the user to choose a venue instead of routing silently.
+  concrete support decision. When several protocols support an action, the bare
+  action prompt asks the user to choose instead of routing silently.
 - Execution-trust foundation: what the user reviewed is exactly what gets
   signed, under any wallet and any signing speed — the review-session state
   machine, atomic per-review-revision admission, verified sign-only wallet

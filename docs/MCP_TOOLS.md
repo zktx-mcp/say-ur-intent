@@ -22,8 +22,6 @@ Tool names use dot prefixes and avoid arbitrary shell, arbitrary Move calls, and
 | `read.get_deepbook_usdc_price_at_time` | Implemented | Returns the DeepBookV3 official Indexer USDC candle for or nearest to one target UTC time. |
 | `read.quote_deepbook_action` | Implemented | Quotes raw integer DeepBook quantities through pinned SDK transaction builders and raw `u64` simulation return values with an internal sender placeholder. |
 | `read.quote_deepbook_display_amount` | Implemented | Converts an explicit display source amount through pinned DeepBook token units, then returns scoped display quote facts plus raw quote evidence. |
-| `read.list_flowx_pools` | Implemented | Lists pinned FlowX CLMM mainnet pools for supported pairs from the chain-verified pinned registry. |
-| `read.quote_flowx_swap` | Implemented | Returns an indicative FlowX route quote for an explicit display source amount; the router-selected pool is reported as evidence and validated against the pinned registry. |
 | `read.summarize_deepbook_account_inventory` | Implemented | Summarizes active-account DeepBook BalanceManager inventory through pinned SDK simulation reads. |
 | `read.summarize_wallet_assets` | Implemented | Reads coin balances for an explicit address or the active account through Sui gRPC `client.core.listBalances`; accepts `cursor` for pagination. |
 | `read.classify_wallet_assets` | Implemented | Classifies coin balances for an explicit address or the active account by balanceStatus and coin-balance roles; accepts `cursor` for pagination. |
@@ -207,26 +205,7 @@ They are not raw output amounts, min-out values, liquidity verdicts, route recom
 
 This quote is not a settlement asset choice.
 
-### FlowX read tools
-
-`read.list_flowx_pools` lists the pinned FlowX CLMM mainnet pool registry: every pool for each supported pair, one per fee tier, without ranking. The pins were read from Sui mainnet directly (package introspection, the shared `PoolRegistry` object, and its dynamic fields) and `scripts/generate-flowx-registry.ts` re-verifies them against the chain; verification failure stops the generator instead of rewriting pins. The list is static known metadata, not live liquidity, a pool ranking, or route advice.
-
-`read.quote_flowx_swap` accepts `sourceSymbol`, `targetSymbol`, and `amountDisplay`, converts the display amount through pinned decimals, and requests a quote from the FlowX aggregator quoter restricted to FlowX CLMM single-hop routes.
-
-The route is chosen by the FlowX router, not by this server. The response reports that choice as evidence: `routeEvidence.routeChosenBy: "flowx_router_not_this_server"` and `routeEvidence.pools` name the router-selected pool.
-
-Every quote fails closed unless all of the following hold:
-
-- every route hop source is FlowX CLMM;
-- the route is single-hop;
-- the selected pool is present in the pinned registry with the same fee rate;
-- the route direction agrees with the pinned pair orientation;
-- the echoed input amount equals the requested raw amount;
-- the protocol config carried by the quoter response matches the pinned package and object ids (`protocolConfigPinMatch: true`).
-
-`source.chainVerified: false` and `quantitySemantics.chainVerified: false` state that this quote comes from the FlowX quoter API over HTTPS, not from a chain read. `amountOut.indicative: true` marks the output as an indicative estimate. Signable FlowX review re-verifies the quote through review-time simulation before the account-bound review reaches `ready_for_wallet_review`.
-
-The same payment-answer blocks as the DeepBook quotes apply: `canUseForPaymentAnswer: false`, `doNotCombineWithPaymentAnswer: true`, and `read.preview_intent_evidence` `responseSummary` stays the only payment-coverage answer source.
+### DeepBook account inventory
 
 `read.summarize_deepbook_account_inventory` uses active account context to discover DeepBook BalanceManager addresses.
 
@@ -628,7 +607,7 @@ This tool does not run scans, start a background indexer, create a price cache, 
 
 | Tool | Status | Purpose |
 | --- | --- | --- |
-| `action.prepare_sui_action_review` | Signable internal Review card | Creates a local review session and internal Review card for a supported swap action proposal. Account-bound DeepBook and FlowX reviews may build local unsigned transaction material inside the review server, internally bind a Sui transaction digest to it, and derive object ownership, quote/policy, human-readable review, review-time simulation, and PTB visualization evidence. When every required evidence stage completes, an explicit Review card selection can admit backend-mediated WalletConnect approval for that exact transaction. The MCP tool does not return transaction bytes, signing data, or signing readiness. |
+| `action.prepare_sui_action_review` | Signable internal Review card | Creates a local review session and internal Review card for a supported swap action proposal. Account-bound DeepBook reviews may build local unsigned transaction material inside the review server, internally bind a Sui transaction digest to it, and derive object ownership, quote/policy, human-readable review, review-time simulation, and PTB visualization evidence. When every required evidence stage completes, an explicit Review card selection can admit backend-mediated WalletConnect approval for that exact transaction. The MCP tool does not return transaction bytes, signing data, or signing readiness. |
 | `action.prepare_external_proposal_review` | Non-signable review | Creates a local review session and internal Review card from an untrusted structured external proposal. It does not return transaction bytes. |
 
 `action.prepare_sui_action_review` is account-bound: a swap review computes
@@ -703,7 +682,7 @@ Account-bound review computation for external proposals returns `blocked` with
 recorded the proposal facts but did not build, regenerate, simulate, or verify
 transaction material.
 
-Complete supported DeepBook/FlowX review reaches ready_for_wallet_review. This
+Complete supported DeepBook review reaches ready_for_wallet_review. This
 is review evidence, not transaction authority. A scoped user selection admits
 one request; the backend sends the stored bytes through WalletConnect, verifies
 the returned digest and signer, and submits once. It independently reads chain
@@ -715,12 +694,11 @@ After the wallet account is bound to a supported swap review session, the
 Review card and `session.get_review_status` may show protocol-specific quote
 evidence and review-state checks for:
 
-- resolved DeepBook direct pool or FlowX pinned pair;
+- resolved DeepBook direct pool;
 - raw quote evidence;
 - quote freshness;
 - derived raw min-out policy;
-- protocol fee evidence, such as DeepBook DEEP fee evidence or FlowX pool-fee
-  evidence reflected in the quoted output;
+- protocol fee evidence, including DeepBook DEEP fee evidence;
 - local unsigned transaction material build when that stage completes;
 - an internal Sui transaction digest commitment bound to the stored local material when that stage completes;
 - object ownership evidence derived from stored local material and Sui owner/type reads when that stage completes.
@@ -733,7 +711,7 @@ evidence and review-state checks for:
 
 When those account-bound review stages run, `reviewState.adapterLifecycle` may
 list `stageCatalogId`, `completedStages`, and `missingStages` for the
-adapter-owned DeepBook or FlowX lifecycle. `stageCatalogId` identifies the
+adapter-owned DeepBook lifecycle. `stageCatalogId` identifies the
 adapter-owned stage catalog; it is not a core lifecycle enum shared by every
 protocol adapter.
 Completed stages are review progress only. If
@@ -780,7 +758,7 @@ execution readiness.
 If contract assembly declines, the review returns `blocked` with
 `blockedReason: "wallet_review_contract_emit_missing"` and a failed
 adapter-prefixed check such as `deepbook_wallet_review_contract_emit_missing`
-or `flowx_wallet_review_contract_emit_missing` naming the concrete reason. In
+naming the concrete reason. In
 the contract-missing blocked state, wallet signature requests and execution
 remain unavailable. In the `ready_for_wallet_review` state,
 `reviewState.adapterLifecycle.missingStages` is empty and the human-readable
@@ -1086,7 +1064,6 @@ Do not rely on contributor-only documents as the runtime source of agent behavio
 | `inspect-supported-sui-actions` | Guides a user through checking server status and supported mainnet surfaces. |
 | `prepare-reviewable-sui-action` | Guides a user through the review-session flow without claiming unsupported signing support. |
 | `swap-deep` | Prepares a reviewable DeepBook swap from a one-line intent argument (any language), e.g. `10 sui to usdc`. |
-| `swap-flowx` | Prepares a reviewable FlowX CLMM swap from a one-line intent argument (any language), e.g. `10 sui to usdc`. |
 | `swap` | Bare-action prompt, always registered. With one protocol it routes straight there; with several it takes an optional `protocol` argument (completion suggests the slugs) and instructs the model to list the options and ask the user - never to pick a venue silently. |
 
 Adapter prompt surfaces are declared per adapter in

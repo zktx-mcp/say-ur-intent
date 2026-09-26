@@ -13,7 +13,7 @@ Say Ur Intent is a local-first toolkit that turns natural-language Sui DeFi
 intent and structured Sui payment/action proposals into verified, AI-readable
 evidence. Users inspect independently built or verified transaction material
 and approve each transaction in their own wallet. The current backend builds
-account-bound DeepBook and FlowX swap material, verifies its digest, ownership,
+account-bound DeepBook swap material, verifies its digest, ownership,
 quote/policy provenance, human-readable facts, simulation and PTB visualization,
 and exposes internal Connect and Review cards alongside Account, Receipt and
 Chart cards. Settings still uses a local token page.
@@ -30,7 +30,7 @@ separate facts. No card or model receives transaction bytes or signatures.
 Implemented surfaces and deliberately sequenced work remain distinct:
 
 - Current surfaces: read-only evidence and external proposal review, internal
-  Connect/Review cards for the two supported swap adapters, backend WalletConnect
+  Connect/Review cards for the supported swap adapter, backend WalletConnect
   signing and receipt observation, and a local Settings page. Ordinary MCP tools
   create cards or read evidence; they do not authorize signing or execution.
 - Sequenced next: internal Settings card and complete removal of its external
@@ -43,28 +43,25 @@ assets and request, and which choices or claims remain unsupported. A reviewed
 transaction is not a safety guarantee. Implementation or a unit's verification
 must not be reported as completion of the entire product goal.
 
-Say Ur Intent is not a DeepBook-only product. Extensibility across Sui DeFi
-protocol adapters is a core product advantage, not a late cleanup task. DeepBook
-and FlowX are the current concrete Sui DeFi protocol surfaces in this release:
-DeepBook provides scoped conversion, price, orderbook, account-inventory, and
-swap-review evidence; FlowX provides pinned CLMM pool facts, indicative route
-quotes, and swap-review evidence. Concrete tools, SDK calls, registry fields,
-and implemented adapter details may name those protocols. Product-level plans
-and new evidence producer work must still be designed against
-protocol-agnostic adapter contracts first. Wallet and Sui balance reads describe
-held assets. DeepBook and FlowX facts must not become route choice, liquidity
-readiness, price-impact claims, funding readiness, payment readiness, best-price
-advice, or signing readiness unless response-local fields explicitly support
-those conclusions.
+Say Ur Intent uses protocol-agnostic adapter contracts. Extensibility across Sui
+DeFi protocols remains a core product boundary. DeepBook is the current concrete
+protocol surface: it provides scoped conversion, price, orderbook,
+account-inventory, and swap-review evidence. Concrete tools, SDK calls, registry
+fields, and implemented adapter details may name DeepBook. Product-level plans
+and new evidence producer work must still use shared adapter contracts;
+a single installed adapter must not turn shared code into a custom-only path.
+Wallet and Sui balance reads describe held assets. DeepBook facts must not become
+route choice, liquidity readiness, price-impact claims, funding readiness,
+payment readiness, best-price advice, or signing readiness unless response-local
+fields explicitly support those conclusions.
 
 Do not introduce names of other DeFi protocols into public docs, runtime
 guidance, MCP resources, roadmap labels, or product copy during development
 unless there is an approved concrete implementation or support decision for that
 protocol. Use generic terms such as "protocol adapter", "first swap adapter",
 "supported action adapter", or "account-bound swap review" until a protocol is
-actually implemented or explicitly approved. DeepBook and FlowX are current
-exceptions because they are implemented protocol surfaces, but neither may
-become a custom-only design shortcut.
+actually implemented or explicitly approved. DeepBook is a current exception
+because it is implemented, but it must not become a custom-only design shortcut.
 
 Existing transaction-activity classifier research notes may name protocols only
 inside that implemented `compact.protocolMatches` evidence boundary. Those names

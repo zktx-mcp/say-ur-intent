@@ -18,12 +18,9 @@ import {
 } from "../../serverInfo.js";
 import { TOOL_NAMES } from "../../toolNames.js";
 
-// Listed swap-capable DeFi venues first, in selection order (deep, then flowx),
-// so protocol enumeration leads with the venues a user actually picks between.
-// deepbook-margin is protocol-notes-only (no swap surface) and trails them.
+// Executable swap adapters precede protocol-notes-only entries.
 export const SUPPORTED_PROTOCOLS = [
   { id: "deepbook-v3", status: "mainnet", support: "read_and_local_review" },
-  { id: "flowx-clmm", status: "mainnet", support: "read_and_local_review" },
   { id: "deepbook-margin", status: "mainnet", support: "protocol_notes_only" }
 ] as const;
 

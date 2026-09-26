@@ -17,30 +17,10 @@ import type {
 import type {
   DeepbookSwapHumanReadableReviewProducer
 } from "./deepbook/deepbookHumanReviewProducer.js";
-import {
-  computeFlowxSwapReviewEvidence,
-  type FlowxPtbVisualizationProducer,
-  type FlowxSwapReviewQuoteSource
-} from "./flowx/flowxSwapReviewEvidence.js";
-import {
-  FLOWX_SWAP_ACTION_KIND,
-  FLOWX_SWAP_ADAPTER_ID,
-  FLOWX_SWAP_PROTOCOL,
-  isFlowxSwapActionPlanIdentity
-} from "./flowx/flowxSwapIntent.js";
-import { FLOWX_SWAP_REVIEW_LIFECYCLE_STAGE_CATALOG_ID } from "./flowx/flowxSwapReviewLifecycle.js";
-import type {
-  FlowxSwapTransactionMaterialDigestProducer,
-  FlowxSwapTransactionMaterialProducer
-} from "./flowx/flowxSwapTransactionMaterialProducer.js";
-import type {
-  FlowxSwapHumanReadableReviewProducer
-} from "./flowx/flowxSwapHumanReviewProducer.js";
 import type { ReviewTimeSimulationProducer } from "../core/action/reviewTimeSimulationEvidence.js";
 import type { TransactionObjectOwnershipProducer } from "../core/action/transactionObjectOwnershipProducer.js";
 import {
-  unsupportedDeepbookSwapPlanIdentityCheck,
-  unsupportedFlowxSwapPlanIdentityCheck
+  unsupportedDeepbookSwapPlanIdentityCheck
 } from "../core/review/reviewChecks.js";
 import { blockedReviewResult } from "../core/review/reviewComputationResult.js";
 import type {
@@ -59,24 +39,12 @@ export type DeepbookReviewAdapterWiring = {
   ptbVisualizationProducer?: DeepbookPtbVisualizationProducer | undefined;
 };
 
-export type FlowxReviewAdapterWiring = {
-  flowxQuoteSource: FlowxSwapReviewQuoteSource;
-  flowxTransactionMaterialProducer?: FlowxSwapTransactionMaterialProducer | undefined;
-  flowxTransactionMaterialDigestProducer?: FlowxSwapTransactionMaterialDigestProducer | undefined;
-  transactionObjectOwnershipProducer?: TransactionObjectOwnershipProducer | undefined;
-  flowxHumanReadableReviewProducer?: FlowxSwapHumanReadableReviewProducer | undefined;
-  reviewTimeSimulationProducer?: ReviewTimeSimulationProducer | undefined;
-  ptbVisualizationProducer?: FlowxPtbVisualizationProducer | undefined;
-};
-
 /**
- * Named per-adapter wiring. A protocol whose wiring field is absent is simply
- * not registered - the platform then reports unsupported_action for its plans
- * instead of running with partial producers.
+ * Named wiring for installed adapters. The platform dispatches only registered
+ * descriptors and reports unsupported_action for other plans.
  */
 export type SupportedReviewAdapterWiring = {
   deepbook: DeepbookReviewAdapterWiring;
-  flowx?: FlowxReviewAdapterWiring | undefined;
 };
 
 /**
@@ -104,15 +72,6 @@ export function buildSupportedReviewAdapterDescriptors(
       computeReview: deepbookSwapEvidenceComputer(wiring.deepbook)
     }
   ];
-  if (wiring.flowx) {
-    descriptors.push({
-      adapterId: FLOWX_SWAP_ADAPTER_ID,
-      protocol: FLOWX_SWAP_PROTOCOL,
-      actionKind: FLOWX_SWAP_ACTION_KIND,
-      stageCatalogId: FLOWX_SWAP_REVIEW_LIFECYCLE_STAGE_CATALOG_ID,
-      computeReview: flowxSwapEvidenceComputer(wiring.flowx)
-    });
-  }
   return descriptors;
 }
 
@@ -134,29 +93,6 @@ function deepbookSwapEvidenceComputer(wiring: DeepbookReviewAdapterWiring): Revi
       transactionMaterialDigestProducer: wiring.deepbookTransactionMaterialDigestProducer,
       transactionObjectOwnershipProducer: wiring.transactionObjectOwnershipProducer,
       humanReadableReviewProducer: wiring.deepbookHumanReadableReviewProducer,
-      reviewTimeSimulationProducer: wiring.reviewTimeSimulationProducer,
-      ptbVisualizationProducer: wiring.ptbVisualizationProducer
-    });
-  };
-}
-
-function flowxSwapEvidenceComputer(wiring: FlowxReviewAdapterWiring): ReviewAdapterEvidenceComputer {
-  return async (input) => {
-    if (!isFlowxSwapActionPlanIdentity(input.plan)) {
-      return {
-        result: blockedReviewResult("unsupported_action", [unsupportedFlowxSwapPlanIdentityCheck()])
-      };
-    }
-    return computeFlowxSwapReviewEvidence({
-      reviewSessionId: input.reviewSessionId,
-      plan: input.plan,
-      account: input.account,
-      now: input.now,
-      quoteSource: wiring.flowxQuoteSource,
-      transactionMaterialProducer: wiring.flowxTransactionMaterialProducer,
-      transactionMaterialDigestProducer: wiring.flowxTransactionMaterialDigestProducer,
-      transactionObjectOwnershipProducer: wiring.transactionObjectOwnershipProducer,
-      humanReadableReviewProducer: wiring.flowxHumanReadableReviewProducer,
       reviewTimeSimulationProducer: wiring.reviewTimeSimulationProducer,
       ptbVisualizationProducer: wiring.ptbVisualizationProducer
     });

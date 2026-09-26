@@ -6,7 +6,6 @@ import type { DeepbookDisplayQuoteSummary } from "../../core/read/readServiceTyp
 import { parseDeepbookRawU64 } from "../../core/read/deepbookReadHelpers.js";
 import type { BlockedReason, RefreshReason, ReviewCheck } from "../../core/action/types.js";
 import {
-  LocalTransactionMaterialStoreError,
   type LocalTransactionMaterialDigestCommitment,
   type LocalTransactionMaterialHandle,
   type LocalTransactionMaterialStore
@@ -322,15 +321,14 @@ export function createDeepbookSwapTransactionMaterialProducer(
         ]
       };
     } catch (error) {
-      const blockedReason = blockedReasonForBuildError(error);
       return {
         status: "blocked",
-        blockedReason,
+        blockedReason: "object_resolution_failed",
         checks: [
           failReviewCheck(
             "deepbook_transaction_material_build_failed",
             "Transaction material build",
-            buildFailureMessage(blockedReason, error),
+            buildFailureMessage(error),
             "adapter"
           )
         ]
@@ -423,27 +421,9 @@ function quotePolicyExpiresAt(policy: DeepbookSwapQuotePolicyOk): Date {
   return new Date(Date.parse(policy.fetchedAt) + policy.staleAfterMs);
 }
 
-function blockedReasonForBuildError(error: unknown): BlockedReason {
-  if (error instanceof LocalTransactionMaterialStoreError) {
-    return "object_resolution_failed";
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  if (/insufficient ?coin ?balance|insufficient balance/i.test(message)) {
-    return "insufficient_balance";
-  }
-  if (/gas/i.test(message) && /insufficient|no valid|payment|budget/i.test(message)) {
-    return "insufficient_gas";
-  }
-  return "object_resolution_failed";
-}
-
-function buildFailureMessage(blockedReason: BlockedReason, error: unknown): string {
-  if (blockedReason === "insufficient_balance") {
-    return "DeepBook transaction material build failed before wallet handoff because the account does not have enough source or fee assets.";
-  }
-  if (blockedReason === "insufficient_gas") {
-    return "DeepBook transaction material build failed before wallet handoff because a usable gas payment could not be resolved.";
-  }
+function buildFailureMessage(error: unknown): string {
+  // The pinned SDK discards some gRPC error kinds when building a transaction.
+  // Its error text cannot establish an account-balance or gas shortfall.
   if (error instanceof SimulationError && error.executionError) {
     return "DeepBook transaction was rejected during build-time simulation. Refresh the review or inspect its selected constraints. Nothing was signed or submitted.";
   }
