@@ -165,9 +165,10 @@ async function unusedPort(): Promise<number> {
   return address.port;
 }
 
-async function smokeInstalledRuntime(installDir: string, binPath: string): Promise<void> {
+export async function smokeInstalledRuntime(installDir: string, binPath: string): Promise<void> {
   let transport: StdioClientTransport | undefined;
   let client: Client | undefined;
+  let childClosed: Promise<void> | undefined;
   let stage = "startup/mainnet prerequisites";
   try {
     const port = await unusedPort();
@@ -180,6 +181,10 @@ async function smokeInstalledRuntime(installDir: string, binPath: string): Promi
     client = new Client({ name: "installed-package-check", version: manifest.version }, {
       capabilities: { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } }
     });
+    // Register before connect: the SDK starts closing on initialize failure and
+    // clears its pid before the child exits. Protocol.connect chains this hook.
+    const childTransport = transport;
+    childClosed = new Promise<void>((resolve) => { childTransport.onclose = resolve; });
     await client.connect(transport);
     if (client.getServerVersion()?.version !== manifest.version) throw new Error("Installed server version mismatch.");
     stage = "MCP tools and resources";
@@ -222,17 +227,10 @@ async function smokeInstalledRuntime(installDir: string, binPath: string): Promi
   } catch (error) {
     throw new Error(`Installed package check failed at ${stage}. Startup requires reachable Sui mainnet endpoints.`, { cause: error });
   } finally {
-    if (transport && transport.pid !== null) {
-      // The pinned SDK may return just after SIGKILL. Wait for its real child
-      // close event before removing this installation and data directory.
-      const closingTransport = transport;
-      const closed = new Promise<void>((resolve) => {
-        const previous = closingTransport.onclose;
-        closingTransport.onclose = () => { previous?.(); resolve(); };
-      });
-      await client?.close();
-      await closed;
-    } else await client?.close();
+    await client?.close();
+    // Undefined only if setup failed before attempting to start a child.
+    // Also waits when the SDK already started closing or returned after SIGKILL.
+    await childClosed;
     rmSync(installDir, { recursive: true, force: true });
   }
 }
