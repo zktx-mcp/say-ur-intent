@@ -15,6 +15,10 @@ export const CARD_METADATA_KEY = "say-ur-intent/card";
 export const CARD_DISPLAY_METADATA_KEY = "say-ur-intent/receipt-display";
 export const WALLET_DISPLAY_METADATA_KEY = "say-ur-intent/wallet-display";
 export const CARD_RESOURCE_PREFIX = "sayurintent://cards/";
+export const cardInputRequiredSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("account"), status: z.literal("input_required"), field: z.literal("account"), message: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("receipt"), status: z.literal("input_required"), field: z.literal("digest"), message: z.string().min(1) }).strict()
+]);
 export const cardReferenceSchema = z.object({ cardId: z.string().min(1), permission: z.string().min(1) }).strict();
 export const cardSubmissionSchema = cardReferenceSchema.extend({
   revision: z.number().int().nonnegative(), input: z.record(z.string(), z.unknown())

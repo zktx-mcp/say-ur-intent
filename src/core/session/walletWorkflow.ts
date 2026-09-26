@@ -16,7 +16,7 @@ import { SqliteWalletWorkflowStore, WorkflowConflict } from "./sqliteWalletWorkf
 import { isOwnedConnectedWallet, SUI_SIGN_TRANSACTION_METHOD, WalletUserRejectedError, WalletUnavailableError, walletUnavailable,
   type WalletTransport, type WalletSession, type WalletAvailability, type WalletUnavailableReason, type WorkflowProgress } from "./walletConnection.js";
 import { isInitialChainObservation, type TransactionRequest } from "./transactionRequest.js";
-import { projectConnectionView, projectReviewView, parseWorkflowAction, type WorkflowView, type PendingConnectionStatus } from "./workflowView.js";
+import { projectConnectionView, projectReviewView, parseWorkflowAction, type WorkflowView, type PendingConnectionStatus, type AssetReadAccount } from "./workflowView.js";
 
 import { reviewProgress, type ReviewSnapshot } from "./status.js";
 
@@ -95,7 +95,7 @@ export class WalletWorkflow {
       this.walletReady = true;
     } catch { this.disableWallet("restoration_failed"); this.report("session_restore"); }
   }
-  private reconcile(topic: string, selectionChanged = false): void {
+  private reconcile(topic: string, selectionChanged = false): WalletSession | undefined {
     this.assertWalletAvailable();
     try {
       const current = this.options.transport?.session(topic);
@@ -108,6 +108,7 @@ export class WalletWorkflow {
             expiresAt: current.expiresAt, status: "connected", walletName: current.walletName }, this.now());
         }
       }
+      return current;
     } catch {
       this.disableWallet("wallet_state_unavailable");
       throw new WalletUnavailableError("wallet_state_unavailable");
@@ -134,10 +135,28 @@ export class WalletWorkflow {
     return { status: "ready" };
   }
 
-  refreshConnections(): void {
+  readConnectionContext(): { connections: WorkflowView["connections"]; walletAvailability: WalletAvailability; assetReadAccount: AssetReadAccount } {
     this.assertCurrent();
+    const confirmed = new Set<string>();
+    if (this.walletAvailability().status === "available") {
+      try {
+        for (const record of this.options.records.connections()) {
+          if (record.ownerId === this.options.ownerId && record.connection.status === "connected" && record.topic && this.reconcile(record.topic)) {
+            confirmed.add(record.connection.connectionId);
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof WalletUnavailableError)) throw error;
+      }
+    }
     this.recoverDisconnects();
-    this.options.records.evaluate({ walletAvailability: this.walletAvailability() });
+    const state = this.options.records.evaluate({ walletAvailability: this.walletAvailability() });
+    const account = state.activeAccount;
+    const usable = state.walletAvailability.status === "available" && account !== undefined && state.connections.some((connection) =>
+      confirmed.has(connection.connectionId) && connection.status === "connected" && connection.pendingAction === undefined &&
+      Date.parse(connection.expiresAt) > Date.parse(state.evaluatedAt) && connection.accounts.includes(account));
+    return { connections: state.connections, walletAvailability: state.walletAvailability,
+      assetReadAccount: usable ? { status: "available", account: account! } : { status: "address_required" } };
   }
   private recoverDisconnects(): void {
     const available = this.walletAvailability().status === "available";
@@ -184,7 +203,7 @@ export class WalletWorkflow {
     evaluated: EvaluatedWorkflowState; data: WorkflowView; walletDisplay?: WalletDisplay; receiptDisplay?: ReceiptDisplay; displayAttemptId?: string;
   }> {
     this.assertCurrent();
-    if (record.state.kind === "connect") this.recoverDisconnects();
+    if (record.state.kind === "connect") this.readConnectionContext();
     const evaluated = record.state.kind === "review"
       ? await this.evaluateReview(String(record.state.input.reviewSessionId), record, uiObservation)
       : this.options.records.evaluate({ expectedCard: record, walletAvailability: this.walletAvailability() });

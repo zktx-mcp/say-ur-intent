@@ -36,23 +36,22 @@ export const chartRenderer = {
     const end = document.createElement("input"); end.placeholder = "YYYY-MM-DDTHH:mm";
     if (typeof snapshot.input.startTimeMs === "number") start.value = utcMsToInputValue(snapshot.input.startTimeMs);
     if (typeof snapshot.input.endTimeMs === "number") end.value = utcMsToInputValue(snapshot.input.endTimeMs);
-    const limit = document.createElement("input"); limit.type = "number"; limit.required = true; limit.min = "1"; limit.max = String(choices.maxCandles); limit.step = "1";
-    limit.value = String(snapshot.input.limit ?? choices.defaultLimit);
+    let candleLimit = Number(snapshot.input.limit ?? choices.defaultLimit);
     const ranges = element("div", "card-actions");
     for (const shortcut of DEEPBOOK_USDC_CHART_SHORTCUTS) {
-      const button = document.createElement("button"); button.type = "button"; button.textContent = shortcut;
-      button.addEventListener("click", () => { const range = shortcutQuery(shortcut, new Date()); start.value = range.startInput; end.value = range.endInput; limit.value = range.limitInput; });
+      const button = document.createElement("button"); button.type = "button"; button.textContent = shortcut === "Latest 500" ? "Recent" : shortcut;
+      button.addEventListener("click", () => { const range = shortcutQuery(shortcut, new Date()); start.value = range.startInput; end.value = range.endInput; candleLimit = Number(range.limitInput); });
       ranges.append(button);
     }
     const button = document.createElement("button"); button.type = "submit"; button.textContent = "Show chart";
     const error = element("p", "ui-error"); error.setAttribute("role", "alert");
-    form.append(labelled("Pair", pool), labelled("Interval", interval), labelled("Start (UTC)", start), labelled("End (UTC)", end), labelled("Candle limit", limit), ranges, button, error);
+    form.append(labelled("Pair", pool), labelled("Interval", interval), labelled("Start (UTC)", start), labelled("End (UTC)", end), ranges, button, error);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       try {
         const startTimeMs = parseUtcInputToMs(start.value), endTimeMs = parseUtcInputToMs(end.value);
         if (startTimeMs !== undefined && endTimeMs !== undefined && startTimeMs >= endTimeMs) throw new Error("Start must precede end.");
-        submit({ poolName: pool.value, interval: interval.value, limit: Number(limit.value),
+        submit({ poolName: pool.value, interval: interval.value, limit: candleLimit,
           ...(startTimeMs === undefined ? {} : { startTimeMs }), ...(endTimeMs === undefined ? {} : { endTimeMs }) });
       } catch (issue) { error.textContent = issue instanceof Error ? issue.message : "Invalid chart input."; }
     });
@@ -70,9 +69,10 @@ export const chartRenderer = {
     const data = parsed.data;
     const node = element("div");
     node.append(
-      element("p", "ui-note", `${data.query.poolName} · ${data.query.interval} · Returned: ${data.candleCount} candles · Checked at: ${data.source.fetchedAt}`),
+      element("p", "ui-note", `${data.pair.baseAsset.symbol} / USDC · ${data.query.interval} · Checked at: ${data.source.fetchedAt}`),
       element("p", "ui-note", chartQueryText(data.query))
     );
+    if (data.candleCount >= data.query.limit) node.append(element("p", "ui-note", `This view is limited to ${data.query.limit} candles; the requested period may contain more.`));
     const boundary = element("p", "ui-note", `${t.chart.boundaryUsdc} ${t.chart.boundaryScope} ${t.chart.source}`);
     const attribution = link(t.chart.library, "https://www.tradingview.com/");
     attribution.target = "_blank"; attribution.rel = "noopener noreferrer";
@@ -171,7 +171,7 @@ export function chartSeriesData(candles: ChartCandle[], query: z.infer<typeof ch
 
 export function chartQueryText(query: z.infer<typeof chartResultSchema>["query"]): string {
   if (query.startTimeMs === undefined && query.endTimeMs === undefined) {
-    return `Requested range: latest up to ${query.limit} candles · UTC start/end not specified`;
+    return "Recent candles · UTC";
   }
   const utc = (timestamp: number | undefined): string => {
     if (timestamp === undefined) return "not specified";
@@ -180,7 +180,7 @@ export function chartQueryText(query: z.infer<typeof chartResultSchema>["query"]
       ? `${timestamp} milliseconds since 1970-01-01T00:00:00Z`
       : date.toISOString();
   };
-  return `Requested UTC start: ${utc(query.startTimeMs)} · UTC end: ${utc(query.endTimeMs)} · Requested limit: ${query.limit} candles`;
+  return `Period (UTC): ${utc(query.startTimeMs)} → ${utc(query.endTimeMs)}`;
 }
 
 export function shortcutQuery(

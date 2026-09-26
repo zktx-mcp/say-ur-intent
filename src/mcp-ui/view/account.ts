@@ -1,6 +1,6 @@
 import { formatWalletAssetRow, type WalletAssetRow } from "../../../review-app/src/walletAssetRow.js";
 import { asRecord } from "../../../review-app/src/parse.js";
-import { accordion, card, element, info, mono, placeholder, row } from "../../../review-app/src/ui/ui.js";
+import { card, element, monoShort, placeholder, row } from "../../../review-app/src/ui/ui.js";
 import { qualifiedName } from "../../../review-app/src/format.js";
 import { t } from "../../../review-app/src/i18n/i18n.js";
 import type { CardRenderer } from "./lifecycle.js";
@@ -8,16 +8,7 @@ import "../../../review-app/src/account.css";
 
 export const accountRenderer = {
   title: "Account assets",
-  controls(snapshot, submit) {
-    const form = document.createElement("form");
-    const address = document.createElement("input");
-    address.name = "account"; address.required = true; address.placeholder = "Sui address";
-    address.setAttribute("aria-label", "Sui account address"); address.value = String(snapshot.input.account ?? "");
-    const button = document.createElement("button"); button.type = "submit"; button.textContent = "Show assets";
-    form.append(address, button);
-    form.addEventListener("submit", (event) => { event.preventDefault(); submit({ account: address.value.trim() }); });
-    return form;
-  },
+  controls: () => element("p", "ui-note", "Please provide a Sui address in chat."),
   result(snapshot) {
     const payload = asRecord(snapshot.data);
     if (!payload || payload.status !== "ok" || !Array.isArray(payload.balances) ||
@@ -33,7 +24,7 @@ function identityCard(address: string, payload: Record<string, unknown>): HTMLEl
   const node = card(t.account.identity);
   const name = typeof payload.name === "string" && payload.name.length > 0 ? payload.name : undefined;
   node.append(row(t.account.name, name ?? t.account.noName));
-  node.append(row(t.account.address, mono(address)));
+  node.append(row(t.account.address, monoShort(address)));
   const fetchedAt = typeof payload.fetchedAt === "string" ? payload.fetchedAt : undefined;
   if (fetchedAt) {
     node.append(row(t.account.checkedAt, fetchedAt));
@@ -41,7 +32,7 @@ function identityCard(address: string, payload: Record<string, unknown>): HTMLEl
   return node;
 }
 
-// Card 2: coin balances, each with the held-as split on a hover tooltip.
+// Show the verified total without exposing the storage format of the balance.
 function balanceCard(payload: Record<string, unknown>): HTMLElement {
   const node = card(t.account.balances);
   const balances = Array.isArray(payload.balances) ? payload.balances : [];
@@ -104,44 +95,25 @@ function nftTile(nft: Record<string, unknown>): HTMLElement {
   return tile;
 }
 
-// Card 4: other owned objects (non-coin, no Display), grouped by Move type.
-// Collapsed by default — the list can be long (one row per distinct type), so it
-// slides open from a summary that shows the group count.
 function objectsCard(payload: Record<string, unknown>): HTMLElement {
   const groups = Array.isArray(payload.objectGroups) ? payload.objectGroups : [];
-  const { details, body } = accordion(`${t.account.objects} (${groups.length})`);
-  if (groups.length === 0) {
-    body.append(placeholder(t.account.noObjects));
-  } else {
-    for (const raw of groups) {
-      const group = asRecord(raw);
-      if (!group) {
-        continue;
-      }
-      const type = typeof group.type === "string" ? group.type : "";
-      const count = typeof group.count === "number" ? group.count : 0;
-      body.append(row(qualifiedName(type), `×${count}`));
-    }
-  }
+  const body = element("div");
+  const count = groups.reduce((sum, raw) => {
+    const group = asRecord(raw);
+    return sum + (typeof group?.count === "number" ? group.count : 0);
+  }, 0);
+  if (count > 0) body.append(element("p", "ui-note", `${count} other owned objects are not shown here.`));
   if (payload.objectsTruncated === true) {
     body.append(placeholder(t.account.objectsTruncated));
   }
-  return details;
+  return body;
 }
 
-// One coin's holdings as a list item: symbol → total, with the held-as split
-// (object vs account balance) on a hover tooltip after the total.
 function assetBreakdownRow(assetRow: WalletAssetRow): HTMLElement {
   const node = element("div", "account-asset");
   node.append(element("span", "account-asset-symbol", assetRow.symbol));
   const total = element("span", "account-asset-total");
   total.append(assetRow.total);
-  if (assetRow.object !== undefined || assetRow.account !== undefined) {
-    total.append(
-      " ",
-      info(`${t.account.heldObject} ${assetRow.object ?? "0"} · ${t.account.heldAccount} ${assetRow.account ?? "0"}`)
-    );
-  }
   node.append(total);
   return node;
 }

@@ -57,7 +57,7 @@ describe("DeepBook chart input and display", () => {
     expect(candleToCandlestickData(candle)).toEqual({ time: 1782518400, open: 0.7001, high: 0.702, low: 0.6999, close: 0.701 });
     expect(candleToVolumeData(candle)).toMatchObject({ time: 1782518400, value: 1200.5 });
   });
-  it("preserves the requested window and limit for empty and partial candle results", () => {
+  it("preserves the saved window and limit while displaying a concise UTC period", () => {
     const query = { poolName: "SUI_USDC", interval: "15m", startTimeMs: 1782518400000, endTimeMs: 1782522000000, limit: 120 };
     // One observed candle does not redefine the requested hour or requested cap.
     const candle = { timestampMs: 1782520200000, start: "2026-06-27T00:30:00.000Z", open: "0.7", high: "0.8", low: "0.6", close: "0.75", volume: "12" };
@@ -66,19 +66,19 @@ describe("DeepBook chart input and display", () => {
         candles, candleCount: candles.length, source: { fetchedAt: "2026-07-01T12:00:00.000Z" },
         pair: { baseAsset: { symbol: "SUI" }, quoteAsset: { symbol: "USDC" } } });
       expect(result.query).toEqual(query);
-      expect(chartQueryText(result.query)).toBe("Requested UTC start: 2026-06-27T00:00:00.000Z · UTC end: 2026-06-27T01:00:00.000Z · Requested limit: 120 candles");
+      expect(chartQueryText(result.query)).toBe("Period (UTC): 2026-06-27T00:00:00.000Z → 2026-06-27T01:00:00.000Z");
       const { limit: _limit, ...missingLimit } = result.query;
       expect(chartResultSchema.safeParse({ ...result, query: missingLimit }).success).toBe(false);
     }
   });
   it("keeps omitted UTC boundaries explicit instead of filling them with current or candle times", () => {
     const query = { poolName: "SUI_USDC", interval: "15m", limit: 500 };
-    expect(chartQueryText(query)).toBe("Requested range: latest up to 500 candles · UTC start/end not specified");
-    expect(chartQueryText({ ...query, startTimeMs: 1782518400000 })).toBe("Requested UTC start: 2026-06-27T00:00:00.000Z · UTC end: not specified · Requested limit: 500 candles");
-    expect(chartQueryText({ ...query, endTimeMs: 1782522000000 })).toBe("Requested UTC start: not specified · UTC end: 2026-06-27T01:00:00.000Z · Requested limit: 500 candles");
+    expect(chartQueryText(query)).toBe("Recent candles · UTC");
+    expect(chartQueryText({ ...query, startTimeMs: 1782518400000 })).toBe("Period (UTC): 2026-06-27T00:00:00.000Z → not specified");
+    expect(chartQueryText({ ...query, endTimeMs: 1782522000000 })).toBe("Period (UTC): not specified → 2026-06-27T01:00:00.000Z");
     // The source query accepts safe integer milliseconds, including values
     // outside Date's ISO range. Keep that value visible without inventing a date.
-    expect(chartQueryText({ ...query, startTimeMs: 9007199254740991 })).toBe("Requested UTC start: 9007199254740991 milliseconds since 1970-01-01T00:00:00Z · UTC end: not specified · Requested limit: 500 candles");
+    expect(chartQueryText({ ...query, startTimeMs: 9007199254740991 })).toBe("Period (UTC): 9007199254740991 milliseconds since 1970-01-01T00:00:00Z → not specified");
   });
   it("keeps network and wallet operations outside the chart renderer", () => {
     const source = readFileSync(new URL("../src/mcp-ui/view/chart.ts", import.meta.url), "utf8");

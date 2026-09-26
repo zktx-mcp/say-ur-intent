@@ -600,8 +600,8 @@ export function registerWalletReadTools(server: McpServer, deps: McpServerDeps):
       annotations: { readOnlyHint: false, openWorldHint: false }
     },
     async ({ account, cursor }) => {
-      const target = await resolveExplicitOrActiveAccount(account, deps);
-      if (target.status === "error") {
+      const target = await resolveExplicitOrActiveAccount({ mode: "explicit_or_connected", account }, deps);
+      if (target.status !== "ok") {
         return target.result;
       }
       try {
@@ -636,8 +636,8 @@ export function registerWalletReadTools(server: McpServer, deps: McpServerDeps):
       annotations: { readOnlyHint: false, openWorldHint: false }
     },
     async ({ account, cursor }) => {
-      const target = await resolveExplicitOrActiveAccount(account, deps);
-      if (target.status === "error") {
+      const target = await resolveExplicitOrActiveAccount({ mode: "explicit_or_connected", account }, deps);
+      if (target.status !== "ok") {
         return target.result;
       }
       try {
@@ -808,8 +808,8 @@ export function registerWalletReadTools(server: McpServer, deps: McpServerDeps):
       targetAssetSelectionSource,
       acceptedSourceAssetSymbols
     }) => {
-      const target = await resolveExplicitOrActiveAccount(account, deps);
-      if (target.status === "error") {
+      const target = await resolveExplicitOrActiveAccount({ mode: "explicit_or_connected", account }, deps);
+      if (target.status !== "ok") {
         return target.result;
       }
       try {

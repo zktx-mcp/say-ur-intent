@@ -117,7 +117,7 @@ receipt or display details are explicitly marked unavailable.
 
 **DeepBook USDC chart.** `ui.open_chart` opens an internal MCP Apps card with
 official DeepBookV3 Indexer candles and volume for one selected USDC pool.
-The saved result displays the requested UTC range, candle limit and source time.
+The saved result shows the selected pair, interval, UTC period and source time. Limited and empty results are identified.
 
 ## Current Limits
 

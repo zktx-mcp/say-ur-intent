@@ -1,7 +1,7 @@
 import { App } from "@modelcontextprotocol/ext-apps";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { CARD_METADATA_KEY, CARD_DISPLAY_METADATA_KEY, WALLET_DISPLAY_METADATA_KEY, CARD_RESOURCE_PREFIX, CARD_TOOLS,
-  cardReferenceSchema, cardSnapshotSchema, cardReceiptDisplaySchema, cardWalletDisplaySchema,
+  cardReferenceSchema, cardSnapshotSchema, cardReceiptDisplaySchema, cardWalletDisplaySchema, cardInputRequiredSchema,
   type CardKind, type CardReference, type CardSnapshot, type CardReceiptDisplay, type CardWalletDisplay } from "../contracts.js";
 import "../../../review-app/public/ui.css";
 import "./style.css";
@@ -38,8 +38,9 @@ function unwrap(result: unknown, host: string | undefined): Record<string, unkno
 }
 function responseParts(result: Record<string, unknown>) {
   const payload = object(result.structuredContent);
+  const inputRequired = payload?.ok === true ? cardInputRequiredSchema.safeParse(payload.data) : undefined;
   const error = object(object(payload?.error)?.details);
-  const value = payload?.ok === true ? object(payload.data)?.card ?? payload.data : error?.snapshot;
+  const value = inputRequired?.success ? undefined : payload?.ok === true ? object(payload.data)?.card ?? payload.data : error?.snapshot;
   const snapshot = value === undefined ? undefined : cardSnapshotSchema.parse(value);
   const privateValue = object(result._meta)?.[CARD_DISPLAY_METADATA_KEY];
   const display = privateValue === undefined ? undefined : cardReceiptDisplaySchema.parse(privateValue);
@@ -53,7 +54,8 @@ function responseParts(result: Record<string, unknown>) {
   const wallet = walletValue === undefined ? undefined : cardWalletDisplaySchema.parse(walletValue);
   if (wallet && (!snapshot || snapshot.kind !== "connect" || wallet.cardId !== snapshot.cardId || wallet.revision !== snapshot.revision ||
       wallet.connectionId !== object(object(snapshot.data)?.connection)?.connectionId)) throw new Error("Pairing display does not match this card.");
-  return { snapshot, display, wallet, error: typeof error?.message === "string" ? error.message : typeof error?.reason === "string" ? error.reason : undefined };
+  return { snapshot, display, wallet, inputRequired: inputRequired?.success ? inputRequired.data : undefined,
+    error: typeof error?.message === "string" ? error.message : typeof error?.reason === "string" ? error.reason : undefined };
 }
 
 export function startCard(kind: CardKind, renderer: CardRenderer): void {
@@ -107,7 +109,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
   function updateChrome(): void {
     const workflow = business ? object(snapshot?.data) : undefined;
     const readyLabel = workflow?.mode === "review_manage" ? "Manage this transaction request." :
-      object(workflow?.review)?.preparing === true ? "Updating review…" : "Choose the input for this card.";
+      object(workflow?.review)?.preparing === true ? "Updating review…" : kind === "connect" ? "" : "Choose the input for this card.";
     if (snapshot) status.textContent = invalidIdentity ? "Card unavailable" :
       snapshot.state === "running" ? (business ? (object(workflow?.progress)?.status === "unavailable" ? "Stored request state — progress unavailable" : "Request in progress") : "Reading the requested data…") :
       snapshot.state === "ready" ? (confirmed && reference ? readyLabel : "Input is unavailable until the current state and permission are confirmed.") :
@@ -266,6 +268,15 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
       const privateResult = cardReferenceSchema.safeParse(object(result._meta)?.[CARD_METADATA_KEY]);
       if (privateResult.success) reference = privateResult.data;
       const initial = responseParts(result);
+      if (initial.inputRequired) {
+        if (initial.inputRequired.kind !== kind || reference) throw new Error("The input request does not match this card.");
+        stopTimers();
+        status.textContent = ""; issue.textContent = "";
+        const message = document.createElement("p"); message.className = "ui-note";
+        message.textContent = initial.inputRequired.message;
+        content.replaceChildren(message); actions.replaceChildren();
+        return;
+      }
       let next = initial.snapshot;
       if (!next) {
         let uri: string | undefined;

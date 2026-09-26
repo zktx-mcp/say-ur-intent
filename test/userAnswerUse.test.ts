@@ -231,7 +231,7 @@ describe("userAnswerUse field references", () => {
         label: "interaction status",
         userAnswerUse: interactionStatusUserAnswerUse(),
         expected: {
-          canAnswer: "current_active_account_read_context",
+          canAnswer: "connection_qualified_default_asset_account",
           cannotAnswer: "transaction_execution_result",
           answerField: "activeAccount",
           diagnosticOnlyField: "pendingReviewSessions.truncated",
@@ -565,7 +565,7 @@ describe("userAnswerUse field references", () => {
         userAnswerUse: interactionStatusUserAnswerUse(),
         sourceShape: {
           walletAvailability: { status: "available" }, progress: { status: "idle" },
-          activeAccount: { status: "none" },
+          activeAccount: { status: "none" }, connections: [], assetReadAccount: { status: "address_required" },
           pendingWalletConnections: { limit: 5, items: [], truncated: false },
           pendingReviewSessions: { limit: 5, items: [{ reviewSessionId: "review_1" }], truncated: false }
         }

@@ -34,12 +34,11 @@ import {
   MAX_DEEPBOOK_ORDERBOOK_TICKS
 } from "../../../core/read/readService.js";
 import { noParamsInputSchema, successOutputSchema } from "../../schemas.js";
-import { errorToolResult, okToolResult } from "../../result.js";
-import { activityStoreToolError } from "../../toolErrors.js";
+import { okToolResult } from "../../result.js";
 import type { McpServerDeps } from "../../server.js";
 import { TOOL_NAMES } from "../../toolNames.js";
 import { fetchedAtSchema, readSourceSchema, userAnswerUseSchema } from "./commonSchemas.js";
-import { readServiceError } from "./readToolHelpers.js";
+import { readServiceError, resolveExplicitOrActiveAccount } from "./readToolHelpers.js";
 
 const deepbookMidPriceSourceSchema = z.object({
   sdk: z.string(),
@@ -780,24 +779,12 @@ export function registerDeepbookReadTools(server: McpServer, deps: McpServerDeps
       annotations: { readOnlyHint: true, openWorldHint: false }
     },
     async ({ poolKey, managerAddress }) => {
-      let active;
-      try {
-        active = await deps.activityStore.getActiveAccount();
-      } catch (error) {
-        return activityStoreToolError(error, deps.logger);
-      }
-      if (!active) {
-        return errorToolResult({
-          kind: "active_account_not_set",
-          details: {
-            action: "connect_wallet_connection"
-          }
-        });
-      }
+      const target = await resolveExplicitOrActiveAccount({ mode: "connected_only" }, deps);
+      if (target.status !== "ok") return target.result;
       try {
         return okToolResult(
           await deps.readService.summarizeDeepbookAccountInventory({
-            account: active.address,
+            account: target.account,
             poolKey,
             managerAddress
           })

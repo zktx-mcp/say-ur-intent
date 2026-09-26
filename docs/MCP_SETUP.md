@@ -400,8 +400,8 @@ After the MCP server is connected:
 4. Use the internal Connect card in Claude Desktop or Codex desktop and explicitly choose the connection operation.
 5. Scan the card’s pairing QR in a Sui mainnet wallet and approve the connection. This is not approval of a transaction.
 6. Read or wait on the returned cardId. A card that still needs a selection does not have a pending pairing. Select an approved account explicitly if the wallet provides several.
-7. Call `account.get_active_account` to confirm the current active account context.
-   Then call the active-account tool that matches the user's request:
+7. Call `session.get_interaction_status` to check the connection and available default asset account. `account.get_active_account` separately reports the stored selection.
+   Then call the read tool that matches the user's request:
    - `read.summarize_wallet_assets` for balances.
    - `read.classify_wallet_assets` for coin-balance roles.
    - `read.preview_intent_evidence` for natural-language USD-denominated coverage or settlement-asset balance-total evidence.
@@ -550,7 +550,7 @@ See [Utility Index](UTILITY_INDEX.md#release-package-check) for prerequisites.
 ## Current Release Limitations
 
 - Product-facing behavior is mainnet-only.
-- Wallet-account reads require an active account read context from wallet connection.
+- Current asset reads without an explicit address require the selected account to have a usable current wallet connection. An explicit address works only for tools that accept `account`; DeepBook account inventory instead needs a usable connection and account selection. Saved result reads remain available.
 - Account-bound DeepBook review requires all evidence stages. The internal
   Review card then allows an explicit WalletConnect request under user control.
   Requests and observed chain results are separate; missing results remain
@@ -652,13 +652,13 @@ It is not part of CI or `release:check`.
 
 ### Tool calls return `active_account_not_set`
 
-For active-account reads:
+For tools with an `account` input, provide an explicit Sui address in chat. DeepBook account inventory has no address input and needs a connected selected account. When connection or account selection is wanted:
 
 1. Open a Connect card with `session.create_wallet_connection`.
 2. Choose the connection operation in that internal card.
 3. Connect a Sui mainnet wallet.
 4. Read or wait on that cardId; select an approved read account when required.
-5. Confirm the current context with `account.get_active_account`.
+5. Confirm connection availability with `session.get_interaction_status`. Stored read context alone is not a usable default for current asset reads.
 
 If the user supplied a specific Sui address for `read.summarize_wallet_assets` or `read.classify_wallet_assets`, pass that address as `account` instead of creating a wallet connection session.
 

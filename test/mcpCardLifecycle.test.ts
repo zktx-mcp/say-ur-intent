@@ -1,3 +1,11 @@
+import { projectReadCardResult } from "../src/core/read/readCardResult.js";
+import { receiptForCard } from "../src/mcp-ui/view/receiptData.js";
+import { accountRenderer } from "../src/mcp-ui/view/account.js";
+import { receiptRenderer } from "../src/mcp-ui/view/receipt.js";
+import { chainReceiptView } from "../review-app/src/ui/chainReceiptView.js";
+import { readPublicChainReceipt } from "../src/core/action/suiChainReceiptReader.js";
+import { cardReceiptTransaction } from "./fixtures/cardReceiptTransaction.js";
+import { chainReceiptDigest } from "./fixtures/chainReceipt.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -423,7 +431,7 @@ it("consumes real MCP/SQLite chart preparation failures and valid choices in the
     publicChainReceiptReader: async () => { throw new Error("Unexpected receipt call"); }
   });
   const server = new McpServer({ name: "chart-fixture", version: "1" });
-  registerReadCards(server, { activityStore: database, cards: { store: cards } });
+  registerReadCards(server, { activityStore: database, cards: { store: cards }, logger: { error: vi.fn() } });
   const client = new Client({ name: "chart-test", version: "1" }, { capabilities: { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } } });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport); await client.connect(clientTransport);
@@ -471,20 +479,35 @@ it.each(["success", "failure"] as const)("the actual Connect view observes a del
   try {
     const first = host(call); startCard("connect", connectRenderer); first.ontoolresult!(created);
     await vi.waitFor(() => expect(root.querySelectorAll("button").find((button) => button.dataset.cardAction === "disconnect")?.disabled).toBe(false));
-    root.querySelectorAll("button").find((button) => button.dataset.cardAction === "disconnect")!.click();
-    await vi.waitFor(() => expect(root.textContent).toContain("Wallet disconnection is in progress."));
+    expect(root.querySelectorAll("h1, h2").filter((heading) => heading.textContent === "Wallet connection")).toHaveLength(1);
+    root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
+    expect(root.textContent.match(/Sui · Mainnet/g)).toHaveLength(1);
+    expect(f.transport.disconnect).not.toHaveBeenCalled();
+    const staleConfirm = root.querySelectorAll("button").find((button) => button.textContent === "Confirm disconnect")!;
+    f.notify({ ...f.transport.session("fixture-topic")!, expiresAt: new Date(Date.parse(connection.expiresAt) + 1000).toISOString() });
+    staleConfirm.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("Card state changed"));
+    expect(f.transport.disconnect).not.toHaveBeenCalled();
+    staleConfirm.click(); // Detached confirmation cannot acquire a newer revision.
+    expect(f.transport.disconnect).not.toHaveBeenCalled();
+    root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
+    root.querySelectorAll("button").find((button) => button.textContent === "Cancel")!.click();
+    expect(f.transport.disconnect).not.toHaveBeenCalled();
+    root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
+    root.querySelectorAll("button").find((button) => button.textContent === "Confirm disconnect")!.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("Disconnecting wallet…"));
     expect(f.transport.disconnect).toHaveBeenCalledOnce();
     await first.onteardown!();
     root = new Element("main"); const second = host(call); startCard("connect", connectRenderer); second.ontoolresult!(created);
-    await vi.waitFor(() => expect(root.textContent).toContain("Wallet disconnection is in progress."));
+    await vi.waitFor(() => expect(root.textContent).toContain("Disconnecting wallet…"));
     f.notify({ topic: "fixture-topic", accounts: [f.account], methods: ["sui_signTransaction"], chain: "sui:mainnet",
       expiresAt: new Date(Date.parse(connection.expiresAt) + 1000).toISOString() });
     await vi.advanceTimersByTimeAsync(5000);
-    expect(root.textContent).toContain("Wallet disconnection is in progress.");
+    expect(root.textContent).toContain("Disconnecting wallet…");
     if (outcome === "success") pending.resolve(); else pending.reject(new Error("Fixture disconnect failure"));
     await vi.waitFor(() => expect(f.run(() => f.records.connection(connection.connectionId)?.sdkPending)).toBe(false));
     await vi.advanceTimersByTimeAsync(5000);
-    expect(root.textContent).not.toContain("Wallet disconnection is in progress.");
+    expect(root.textContent).not.toContain("Disconnecting wallet…");
     expect(root.textContent).toContain(outcome === "success" ? "disconnected" : "The wallet disconnection could not be confirmed.");
     const reads = second.callServerTool.mock.calls.length;
     await vi.advanceTimersByTimeAsync(15_000);
@@ -623,4 +646,76 @@ it("keeps stored content and offers explicit reading without polling when wallet
   await vi.waitFor(() => expect(app.callServerTool).toHaveBeenCalledTimes(2));
   expect(app.callServerTool.mock.calls.every(([request]) => request.name === CARD_TOOLS.read)).toBe(true);
   await app.onteardown!(); expect(vi.getTimerCount()).toBe(0);
+});
+
+
+it.each(["account", "receipt"] as const)("shows %s input requests without forms, state reads or polling", async (kind) => {
+  const message = kind === "account" ? "Please provide a Sui address in chat." : "Please provide a transaction hash in chat.";
+  const response = { content: [], structuredContent: { ok: true, data: {
+    kind, status: "input_required", field: kind === "account" ? "account" : "digest", message
+  } } };
+  for (let frame = 0; frame < 2; frame++) {
+    root = new Element("main");
+    const app = host(async () => { throw new Error("Input requests must not read a card."); });
+    startCard(kind, renderer); app.ontoolresult!(response);
+    await vi.waitFor(() => expect(root.textContent).toContain(message));
+    app.ontoolresult!(response); await vi.advanceTimersByTimeAsync(60_000);
+    expect(root.querySelectorAll("input, button, select")).toHaveLength(0);
+    expect(root.textContent).not.toContain("Card unavailable");
+    expect(app.callServerTool).not.toHaveBeenCalled(); expect(app.readServerResource).not.toHaveBeenCalled();
+    await app.onteardown!();
+  }
+});
+
+
+it("shows account totals and coverage without storage-format or object-type details", () => {
+  const account = `0x${"a".repeat(64)}`;
+  const snapshot = state("account", { state: "closed", reason: "completed", data: { status: "ok", account, name: "Example",
+    fetchedAt: "2026-09-27T00:00:00.000Z", balances: [{ balance: "3000000", coinBalance: "1000000", addressBalance: "2000000",
+      coinType: "0xb::usdc::USDC", unit: { status: "available", decimals: 6, symbol: "USDC" } }], nfts: [],
+    objectGroups: [{ type: "0xfixture::internal::DebugType", count: 2 }], objectsTruncated: true } });
+  const view = accountRenderer.result(snapshot).node;
+  expect(view.textContent).toContain("USDC3"); // 3,000,000 units / 10^6, not the 1+2 storage split.
+  expect(view.textContent).toContain("2 other owned objects");
+  expect(view.textContent).not.toContain("DebugType");
+  expect(view.textContent).not.toContain("Object balance");
+  expect(Array.from(view.querySelectorAll("span")).some((item) => item.title === account)).toBe(true);
+  expect(accountRenderer.controls().querySelectorAll("input")).toHaveLength(0);
+});
+
+it("summarizes the real receipt without removing the full Review receipt display", async () => {
+  const response = await readPublicChainReceipt({ network: "mainnet", expectedChainIdentifier: "mainnet-chain", client: { core: {
+    getChainIdentifier: async () => ({ chainIdentifier: "mainnet-chain" }),
+    getTransaction: async () => ({ $kind: "Transaction" as const, Transaction: cardReceiptTransaction })
+  } } }, { digest: chainReceiptDigest, now: new Date("2026-09-27T00:00:00.000Z") });
+  expect(response.status).toBe("found"); if (response.status !== "found") throw new Error("Receipt fixture failed");
+  const projected = projectReadCardResult("receipt", { digest: chainReceiptDigest }, response);
+  const snapshot = state("receipt", { state: "closed", reason: "completed", data: projected.data });
+  const summary = receiptRenderer.result(snapshot, undefined).node;
+  expect(summary.textContent).toContain("Transaction succeeded on Sui");
+  expect(summary.textContent).toContain("0.00000013 SUI"); // (100 + 50 - 20) MIST, independently computed.
+  expect(summary.textContent).not.toContain("Transaction graph"); expect(summary.textContent).not.toContain("Transaction records");
+  expect(summary.textContent).not.toContain("Computation");
+  const full = chainReceiptView(receiptForCard(snapshot));
+  expect(full.textContent).toContain("Transaction records"); expect(full.textContent).toContain("Computation");
+  expect(receiptRenderer.controls().querySelectorAll("input")).toHaveLength(0);
+});
+
+
+it("shows last-recorded connection freshness when the wallet cannot be checked", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    const { connection } = await f.approve();
+    const card = await f.createConnection();
+    vi.spyOn(f.transport, "session").mockImplementation(() => { throw new Error("PRIVATE SDK ERROR"); });
+    const current = await f.read(card);
+    const view = connectRenderer.controls(current.snapshot, vi.fn(), undefined, undefined);
+    expect(view.node.textContent).toContain("Last recorded status");
+    expect(view.node.textContent).toContain("Last updated");
+    expect(view.node.textContent).toContain(connection.updatedAt);
+    expect(view.node.textContent).not.toContain("PRIVATE SDK ERROR");
+    expect(view.node.querySelectorAll('[data-card-action]')).toHaveLength(1); // Only closing the card remains.
+    expect(f.transport.disconnect).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled();
+    view.dispose();
+  } finally { f.close(); }
 });

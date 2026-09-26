@@ -9,10 +9,11 @@ import { z } from "zod";
 import type { McpServerDeps } from "../mcp/server.js";
 import { okToolResult, errorToolResult } from "../mcp/result.js";
 import { CardError } from "../core/session/cardSessionStore.js";
+import { resolveExplicitOrActiveAccount } from "../mcp/tools/read/readToolHelpers.js";
 import type { CardResponse } from "../core/session/cardSession.js";
 import { CARD_METADATA_KEY, CARD_DISPLAY_METADATA_KEY, WALLET_DISPLAY_METADATA_KEY, CARD_RESOURCE_PREFIX, CARD_RESOURCE_URIS, CARD_TOOLS,
   cardReceiptDisplaySchema, cardWalletDisplaySchema, cardReferenceSchema,
-  cardSubmissionSchema } from "./contracts.js";
+  cardSubmissionSchema, cardInputRequiredSchema } from "./contracts.js";
 
 const cardActionSchema = cardReferenceSchema.extend({ revision: z.number().int().nonnegative(), input: workflowActionSchema }).strict();
 
@@ -60,7 +61,7 @@ export async function createWorkflowCard(server: McpServer, deps: Pick<McpServer
   return { ...result, _meta: { ...result._meta, [CARD_METADATA_KEY]: { cardId: created.snapshot.cardId, permission: created.permission } } };
 }
 
-export function registerReadCards(server: McpServer, deps: Pick<McpServerDeps, "cards" | "activityStore">): void {
+export function registerReadCards(server: McpServer, deps: Pick<McpServerDeps, "cards" | "activityStore" | "workflow" | "logger">): void {
   for (const [kind, uri] of Object.entries(CARD_RESOURCE_URIS)) {
     registerAppResource(server, `${kind}-card`, uri, { _meta: uiResourceMetadata }, async () => ({
       contents: [{ uri, mimeType: RESOURCE_MIME_TYPE,
@@ -76,10 +77,17 @@ export function registerReadCards(server: McpServer, deps: Pick<McpServerDeps, "
     if (!supportsCards(server)) return errorToolResult({ kind: "ui_unavailable", details: { reason: "This MCP client does not provide an internal card." } });
     if (!deps.cards) return errorToolResult({ kind: "internal_error", details: { reason: "Card service unavailable." } });
     let execute = Object.keys(input).length > 0;
-    if (kind === "account" && input.account === undefined) {
-      const active = await deps.activityStore.getActiveAccount();
-      if (active) { input = { account: active.address }; execute = true; }
+    if (kind === "account") {
+      const target = await resolveExplicitOrActiveAccount({ mode: "explicit_or_connected", account: input.account as string | undefined }, deps);
+      if (target.status === "error") return target.result;
+      if (target.status === "address_required") return okToolResult(cardInputRequiredSchema.parse({
+        kind, status: "input_required", field: "account", message: target.message
+      }));
+      input = { account: target.account }; execute = true;
     }
+    if (kind === "receipt" && input.digest === undefined) return okToolResult(cardInputRequiredSchema.parse({
+      kind, status: "input_required", field: "digest", message: "Please provide a transaction hash in chat."
+    }));
     if (kind === "chart" && input.poolName === undefined) execute = false;
     const created = await deps.cards.store.create(kind, input, execute);
     const result = cardToolResult(created, true);

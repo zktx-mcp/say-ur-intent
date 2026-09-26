@@ -340,7 +340,7 @@ describe("source policy", () => {
     expect(source).toMatch(/summarize_settlement_asset_group_balance/);
     expect(source).toMatch(/read\.summarize_sui_activity_scan/);
     expect(source).toMatch(/uninspectedAssetClasses/);
-    expect(source).toMatch(/Partial wallet context is allowed only when an active account is already set or the user gives an explicit Sui address/);
+    expect(source).toMatch(/Partial wallet context is allowed when a connection-qualified default asset account is available or the user gives an explicit Sui address/);
     expect(source).toMatch(/Use summary output first; inspect full details only when the user asks for transaction-level facts/);
     expect(source).toMatch(/This is a bounded provider page, not complete wallet history/);
     expect(source).toMatch(/Affected activity means the account appeared in returned transaction effects; it does not mean the account sent the transaction/);

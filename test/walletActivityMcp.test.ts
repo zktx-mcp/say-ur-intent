@@ -21,8 +21,8 @@ import { DEFAULT_SUI_GRPC_URL, DEFAULT_SUI_GRAPHQL_URL } from "../src/runtime/co
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
-async function harness(ui = true, receiptDetails = false) {
-  const f = await walletWorkflowFixture({ receiptDetails }), server = new McpServer({ name: "wallet-flow-fixture", version: "1" });
+async function harness(ui = true, receiptDetails = false, accountReader?: NonNullable<Parameters<typeof walletWorkflowFixture>[0]>["accountReader"]) {
+  const f = await walletWorkflowFixture({ receiptDetails, ...(accountReader ? { accountReader } : {}) }), server = new McpServer({ name: "wallet-flow-fixture", version: "1" });
   // These registrations consume only the real stores/workflow below; no read
   // service or unrelated protocol dependency is replaced as part of the check.
   const deps = { sessions: f.sessions, activityStore: f.activity, cards: { store: f.cards }, workflow: f.workflow, logger: f.logger } as unknown as McpServerDeps;
@@ -680,4 +680,117 @@ it.each(["network", "signature_record", "submission_admission"] as const)("repor
       expect(JSON.stringify({ result, detail, card, backup, logs: f.logger.error.mock.calls })).not.toContain(privateText);
     }
   } finally { db.exec("DROP TRIGGER IF EXISTS reject_verification"); db.close(); }
+});
+
+
+it.each(["disconnected", "expired", "unavailable", "cleared", "pending_disconnect", "sdk_missing", "different_account"] as const)("requires an explicit asset address after %s without losing stored context or results", async (condition) => {
+  const accountReader = vi.fn(async ({ account }: { account: string }) => ({ status: "ok" as const, account,
+    fetchedAt: "2026-09-27T00:00:00.000Z", name: null, balances: [], nfts: [], objectGroups: [], scannedObjects: 0, objectsTruncated: false }));
+  const { f, call } = await harness(true, false, accountReader);
+  const { connection } = await f.approve();
+  const status = data(await call(TOOL_NAMES.sessionGetInteractionStatus));
+  expect(status.assetReadAccount).toEqual({ status: "available", account: f.account });
+  expect(status.connections).toContainEqual(expect.objectContaining({ connectionId: connection.connectionId, status: "connected" }));
+  const saved = data(await call(CARD_TOOLS.account));
+  expect(saved).toMatchObject({ state: "closed", reason: "completed", input: { account: f.account } });
+  const gate = deferred<void>();
+  if (condition === "disconnected") f.notify();
+  if (condition === "sdk_missing") vi.spyOn(f.transport, "session").mockReturnValue(undefined);
+  if (condition === "different_account") f.notify({ ...f.transport.session("fixture-topic")!, accounts: [`0x${"c".repeat(64)}`] });
+  if (condition === "expired") f.notify({ ...f.transport.session("fixture-topic")!, expiresAt: new Date(f.now().getTime() - 1).toISOString() });
+  if (condition === "unavailable") vi.spyOn(f.transport, "session").mockImplementation(() => { throw new Error("PRIVATE SDK ERROR"); });
+  if (condition === "cleared") await f.run(() => f.activity.clearActiveAccount(f.now()));
+  if (condition === "pending_disconnect") {
+    vi.mocked(f.transport.disconnect).mockImplementationOnce(async () => { await gate.promise; });
+    const card = await f.createConnection(); await f.act(card, { action: "disconnect", connectionId: connection.connectionId });
+  }
+  try {
+    const unavailable = data(await call(TOOL_NAMES.sessionGetInteractionStatus));
+    expect(unavailable.assetReadAccount).toEqual({ status: "address_required" });
+    expect(unavailable.activeAccount.status).toBe(condition === "cleared" ? "none" : "set");
+    expect(data(await call(CARD_TOOLS.account))).toMatchObject({ status: "input_required", field: "account" });
+    expect(accountReader).toHaveBeenCalledTimes(1);
+    const explicit = `0x${"b".repeat(64)}`;
+    expect(data(await call(CARD_TOOLS.account, { account: explicit }))).toMatchObject({ state: "closed", data: { account: explicit } });
+    expect(accountReader.mock.calls.map(([input]) => input.account)).toEqual([f.account, explicit]);
+    expect((await f.run(() => f.cards.readSaved(saved.cardId))).data).toMatchObject({ account: f.account });
+    expect(f.connect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+  } finally { gate.resolve(); }
+});
+
+it.each(["missing_session", "changed_accounts", "unavailable"] as const)("projects reviews after %s is discovered by the same interaction read", async (condition) => {
+  const { f, call } = await harness();
+  const { connection } = await f.approve(), ready = await f.prepare(connection.connectionId);
+  const approved = f.transport.session("fixture-topic")!;
+  // No session event: this tool call must discover and apply the change first.
+  vi.spyOn(f.transport, "session").mockImplementation(() => {
+    if (condition === "unavailable") throw new Error("PRIVATE SDK FAILURE");
+    return condition === "missing_session" ? undefined : { ...approved, accounts: [`0x${"d".repeat(64)}`] };
+  });
+  const status = data(await call(TOOL_NAMES.sessionGetInteractionStatus));
+  const review = status.pendingReviewSessions.items.find((item: { reviewSessionId: string }) => item.reviewSessionId === ready.session.id);
+  const stored = f.run(() => f.sessions.readReviewSession(ready.session.id))!;
+  expect(review.status).toBe(condition === "unavailable" ? "ready_for_wallet_review" : "refresh_required");
+  expect(review.status).toBe(stored.status); expect(review.reviewRevision).toBe(stored.reviewRevision);
+  expect(review.walletAvailability).toEqual(status.walletAvailability);
+  if (condition !== "unavailable") {
+    expect(review.reviewState.refreshReason).toBe("wallet_connection_changed");
+    expect(review.reviewState.transactionReviewData).toBeUndefined();
+  } else {
+    expect(status.walletAvailability).toMatchObject({ status: "unavailable", reason: "wallet_state_unavailable" });
+    expect(status.connections[0].status).toBe("connected"); // Last recorded, not confirmed absent.
+  }
+  expect(status.assetReadAccount).toEqual({ status: "address_required" });
+  expect(JSON.stringify(status)).not.toContain("PRIVATE SDK FAILURE");
+  expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+});
+
+it("removes a signature wait invalidated during interaction reconciliation without resubmission", async () => {
+  const { f, call } = await harness(), { connection } = await f.approve(), ready = await f.prepare(connection.connectionId);
+  const pending = deferred<{ transactionBytes: string; signature: string }>();
+  f.sign.mockImplementationOnce(() => pending.promise);
+  await f.act(ready.card, { action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
+  await vi.waitFor(() => expect(f.sign).toHaveBeenCalledOnce());
+  const request = f.run(() => f.records.currentRequest(ready.session.id))!;
+  vi.spyOn(f.transport, "session").mockReturnValue(undefined);
+  try {
+    const status = data(await call(TOOL_NAMES.sessionGetInteractionStatus));
+    expect(f.run(() => f.records.request(request.attemptId))).toMatchObject({ requestStatus: "stopped",
+      reason: "The wallet connection changed or became unavailable before submission. Nothing was submitted." });
+    expect(status.pendingReviewSessions.items.some((item: { reviewSessionId: string }) => item.reviewSessionId === ready.session.id)).toBe(false);
+    expect(f.run(() => f.records.authority(request.attemptId)?.can_submit)).toBe(0);
+    expect(f.sign).toHaveBeenCalledOnce(); expect(f.submit).not.toHaveBeenCalled();
+  } finally {
+    pending.reject(new Error("Fixture wallet ended"));
+    await vi.waitFor(() => expect(f.run(() => f.records.authority(request.attemptId)?.sdk_pending)).toBe(0));
+  }
+});
+
+it("keeps a completed chain result when an interaction read discovers session loss", async () => {
+  const { f, call } = await harness(), { connection } = await f.approve(), ready = await f.prepare(connection.connectionId);
+  await f.act(ready.card, { action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
+  await vi.waitFor(() => expect(f.run(() => f.records.currentRequest(ready.session.id)?.requestStatus)).toBe("completed"));
+  const before = f.run(() => f.records.currentRequest(ready.session.id))!;
+  vi.spyOn(f.transport, "session").mockReturnValue(undefined);
+  const status = data(await call(TOOL_NAMES.sessionGetInteractionStatus));
+  expect(status.connections[0].status).toBe("disconnected");
+  const result = data(await call(TOOL_NAMES.sessionGetExecutionResult, { reviewSessionId: ready.session.id }));
+  expect(result.executionResult).toEqual(before.execution); expect(result.requestStatus).toBe("completed");
+  expect(f.sign).toHaveBeenCalledOnce(); expect(f.submit).toHaveBeenCalledOnce();
+});
+
+it("advertises and opens disconnect controls without clearing context or disconnecting the wallet", async () => {
+  const { f, client, call } = await harness(), { connection } = await f.approve();
+  const before = await f.run(() => f.activity.getActiveAccount());
+  const tools = (await client.listTools()).tools;
+  const gateway = tools.find((tool) => tool.name === TOOL_NAMES.sessionCreateWalletConnection)!;
+  expect(gateway.description).toContain("disconnection");
+  expect(gateway.description).not.toMatch(/must|should|always/i);
+  expect(gateway.inputSchema.properties).not.toHaveProperty("action");
+  const opened = data(await call(gateway.name));
+  expect(opened.data.allowedActions).toContain("disconnect");
+  expect(opened.data.connections).toContainEqual(expect.objectContaining({ connectionId: connection.connectionId, status: "connected" }));
+  expect(await f.run(() => f.activity.getActiveAccount())).toEqual(before);
+  expect(f.transport.disconnect).not.toHaveBeenCalled();
+  expect(f.connect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
 });

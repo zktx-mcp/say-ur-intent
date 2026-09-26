@@ -43,7 +43,7 @@ Read-only tools split by address requirement.
 
 Address-free reads do not need wallet connection. Examples include DeepBook pool lists, orderbook snapshots, mid price, and quote facts.
 
-Address-scoped reads need either an explicit public Sui address supplied by the user or active account context from wallet connection.
+Current asset reads need either an explicit public Sui address supplied by the user or a selected account with a usable current wallet connection. Stored activity and transaction-result reads retain their own read-context rules.
 
 An explicit public-address read does not prove ownership, create active account context, or authorize active-account-only tools.
 
@@ -141,11 +141,13 @@ Internal read cards are opened with `ui.open_account`, `ui.open_receipt`, and `u
 
 | Tool | Input and result |
 | --- | --- |
-| `ui.open_account` | Optional Sui address; otherwise use active read context or present an address input. Shows SuiNS, coins, Display NFTs, object groups, fetched time and truncation limits. |
-| `ui.open_receipt` | Optional transaction digest. Shows server-read execution facts, gas, balance changes, objects, inputs, events and the PTB graph. No wallet or active account is needed. |
+| `ui.open_account` | Optional explicit Sui address; otherwise use the selected read account only when its wallet connection is currently usable. Missing input returns `input_required` with no card or source query. Shows name, address, coin totals, Display NFTs, other-object count, fetched time and enumeration limits; no address form. |
+| `ui.open_receipt` | A transaction digest is required for a query. Omission returns `input_required` with no card or source query. The result view shows execution outcome, balance changes, net gas, sender, digest and fetched time; no hash form. No wallet or active account is needed. Normalized receipt evidence and private display metadata remain available under their existing boundaries. |
 | `ui.open_chart` | Optional `poolName`, official Indexer interval, UTC `startTimeMs`/`endTimeMs`, and candle `limit`. Shows one selected USDC pool as candlesticks and volume. Range shortcuts fill these query fields. The initial time axis uses the saved request boundaries, with price-free whitespace at boundaries without candles; omitted boundaries use the returned data. |
 
-The creating response contains a `cardId`, `kind`, `state`, `revision`, timestamps, original `input`, and available `data`. `inputRemainingMs` is computed by the backend; `pollAfterMs` controls sequential observation of a running read. Card `ready` permits a read selection, not signing or payment readiness. An initial supplied input uses the same admission path as a form submission. DB states are `ready`, `running`, and `closed`, with terminal reasons `completed`, `expired`, `failed`, or `server_restarted`.
+A missing Account/Receipt target returns `data: { kind, status: "input_required", field, message }`, with no permission, card ID, saved resource or query. A host-rendered view shows the message without input controls or polling. Other errors remain errors.
+
+A successful card-creating response contains a `cardId`, `kind`, `state`, `revision`, timestamps, original `input`, and available `data`. `inputRemainingMs` is computed by the backend; `pollAfterMs` controls sequential observation of a running read. Card `ready` permits a read selection, not signing or payment readiness. An initial supplied input uses the same admission path as a form submission. DB states are `ready`, `running`, and `closed`, with terminal reasons `completed`, `expired`, `failed`, or `server_restarted`.
 
 When Chart pool choices cannot be prepared, the backend creates a `closed`/`failed` card with a readable error. No selection is admitted and no candles are requested. Reading that card again returns the stored failure; retrying the source requires an explicit request for a new card. A database access or write failure is a tool error, not a successfully stored failure card.
 
@@ -207,7 +209,7 @@ This quote is not a settlement asset choice.
 
 ### DeepBook account inventory
 
-`read.summarize_deepbook_account_inventory` uses active account context to discover DeepBook BalanceManager addresses.
+`read.summarize_deepbook_account_inventory` uses the selected account only when its current wallet connection is usable, to discover DeepBook BalanceManager addresses. It has no explicit public-address input. Without a usable default, a missing selection returns `active_account_not_set`, and a stored but ineligible selection returns `input_invalid`; both carry `details.reason: "connected_account_required"` and `details.followUp` naming `session.get_interaction_status` and its connection/availability/pending/default-account fields. These responses do not request an address. Unavailable wallet operations return `wallet_unavailable` with the existing safe reason and recovery message.
 
 With both `poolKey` and `managerAddress`, it checks pool account existence and returns display-like account inventory:
 
@@ -231,7 +233,7 @@ They are not raw balances, route liquidity, funding sources, withdrawal readines
 
 `read.summarize_wallet_assets` accepts an optional `account` input for public-address coin balance snapshots.
 
-When `account` is omitted, it uses the active account read context and returns `active_account_not_set` if no active account is set.
+When `account` is omitted, it uses the same connection-qualified default as `session.get_interaction_status.assetReadAccount`. No stored selection returns `active_account_not_set` with `details.action: "provide_account"`; a stored but ineligible selection returns `input_invalid` with `details.reason: "address_required"`. Both request an explicit address. SDK unavailability is not reported as absence of a stored account.
 
 An explicit `account` read does not prove ownership, store the address as a known wallet, or create active account context.
 
@@ -301,7 +303,7 @@ Use it this way:
 
 - Coverage question: `intentKind: "cover_payment_like_amount"`, `denomination: "dollar"`, and `requiredDisplayAmount: "1000"`.
 - AssetGroup-total question: `intentKind: "summarize_settlement_asset_group_balance"` and `denomination: "dollar"` without a target amount.
-- Account scope: explicit public `account` or active account context.
+- Account scope: explicit public `account` or a selected account with a usable current wallet connection.
 
 For settlement-asset-only coverage, shortfall, and balance-total answers, use `responseSummary`.
 
@@ -831,11 +833,11 @@ It is not a signing readiness signal. Review-state checks are pre-signing review
 
 | Tool | Input and result |
 | --- | --- |
-| `session.create_wallet_connection` | Opens an internal Connect card. No pairing starts until an explicit app action. |
+| `session.create_wallet_connection` | Opens an internal card for connection, disconnection and approved-account selection. Opening the card starts none of those operations; the user acts in the card. Disconnection requires target-specific confirmation and does not revoke onchain permissions. |
 | `session.get_wallet_connection` | Reads one `cardId`; public response excludes pairing and permission. |
 | `session.wait_wallet_connection` | Waits on one `cardId`, with an optional timeout up to 55 seconds; stops when user input is needed or the admitted connection/disconnection operation ends. |
 | `session.open_review_management` | Opens management for exact `reviewSessionId` + `attemptId`; no refresh or signing authority. |
-| `session.get_interaction_status` | Active read account and bounded pending connection/review lists, with IDs and truncation. |
+| `session.get_interaction_status` | Stored `activeAccount`, current-owner `connections`, `assetReadAccount`, wallet availability, and bounded pending connection/review lists. `assetReadAccount` is `available` with an account only when that selected address has a usable current connection; otherwise `address_required`. Stored `activeAccount` does not prove a live connection. `address_required` reports that no implicit default is available; it does not add an address input to connected-account-only tools. When wallet availability is unavailable, connection rows are last recorded facts, not proof of presence or absence. |
 | `session.get_review_status` | Current preparation status, review revision, optional current request and chain execution. |
 | `session.get_execution_result` | Observes the current explicitly referenced attempt and may read its known digest; never submits again. |
 | `session.wait_execution_result` | Bounded wait on the same request, separate from its signing and chain-observation deadlines. |
@@ -851,6 +853,8 @@ observed, and becomes false on completion or unavailable wallet progress.
 While its SDK callback remains pending, unavailable progress preserves the
 operation and its last recorded connection state. Repeating the same selection
 does not send another SDK request.
+
+`session.get_interaction_status` reconciles stored connections against current SDK sessions before reading dependent review/request facts. This can record a connection change and invalidate a review or interrupt an unsubmitted request under the existing rules. It preserves the stored account selection and submitted chain results; it does not start pairing, SDK disconnect, signing or submission.
 
 When a disconnect callback ended but its completion write failed, current reads
 reconcile that stored operation without another SDK disconnect. If the SDK is

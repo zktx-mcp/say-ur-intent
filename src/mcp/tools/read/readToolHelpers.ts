@@ -6,16 +6,23 @@ import { parseSuiAddress } from "../../../core/suiAddress.js";
 import { errorToolResult } from "../../result.js";
 import { activityStoreToolError } from "../../toolErrors.js";
 import type { McpServerDeps } from "../../server.js";
+import { walletUnavailable } from "../../../core/session/walletConnection.js";
+import { TOOL_NAMES } from "../../toolNames.js";
+
+type AssetAccountInput =
+  | { mode: "explicit_or_connected"; account?: string | undefined }
+  | { mode: "connected_only" };
 
 export async function resolveExplicitOrActiveAccount(
-  account: string | undefined,
-  deps: McpServerDeps
+  input: AssetAccountInput,
+  deps: Pick<McpServerDeps, "activityStore" | "workflow" | "logger">
 ): Promise<
   | { status: "ok"; account: string }
   | { status: "error"; result: ReturnType<typeof errorToolResult> }
+  | { status: "address_required"; message: string; result: ReturnType<typeof errorToolResult> }
 > {
-  if (account !== undefined) {
-    const explicitAccount = parseSuiAddress(account);
+  if (input.mode === "explicit_or_connected" && input.account !== undefined) {
+    const explicitAccount = parseSuiAddress(input.account);
     if (explicitAccount === undefined) {
       return {
         status: "error",
@@ -36,18 +43,40 @@ export async function resolveExplicitOrActiveAccount(
   } catch (error) {
     return { status: "error", result: activityStoreToolError(error, deps.logger) };
   }
-  if (!active) {
+  if (!active && input.mode === "explicit_or_connected") {
+    const message = "Please provide a Sui address in chat.";
     return {
-      status: "error",
+      status: "address_required", message,
       result: errorToolResult({
         kind: "active_account_not_set",
         details: {
-          action: "connect_wallet_connection"
+          action: "provide_account", message
         }
       })
     };
   }
-  return { status: "ok", account: active.address };
+  try {
+    const context = deps.workflow?.readConnectionContext();
+    if (context?.assetReadAccount.status === "available") return { status: "ok", account: context.assetReadAccount.account };
+    const availability = context?.walletAvailability ?? walletUnavailable("initialization_failed");
+    if (input.mode === "connected_only") {
+      if (availability.status === "unavailable") return { status: "error", result: errorToolResult({ kind: "wallet_unavailable",
+        details: { reason: availability.reason, message: availability.message } }) };
+      return { status: "error", result: errorToolResult({ kind: active ? "input_invalid" : "active_account_not_set",
+        details: { reason: "connected_account_required",
+          message: "This tool requires a selected account with a usable wallet connection. An address alone cannot be used.",
+          followUp: { tool: TOOL_NAMES.sessionGetInteractionStatus,
+            answerFields: ["walletAvailability", "connections", "pendingWalletConnections", "assetReadAccount"],
+            reason: `Check current connections and pending operations. Use pendingWalletConnections.items[].cardId with ${TOOL_NAMES.sessionGetWalletConnection} or ${TOOL_NAMES.sessionWaitWalletConnection}. If no operation is pending and the user requests connection or account selection, open ${TOOL_NAMES.sessionCreateWalletConnection}. Only the user may act in that card.` } } }) };
+    }
+    const message = availability.status === "unavailable"
+      ? "The wallet connection cannot be checked. Please provide a Sui address in chat to view its assets."
+      : "No connected wallet is available for the selected account. Please provide a Sui address in chat.";
+    return { status: "address_required", message, result: errorToolResult({ kind: "input_invalid",
+      details: { field: "account", reason: "address_required", message, walletAvailability: availability } }) };
+  } catch (error) {
+    return { status: "error", result: activityStoreToolError(error, deps.logger) };
+  }
 }
 
 export function readServiceError(error: unknown, deps: McpServerDeps) {

@@ -11,13 +11,14 @@ import { interactionStatusUserAnswerUse, reviewStatusUserAnswerUse } from "../..
 import { userAnswerUseSchema } from "../read/commonSchemas.js";
 import { isReviewInteractionPending, reviewStatusResponse } from "../../../core/session/status.js";
 import { latest, reviewStatusResponseShape, readCurrentReview } from "./shared.js";
-import { pendingConnectionStatusSchema } from "../../../core/session/workflowView.js";
+import { pendingConnectionStatusSchema, connectionViewSchema, assetReadAccountSchema } from "../../../core/session/workflowView.js";
 
 export function registerSessionStatusTools(server: McpServer, deps: McpServerDeps): void {
   server.registerTool(TOOL_NAMES.sessionGetInteractionStatus, {
-    title: "Get local interaction status", description: "Read the active account and pending connection or review interactions.",
+    title: "Get local interaction status", description: "Read wallet connections, the default asset account, and pending interactions.",
     inputSchema: noParamsInputSchema,
     outputSchema: successOutputSchema({ walletAvailability: walletAvailabilitySchema, activeAccount: activeAccountResponseSchema,
+      connections: z.array(connectionViewSchema), assetReadAccount: assetReadAccountSchema,
       pendingWalletConnections: z.object({ limit: z.number().int().positive(), truncated: z.boolean(),
         items: z.array(z.object({ cardId: z.string(), connectionId: z.string().optional(),
           status: pendingConnectionStatusSchema, progress: workflowProgressSchema, lastActivityAt: z.string() })) }),
@@ -29,12 +30,15 @@ export function registerSessionStatusTools(server: McpServer, deps: McpServerDep
     try { active = await deps.activityStore.getActiveAccount(); }
     catch (error) { return activityStoreToolError(error, deps.logger); }
     try {
-      deps.workflow?.refreshConnections();
+      // Connection reconciliation can invalidate reviews and interrupt requests.
+      // Complete that maintenance before projecting its dependent review facts.
+      const context = deps.workflow?.readConnectionContext() ?? { connections: [],
+        assetReadAccount: { status: "address_required" as const }, walletAvailability: walletUnavailable("initialization_failed") };
+      const connections = deps.workflow?.pendingConnections() ?? [];
       const states = await Promise.all(deps.sessions.reviewSessionIds().map((id) => readCurrentReview(deps, id)));
       const reviews = states.flatMap((state) => state && isReviewInteractionPending(state) ? [reviewStatusResponse(state)] : []);
-      const connections = deps.workflow?.pendingConnections() ?? [];
       return okToolResult({ activeAccount: activeAccountResponse(active), pendingWalletConnections: latest(connections),
-        pendingReviewSessions: latest(reviews), walletAvailability: deps.workflow?.walletAvailability() ?? walletUnavailable("initialization_failed"),
+        pendingReviewSessions: latest(reviews), ...context,
         userAnswerUse: interactionStatusUserAnswerUse() });
     } catch (error) { return sessionStoreToolError(error, deps.logger); }
   });

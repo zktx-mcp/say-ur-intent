@@ -8,16 +8,7 @@ import "../../../review-app/src/receipt.css";
 
 export const receiptRenderer = {
   title: "Transaction result",
-  controls(snapshot, submit) {
-    const form = document.createElement("form");
-    const digest = document.createElement("input"); digest.required = true; digest.name = "digest";
-    digest.placeholder = "Transaction digest"; digest.setAttribute("aria-label", "Sui transaction digest");
-    digest.value = String(snapshot.input.digest ?? "");
-    const button = document.createElement("button"); button.type = "submit"; button.textContent = "Show transaction";
-    form.append(digest, button);
-    form.addEventListener("submit", (event) => { event.preventDefault(); submit({ digest: digest.value.trim() }); });
-    return form;
-  },
+  controls: () => element("p", "ui-note", "Please provide a transaction hash in chat."),
   result(snapshot, display) {
     const result = asRecord(snapshot.data);
     if (result?.status !== "found") {
@@ -25,9 +16,7 @@ export const receiptRenderer = {
       return { node: element("p", "ui-note", message) };
     }
     const receipt = receiptForCard(snapshot, display);
-    const node = chainReceiptView(receipt);
-    const notice = display ? "" : "Input values and PTB display details are unavailable; this does not mean the transaction had no inputs.";
-    if (notice) node.prepend(element("p", "ui-note", notice));
+    const node = chainReceiptView(receipt, { summary: true });
     return { node, dispose: () => disposePtbGraphs(node) };
   }
 } satisfies CardRenderer;

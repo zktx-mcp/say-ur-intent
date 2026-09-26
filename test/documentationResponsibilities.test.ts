@@ -276,3 +276,15 @@ describe("documentation responsibility boundaries", () => {
     expect(standardClauses).not.toMatch(/USDC equals fiat USD|Best route|P&L|profit|tax|cost-basis/i);
   });
 });
+
+describe("disconnect request routing", () => {
+  it("routes disconnect requests to the existing user-confirmed card, never to clearing read context", () => {
+    const behavior = read("docs/AGENT_BEHAVIOR.md");
+    const flow = requiredBlock(behavior, 'For "disconnect my wallet",', '3. `session.get_wallet_connection`');
+    expect(flow).toContain("open `session.create_wallet_connection` even though no new connection is needed");
+    expect(flow).toContain("Confirm disconnect or Cancel");
+    expect(flow).toContain("Do not substitute `account.clear_active_account`");
+    expect(flow).toContain("If disconnection is already pending");
+    expect(behavior).toContain("For a connect request, if the requested wallet is already connected");
+  });
+});

@@ -37,7 +37,7 @@ export function deferred<T>() {
 // Synthetic quote/object/simulation/wallet/chain sources. Core preparation,
 // SQLite admission, signature verification, receipt verification and projection
 // are real. These fixtures do not establish adapter-build or mainnet success.
-export async function walletWorkflowFixture(options: { receiptDetails?: boolean; eventLog?: EventLogSink; addressBalance?: boolean } = {}) {
+export async function walletWorkflowFixture(options: { receiptDetails?: boolean; eventLog?: EventLogSink; addressBalance?: boolean; accountReader?: Parameters<typeof createReadCardStore>[0]["readService"]["summarizeAccountInventory"] } = {}) {
   const chainIdentifier = options.addressBalance ? BUILD_CHAIN : "mainnet-chain";
   const directory = mkdtempSync(join(tmpdir(), "say-wallet-workflow-"));
   const access = new RuntimeDataAccess();
@@ -137,7 +137,7 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
     runExternalEvent: (work) => access.run(work), logger, now });
   await workflow.start();
   const cards = createReadCardStore({ records: cardRecords, ownerId, assertCurrent: access.assertCurrent, workflow, now,
-    readService: { summarizeAccountInventory: async () => { throw new Error("Unexpected account source"); } },
+    readService: { summarizeAccountInventory: options.accountReader ?? (async () => { throw new Error("Unexpected account source"); }) },
     publicChainReceiptReader: async () => { throw new Error("Unexpected receipt source"); }, chart: createDeepbookUsdcChartService() });
   const localData = activity.createLocalDataService({ now, advanceRequestDeadlines: (at) => records.advanceRequestDeadlines(at),
     onDataReplaced: () => access.dataReplaced(), suiGrpcUrl: DEFAULT_SUI_GRPC_URL, suiGraphqlUrl: DEFAULT_SUI_GRAPHQL_URL,

@@ -127,7 +127,7 @@ When that is true, use `targetAssetSelectionSource: "user_explicit"` or `"prior_
 
 For shortfall questions without an established target amount, ask for the missing display target amount. Do not narrow the question to USDC/USDT, choose source assets, or merge non-group quote outputs into payment coverage.
 
-Partial wallet context is allowed only when an active account is already set or the user gives an explicit Sui address.
+Partial wallet context is allowed when a connection-qualified default asset account is available or the user gives an explicit Sui address.
 
 Use supported reads to expose only returned facts:
 
@@ -293,15 +293,22 @@ Describe an active wallet account as read context, not login, proof of
 ownership, standing signature approval or custody. Explicit public-address
 reads do not set that context. Account clearing does not disconnect a wallet.
 
-1. Use `account.get_active_account` when an existing read context can answer the
-   request. `source` and `setAt` explain where it came from.
-2. An explicit connect/reconnect/account replacement request opens an internal
+- For current asset reads with no address supplied by the user, read `session.get_interaction_status` and use `assetReadAccount.account` only when its status is `available`. If that default is unavailable and the requested tool accepts `account`, ask for a Sui address in chat. For `read.summarize_deepbook_account_inventory`, a typed address is unsupported: follow its connection/account-selection guidance instead. Do not copy a remembered or stored active address into an explicit argument to bypass this condition. Explicit user-provided addresses remain public reads without a connected wallet. A stored active account is not proof of a current connection.
+- Before opening a connection card, use the same status response's `connections` with `walletAvailability`. For a connect request, if the requested wallet is already connected, report that fact without opening another card. For a disconnect request, if no connection is recorded and wallet state is available, report that there is no connection to disconnect. Unavailable wallet state does not prove no connection. Do not ask for another pairing when one is pending.
+- Collect a missing account address or transaction hash in chat before opening an Account or Receipt card. Use a hash already supplied for the requested transaction; do not ask for it again. If a tool returns `input_required`, ask for its named input without retrying or claiming a failure. These cards have no input forms.
+
+For a connected-account-only read, use `session.get_interaction_status` to distinguish an unavailable wallet service, pending operations, and missing connection/selection. Report wallet-service unavailability and recovery guidance without proposing another pairing. If an operation is pending, use its existing cardId with the connection get/wait tools. Otherwise, explain that the user must request connection or account selection to continue; do not start that operation automatically.
+
+1. `account.get_active_account` reports the stored selection, with `source` and `setAt`. For current assets without a user-provided address, use `session.get_interaction_status.assetReadAccount` to check whether that selection is a usable default. If not, request an address only for tools that accept `account`; connected-account-only tools require the connection/account-selection flow. Do not infer current connection from the stored selection.
+2. An explicit connect/reconnect/disconnect/account replacement request opens an internal
    Connect card with `session.create_wallet_connection`. The user selects the
    operation there; the model must not call app-only actions on their behalf.
+For "disconnect my wallet", when the wallet service is available and the target is connected, open `session.create_wallet_connection` even though no new connection is needed. The user chooses Disconnect and then Confirm disconnect or Cancel in that card. Do not substitute `account.clear_active_account`, claim disconnection is unsupported merely because there is no direct model-facing disconnect tool, or equate disconnection with revoking onchain permissions. If disconnection is already pending, read or wait on that exact card instead of opening another operation.
+
 3. `session.get_wallet_connection` and `session.wait_wallet_connection` use the
    returned cardId. An unsubmitted card needs input; waiting does not create a
    pairing. Pairing credentials/QR never belong in chat text.
-4. After connection/account selection, read `account.get_active_account` before
+4. After connection/account selection, read `session.get_interaction_status` and confirm `assetReadAccount` is available before
    stating which account is active. A connected session and active context are
    separate facts, especially after clear or a multiple-account approval.
 5. A wait timeout does not prove failure, disconnection or a remote dialog's
@@ -396,7 +403,7 @@ Function activity facts are not route quality, P&L, wallet position inventory, t
 
 When the user asks for balances for a specific Sui address, call `read.summarize_wallet_assets` or `read.classify_wallet_assets` with `account`. Do not start wallet connection for that public-address read.
 
-If the user asks for the active wallet's balances without giving an address, use active account context. Create a wallet connection session only when no active account is set.
+If the user asks for their balances without giving an address, use `session.get_interaction_status.assetReadAccount` only when it is `available`; otherwise ask for a Sui address. Open a wallet connection card only when the user requests connection.
 
 Explicit-address wallet asset reads are live read snapshots only. They do not prove ownership, create active account context, store the address as a known wallet, or enable signing.
 
@@ -454,7 +461,7 @@ Do not silently turn vague words into amounts.
 | "Do you think I should buy this?" | Do not give investment advice. Offer price, liquidity, quote, and risk-input facts when supported. |
 | "Tell me when the price drops." | Say alerts are unsupported. Offer a one-time price or quote check. |
 | "Let's buy Bitcoin too." | Say this toolkit only exposes Sui mainnet surfaces. |
-| "Am I connected? / Am I logged in?" | Say the toolkit has active wallet-account read context for the address, not a login. Use `account.get_active_account` to confirm the address. Do not say the user is connected to DeepBook or signed in. |
+| "Am I connected? / Am I logged in?" | Read `session.get_interaction_status.connections` with `walletAvailability`. When unavailable, report that connection state cannot be confirmed. The stored active account is not proof of a connection or login. Do not say the user is connected to DeepBook or signed in. |
 | "Show my balances over time." | Held-balance history and P&L are not tool surfaces. Use `read.get_account_asset_timeline` only for stored raw net-flow bars over a UTC range; if `balanceStatus` is `unavailable_no_balance_anchor`, say held balances are unavailable. `read.summarize_wallet_assets` returns a current snapshot at `fetchedAt`. |
 | "How much profit did I make?" | Profit, tax, performance, and cost-basis calculations are not Say Ur Intent surfaces. Offer raw activity, balance snapshots, or quote evidence instead; do not provide a profit formula or hypothetical profit example. |
 | "Can you calculate my profit if I bought 10 SUI for 10 USDC?" | An assumed acquisition price does not change the boundary. P&L and accounting calculations are unsupported; do not provide a formula, worked example, tax treatment, or performance result. |

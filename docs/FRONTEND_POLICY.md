@@ -37,9 +37,9 @@ business-state effect. An initial authenticated DB read is required regardless
 of preview rendering success. Missing permission or unknown DB state disables
 business actions without inventing a terminal state.
 
-Connect shows approved accounts and read context. An explicit connection with
+Connect shows wallet state and the selected account. It keeps pairing explicit, hides additional pairing while connections or connection operations exist, and uses an in-card target-specific Confirm/Cancel step for disconnection. Confirmation is discarded when the card revision or target changes. Connect shows approved accounts and read context. An explicit connection with
 one approved account can set read context; multiple accounts require selection.
-Clearing read context is not wallet disconnection. Reconciliation alone never
+The stored read context persists separately from default asset-read eligibility. An implicit asset read requires a usable current connection for the selected account; explicit-address reads and stored result reads do not. Clearing read context is not wallet disconnection. Reconciliation alone never
 sets it again. A waiting Connect card displays only the same live pairing QR
 from metadata bound to card/connection/revision. Missing metadata is shown as
 unavailable and never triggers new pairing. Terminal connections cannot be
@@ -141,7 +141,7 @@ can remove those records and cannot cancel a transaction on Sui.
 
 ## Internal Read Cards
 
-The Account card shows SuiNS, coin balances, Display NFTs, other owned objects, fetched time and enumeration limits for an explicit or active read address. The Receipt card shows server-read facts for one transaction digest, including gas, balance changes, objects, inputs, events and PTB visualization. The Chart card shows one selected DeepBook USDC pool with official intervals, UTC range and candle limits. Its initial time axis uses the saved request boundaries; omitted boundaries use available candle times, and a request without either boundary fits the returned candles. Boundary whitespace carries no price or volume. Empty results show the requested range and an explicit no-candles message. These are read-only views; they create no wallet connection, review approval, trading authority, P&L or fiat valuation.
+Account and Receipt targets are established in chat, without card input forms. Missing targets produce a concise input-required message with no card record, source request, permissions or polling. The Account card shows SuiNS, the actual query address, coin totals, Display NFTs, an omitted-object count, fetched time and enumeration limits for an explicit or connection-qualified default address. The Receipt card shows execution outcome, balance changes, net gas, sender, digest and fetched time. Technical input, object, call, event and PTB details are not rendered in this summary view. Review retains its full receipt display and all pre-approval review evidence. The Chart card shows one selected DeepBook USDC pair with official intervals, the UTC period and any result-limit notice. Candle count is not a form field; supplied limits, defaults and shortcut query values remain unchanged. Its initial time axis uses the saved request boundaries; omitted boundaries use available candle times, and a request without either boundary fits the returned candles. Boundary whitespace carries no price or volume. Empty results show the requested range and an explicit no-candles message. These are read-only views; they create no wallet connection, review approval, trading authority, P&L or fiat valuation.
 
 All read cards use one SQLite-backed input lifecycle and one View lifecycle. The View inserts a result node before invoking its mount callback. Size-dependent renderers wait for positive layout dimensions, ignore hidden zero-size layouts, and release observers and drawing resources on disposal. Chart resizing preserves the current viewport rather than reapplying the initial query range. Initialization reads the same card record. Chat navigation, frame recreation and teardown do not close input or cancel work. A valid unsubmitted selection remains available; admission or backend expiry ends that original input. A read may finish after its View closes. Completed results are static, remain stored until local data replacement/reset, and do not repeat the source query. A different selection after admission needs a new card.
 
@@ -151,9 +151,9 @@ The view uses MCP Apps host-mediated tool/resource calls. It does not fetch loca
 
 The View timer uses backend-computed remaining input time and asks for current state at expiry; it does not write an expiry or close reason. Teardown only disposes local observers, timers and rendering resources. Missing UI permission or a failed current-state read keeps input disabled without inventing a terminal state. Preserve previously displayed facts and expose recovery through a saved-state read. Server restart invalidates unfinished input/work without replaying it and preserves completed DB results.
 
-Receipt input values and their PTB graph use a typed UI-only metadata channel bound to card ID, transaction digest and revision. Model text, structured content and public saved resources omit those display details. Missing private details must be shown as unavailable, not as an absence of transaction inputs. Rendering uses the validated receipt. NFT image loading remains the permitted direct external-display exception; business queries still go through the backend.
+Receipt input values and their PTB graph use a typed UI-only metadata channel bound to card ID, transaction digest and revision. Model text, structured content and public saved resources omit those display details. A view displaying private receipt details must mark missing details as unavailable, not as an absence of transaction inputs. The standalone Receipt summary does not display those technical sections. Rendering uses the validated receipt. NFT image loading remains the permitted direct external-display exception; business queries still go through the backend.
 
-Internal cards provide no clipboard actions, copy buttons, or clipboard fallback controls. Preserve readable facts, ordinary text selection, PTB name/address display controls and graph pan/zoom. NFT images retain no-referrer behavior and a failed-image placeholder. Theme follows the host. Card view cleanup ends timers, subscriptions and rendering observers without cancelling an already admitted server operation.
+Internal cards provide no clipboard actions, copy buttons, or clipboard fallback controls. Preserve readable facts and ordinary text selection; where a PTB graph is shown, preserve its name/address controls and pan/zoom. NFT images retain no-referrer behavior and a failed-image placeholder. Theme follows the host. Card view cleanup ends timers, subscriptions and rendering observers without cancelling an already admitted server operation.
 
 All five cards, including Review management, adapt to the embedded frame width.
 Forms wrap, narrow fact rows stack their label above the value, and long addresses,
@@ -207,9 +207,10 @@ The shared UI follows these durable principles:
 2. One consistent system: cards share one lifecycle, one component set, and the
    same element positions. Cards and token pages have no cross-page navigation.
 3. Multi-step pages show their full set of steps and mark the current step.
-4. A region keeps its position across state and data availability; when content is
-   empty, unsupported, or unavailable, the region shows a placeholder card in its
-   place rather than collapsing or restructuring the layout.
+4. Primary result regions keep their position across data availability and show
+   an explicit empty or unavailable state. Technical sections intentionally omitted
+   from a summary do not require placeholder regions; the Account summary reports
+   omitted-object counts only when there are such objects or an enumeration limit.
 5. Time-based progress and quantitative completeness use different components: a
    progress bar only when a real value advances it, an indeterminate overlay for
    an unknown-duration wait, and a count plus checklist for an already-known

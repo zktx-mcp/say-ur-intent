@@ -6,9 +6,8 @@ individual wallet requests. It is not login, proof of address ownership, custody
 
 ## Connection and read account
 
-`session.create_wallet_connection` opens an internal Connect card. Opening or
-reading it does not pair a wallet. The user explicitly chooses connect,
-disconnect, or use an already approved account. The backend admits that choice
+`session.create_wallet_connection` opens the internal card for connection, disconnection and approved-account selection. Opening or
+reading it does not pair a wallet. The user explicitly chooses connect, disconnect or an approved account. Disconnection shows the target account and network and requires confirmation. While a connection or wallet operation is present, the card does not offer another pairing; disconnect existing wallets before connecting a new one. Existing multiple connections remain individually manageable. The backend admits that choice
 in SQLite before SDK I/O. Pairing QR data stays in UI metadata bound to the exact
 card, connection and revision. Reopening a waiting card uses the same pairing
 while its backend owner retains it; it never creates another pairing.
@@ -17,7 +16,7 @@ The backend validates accounts, Sui mainnet namespace, methods and expiry before
 recording a connection. A single wallet-approved account can become read context
 from an explicit connection; multiple approved accounts require an explicit
 selection. The active read account is stored in SQLite until changed or cleared.
-SDK restoration and status reads never undo a user clearing that context.
+SDK restoration and status reads never undo a user clearing that context. The stored selection is separate from its eligibility as a default for current asset reads. Implicit asset reads require a usable current wallet connection for the selected address; disconnection, expiry, pending disconnection or unavailable wallet state removes that default. Tools with an `account` input may still read an explicit address; connected-account-only tools require connection/account selection or recovery of wallet availability. Explicit-address public reads and saved transaction/activity reads remain available. `session.get_interaction_status.assetReadAccount` supplies that default-account decision alongside `connections` and `walletAvailability`.
 
 | Connection state | Available behavior |
 | --- | --- |
@@ -25,6 +24,8 @@ SDK restoration and status reads never undo a user clearing that context.
 | awaiting_approval | Same private QR and approval observation; stop waiting |
 | connected | View approved accounts and expiry; a new card may select another operation |
 | rejected / failed / expired / stopped / disconnected | View the recorded outcome; new operations need a new card |
+
+`session.get_interaction_status` can reconcile recorded connections with SDK sessions and apply the existing review/request invalidation rules before returning their state. It neither changes the selected read account nor starts a wallet operation. See the [interaction API](MCP_TOOLS.md) for the response contract.
 
 An admitted disconnect is a pending card operation, distinct from the last
 confirmed connection state. The same connection cannot be selected for another

@@ -1,8 +1,8 @@
 // Shared on-chain receipt view: the verified facts for one transaction digest,
 // composed from shared atoms. Both the internal Receipt card and the
 // review page's post-sign Result state render this same component from the same
-// `PublicChainReceipt`, so a confirmed transaction looks identical wherever it is
-// shown. It renders the display only — the page owns its own surrounding chrome,
+// `PublicChainReceipt`. Standalone receipts may omit the technical detail;
+// review results retain the full evidence display. It renders the display only — the page owns its own surrounding chrome,
 // and the loading/error states.
 
 import type {
@@ -13,7 +13,7 @@ import type {
   PublicChainReceiptInput
 } from "../../../src/core/action/suiChainReceiptReader.js";
 import type { SuiChainReceiptPackageCall } from "../../../src/core/action/suiChainReceiptEvidence.js";
-import { accordion, card, detailItem, element, info, mono, note, placeholder, row, statusBanner } from "./ui.js";
+import { accordion, card, detailItem, element, info, mono, monoShort, note, placeholder, row, statusBanner } from "./ui.js";
 import { ptbGraphCard } from "./ptbDiagram.js";
 import { qualifiedName, shortHex, shortType, signedRawToDisplay, suiAmount, typeName } from "../format.js";
 import { t } from "../i18n/i18n.js";
@@ -21,7 +21,7 @@ import { t } from "../i18n/i18n.js";
 // Receipt layout: observed outcome → balance changes (in decimals)
 // → gas → PTB graph (the left-to-right centerpiece, placeholder when none) →
 // collapsed accordions (inputs, Move calls, object changes, events).
-export function chainReceiptView(receipt: PublicChainReceipt): HTMLElement {
+export function chainReceiptView(receipt: PublicChainReceipt, options: { summary?: boolean } = {}): HTMLElement {
   const wrap = element("div", "ui-chain-receipt");
   const success = receipt.effectsStatus.success;
 
@@ -35,6 +35,7 @@ export function chainReceiptView(receipt: PublicChainReceipt): HTMLElement {
     overview.append(row(t.receipt.sender, monoShort(receipt.sender)));
   }
   overview.append(row(t.receipt.checkedAt, receipt.fetchedAt));
+  if (options.summary) overview.append(row("Transaction hash", monoShort(receipt.txDigest)));
   wrap.append(overview);
 
   // Card — balance changes (signed, in decimals when resolved, up/down tinted).
@@ -43,15 +44,16 @@ export function chainReceiptView(receipt: PublicChainReceipt): HTMLElement {
     balances.append(placeholder(t.receipt.noBalanceChanges));
   } else {
     for (const change of receipt.balanceChanges) {
-      balances.append(balanceChangeItem(change, receipt.sender));
+      balances.append(balanceChangeItem(change, receipt.sender, options.summary));
     }
   }
   wrap.append(balances);
 
   // Card — gas (always SUI, known decimals).
   const gasCard = card(t.receipt.gas);
-  gasCard.append(gasSection(receipt.gas));
+  gasCard.append(options.summary ? row(t.receipt.gasTotal, suiAmount(receipt.gas.totalMist)) : gasSection(receipt.gas));
   wrap.append(gasCard);
+  if (options.summary) return wrap;
 
   // The shared Transaction graph card (name/address toggle); a
   // placeholder card holds the same slot when the transaction has no renderable graph.
@@ -89,13 +91,18 @@ function infoTitleCard(titleText: string, tip: string): HTMLElement {
   return node;
 }
 
-function balanceChangeItem(change: PublicChainReceiptBalanceChange, sender: string | undefined): HTMLElement {
+function balanceChangeItem(change: PublicChainReceiptBalanceChange, sender: string | undefined, summary = false): HTMLElement {
   const symbol = change.symbol ?? typeName(change.coinType);
   // The raw amount already carries the sign for a decrease; an increase gets an
   // explicit "+" so direction reads at a glance (with the up/down tint below).
   const magnitude =
     change.decimals !== undefined ? signedRawToDisplay(change.amountRaw, change.decimals) : change.amountRaw;
   const amount = change.direction === "increase" ? `+${magnitude}` : magnitude;
+  if (summary) {
+    const item = row(symbol, change.decimals === undefined ? "Amount unavailable" : amount);
+    if (change.address !== sender) item.append(row(t.receipt.account, monoShort(change.address)));
+    return item;
+  }
   const metas: Array<{ label?: string; value: string; full?: string }> = [
     { value: shortType(change.coinType), full: change.coinType }
   ];
@@ -211,13 +218,5 @@ function eventsAccordion(events: PublicChainReceiptEvent[]): HTMLElement {
     }
   }
   return details;
-}
-
-// Display helpers: derive short, scannable labels for the headline while the full
-// value stays available via the meta `title`.
-function monoShort(value: string): HTMLElement {
-  const node = mono(shortHex(value));
-  node.title = value;
-  return node;
 }
 

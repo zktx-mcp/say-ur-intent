@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { registerReadCards } from "../src/mcp-ui/tools.js";
 import { createReadCardStore } from "../src/mcp-ui/readCards.js";
 import { createDeepbookUsdcChartService } from "../src/core/read/deepbookUsdcChartService.js";
@@ -40,11 +40,11 @@ async function harness(ui: boolean, transaction = cardReceiptTransaction) {
     }
   });
   const server = new McpServer({ name: "card-service-fixture", version: "1" });
-  registerReadCards(server, { cards: { store: cards }, activityStore });
+  registerReadCards(server, { cards: { store: cards }, activityStore, logger: { error: vi.fn() } });
   const client = new Client({ name: "card-test-client", version: "1" }, { capabilities: ui ? { extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } } } : {} });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport); await client.connect(clientTransport);
-  return { client, accountInputs, receiptInputs, close: async () => {
+  return { client, activityStore, accountInputs, receiptInputs, close: async () => {
     await client.close(); await server.close(); cards.stop(); activityStore.close(); rmSync(directory, { recursive: true, force: true });
   } };
 }
@@ -63,37 +63,44 @@ describe("MCP read cards, persisted results and private display", () => {
       for (const old of ["ui.open_card", "ui.close_card", "ui.record_card_diagnostics"]) expect(tools.some((tool) => tool.name === old)).toBe(false);
     } finally { await context.close(); }
   });
-  it("passes one account selection to the service and returns current state after conflicting input", async () => {
+  it("requests missing input without a saved card, source access or UI permission", async () => {
     const context = await harness(true);
     try {
-      const creating = await context.client.callTool({ name: CARD_TOOLS.account, arguments: {} });
-      const ready = snapshot(creating); expect(ready.state).toBe("ready");
-      const ref = cardReferenceSchema.parse(creating._meta?.[CARD_METADATA_KEY]);
-      expect(JSON.stringify({ content: creating.content, structuredContent: creating.structuredContent })).not.toContain(ref.permission);
-      const saved = await context.client.readResource({ uri: `${CARD_RESOURCE_PREFIX}${ready.cardId}` });
-      expect(JSON.stringify(saved)).not.toContain(ref.permission);
-      for (let frame = 0; frame < 2; frame++) {
-        expect(snapshot(await context.client.callTool({ name: CARD_TOOLS.read, arguments: ref }))).toMatchObject({ state: "ready", revision: 0 });
+      for (const [name, kind, field] of [[CARD_TOOLS.account, "account", "account"], [CARD_TOOLS.receipt, "receipt", "digest"]]) {
+        const response = await context.client.callTool({ name: name!, arguments: {} });
+        expect(response.isError).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({ ok: true, data: { kind, field, status: "input_required" } });
+        expect(response._meta).toBeUndefined();
+        expect((response.content as Array<{ type: string }>).some((item) => item.type === "resource_link")).toBe(false);
       }
-      const submitted = await context.client.callTool({ name: CARD_TOOLS.submit, arguments: { ...ref, revision: 0, input: { account } } });
-      expect(snapshot(submitted)).toMatchObject({ state: "closed", reason: "completed", data: inventory });
-      const conflicting = await context.client.callTool({ name: CARD_TOOLS.submit, arguments: { ...ref, revision: 0, input: { account: `0x${"b".repeat(64)}` } } });
-      expect(conflicting.isError).toBe(true);
-      expect(JSON.parse((conflicting.content as Array<{ text: string }>)[0]!.text)).toMatchObject({ error: { details: {
-        code: "card_conflict", snapshot: { state: "closed", data: inventory }
-      } } });
-      const denied = await context.client.callTool({ name: CARD_TOOLS.submit, arguments: { ...ref, permission: "wrong", revision: 0, input: { account } } });
-      expect(denied.isError).toBe(true); expect(denied._meta).toBeUndefined();
-      expect(JSON.stringify(denied)).not.toContain('"snapshot"'); expect(context.accountInputs).toEqual([{ account }]);
+      expect(context.accountInputs).toEqual([]); expect(context.receiptInputs).toEqual([]);
     } finally { await context.close(); }
   });
-  it.each(["initial", "form"])("delivers real reader Pure inputs and PTB privately through the %s path", async (entry) => {
+  it("binds an explicit account before querying, regardless of stored read context", async () => {
     const context = await harness(true);
     try {
-      const creating = await context.client.callTool({ name: CARD_TOOLS.receipt, arguments: entry === "initial" ? { digest: chainReceiptDigest } : {} });
+      await context.activityStore.setActiveAccount(`0x${"b".repeat(64)}`, "wallet_connection");
+      const creating = await context.client.callTool({ name: CARD_TOOLS.account, arguments: { account } });
       const ref = cardReferenceSchema.parse(creating._meta?.[CARD_METADATA_KEY]);
-      const response = entry === "initial" ? creating : await context.client.callTool({ name: CARD_TOOLS.submit,
-        arguments: { ...ref, revision: 0, input: { digest: chainReceiptDigest } } });
+      expect(snapshot(creating)).toMatchObject({ state: "closed", reason: "completed", input: { account }, data: inventory });
+      for (let frame = 0; frame < 2; frame++) {
+        expect(snapshot(await context.client.callTool({ name: CARD_TOOLS.read, arguments: ref }))).toMatchObject({ input: { account }, data: inventory });
+      }
+      const conflict = await context.client.callTool({ name: CARD_TOOLS.submit, arguments: { ...ref, revision: snapshot(creating).revision, input: { account: `0x${"b".repeat(64)}` } } });
+      expect(conflict.isError).toBe(true);
+      const denied = await context.client.callTool({ name: CARD_TOOLS.read, arguments: { ...ref, permission: "wrong" } });
+      expect(denied.isError).toBe(true); expect(denied._meta).toBeUndefined();
+      expect(context.accountInputs).toEqual([{ account }]);
+      const saved = await context.client.readResource({ uri: `${CARD_RESOURCE_PREFIX}${ref.cardId}` });
+      expect(JSON.stringify(saved)).not.toContain(ref.permission);
+    } finally { await context.close(); }
+  });
+  it("preserves real reader Pure inputs and PTB privately while the Receipt view is simplified", async () => {
+    const context = await harness(true);
+    try {
+      const creating = await context.client.callTool({ name: CARD_TOOLS.receipt, arguments: { digest: chainReceiptDigest } });
+      const ref = cardReferenceSchema.parse(creating._meta?.[CARD_METADATA_KEY]);
+      const response = creating;
       const result = snapshot(response);
       expect(result).toMatchObject({ state: "closed", reason: "completed", data: { status: "found", receipt: {
         txDigest: chainReceiptDigest, gas: { totalMist: "130" }, inputs: [{ index: 0, kind: "pure" }, { index: 1, kind: "pure" }]

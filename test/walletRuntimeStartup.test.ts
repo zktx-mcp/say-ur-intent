@@ -138,7 +138,9 @@ it.each([
     }
     expect((await call(TOOL_NAMES.accountGetActiveAccount)).isError).not.toBe(true);
     const receipt = await call(CARD_TOOLS.receipt);
-    expect((receipt.structuredContent as { data: { state: string } }).data.state).toBe("ready");
+    expect(receipt.isError).not.toBe(true);
+    expect(receipt.structuredContent).toEqual({ ok: true, data: { kind: "receipt", status: "input_required", field: "digest", message: "Please provide a transaction hash in chat." } });
+    expect(receipt._meta).toBeUndefined();
     expect(source.connect).not.toHaveBeenCalled(); expect(source.request).not.toHaveBeenCalled();
     expect(JSON.stringify([created, logger.error.mock.calls])).not.toContain("PRIVATE-");
     expect(JSON.stringify([created, logger.error.mock.calls]).includes(WALLETCONNECT_PROJECT_ID)).toBe(false);

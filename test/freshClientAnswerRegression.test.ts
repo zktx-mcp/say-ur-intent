@@ -1,3 +1,5 @@
+import type { ActivityStore } from "../src/core/activity/activityStore.js";
+import type { WalletWorkflow } from "../src/core/session/walletWorkflow.js";
 import { walletWorkflowFixture } from "./fixtures/walletWorkflow.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerActionTools } from "../src/mcp/tools/action/prepareSuiActionReview.js";
@@ -316,7 +318,7 @@ function createFreshClientReviewPlan(id: string): ActionPlan {
   };
 }
 
-async function createReadyFreshClientReviewSession(sessions: InMemorySessionStore, activityStore: InMemoryActivityStore) {
+async function createReadyFreshClientReviewSession(sessions: InMemorySessionStore, activityStore: ActivityStore) {
   await activityStore.setActiveAccount(accountAddress, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
 
   const reviewPlan = createFreshClientReviewPlan("plan_fresh_client_ready");
@@ -342,11 +344,13 @@ async function createReadyFreshClientReviewSession(sessions: InMemorySessionStor
 }
 
 async function connectFreshClient(options: {
+  activityStore?: ActivityStore;
+  workflow?: WalletWorkflow;
   transactionActivitySource?: SuiTransactionActivitySource;
   sessionTtlMs?: number;
 } = {}) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const activityStore = new InMemoryActivityStore();
+  const activityStore = options.activityStore ?? new InMemoryActivityStore();
   const sessions = new InMemorySessionStore({
     activityStore,
     logger,
@@ -363,6 +367,7 @@ async function connectFreshClient(options: {
   const server = createMcpServer({
     sessions,
     activityStore,
+    ...(options.workflow ? { workflow: options.workflow } : {}),
     localSettings: new InMemoryLocalSettingsService(repository),
     reviewBaseUrl: "http://127.0.0.1:4173",
     logger,
@@ -466,18 +471,16 @@ const scenarioInvokers: Record<string, ScenarioInvoker> = {
     }
   },
   deepbook_inventory_discovery_not_detail_inventory: async (scenario) => {
-    const { client, server, activityStore } = await connectFreshClient();
-    try {
-      await activityStore.setActiveAccount(accountAddress, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
-      return textPayload(
-        await client.callTool({
-          name: scenario.tool,
-          arguments: {}
-        })
-      );
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-    }
+    const f = await walletWorkflowFixture();
+    try { return await f.run(async () => {
+      const { client, server, activityStore } = await connectFreshClient({ activityStore: f.activity, workflow: f.workflow });
+      try {
+        await f.approve();
+        f.notify({ ...f.transport.session("fixture-topic")!, accounts: [accountAddress] });
+        await activityStore.setActiveAccount(accountAddress, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
+        return textPayload(await client.callTool({ name: scenario.tool, arguments: {} }));
+      } finally { await Promise.allSettled([client.close(), server.close()]); }
+    }); } finally { f.close(); }
   },
   deepbook_swap_review_signing_blocked: async (scenario) => {
     const f = await walletWorkflowFixture();

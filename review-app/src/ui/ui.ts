@@ -5,7 +5,7 @@
 // from each page's <head>, so it is not bundled per entry and is never
 // code-split into an unlinked chunk.
 
-import { shortAddress } from "../format.js";
+import { shortAddress, shortHex } from "../format.js";
 
 export function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -458,6 +458,15 @@ export function pageHeader(options: { title: string; lede: string; ledeTip?: str
 // Monospace span for ids, addresses, and digests.
 export function mono(text: string): HTMLElement {
   return element("span", "ui-mono", text);
+}
+
+// Compact address/hash with its complete value available to readers.
+export function monoShort(value: string): HTMLElement {
+  const node = mono(shortHex(value));
+  node.title = value;
+  node.setAttribute("aria-label", value);
+  node.tabIndex = 0;
+  return node;
 }
 
 // Inline info marker. Keeps the visible copy minimal while the full detail is a

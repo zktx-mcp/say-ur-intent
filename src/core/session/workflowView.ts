@@ -11,7 +11,12 @@ import { reviewProgress } from "./status.js";
 export const CONNECT_BOUNDARY = "A wallet connection provides account context; it is not a transaction approval or proof of address ownership.";
 export const REVIEW_BOUNDARY = "Review evidence is not a safety guarantee. Only an explicit card action and wallet approval may authorize this exact transaction.";
 // A projection of an admitted card operation, not a new wallet connection state.
-const connectionViewSchema = walletConnectionSchema.extend({ pendingAction: z.literal("disconnect").optional() });
+export const connectionViewSchema = walletConnectionSchema.extend({ pendingAction: z.literal("disconnect").optional() });
+export const assetReadAccountSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("available"), account: suiAddressStringSchema }).strict(),
+  z.object({ status: z.literal("address_required") }).strict()
+]);
+export type AssetReadAccount = z.infer<typeof assetReadAccountSchema>;
 export const pendingConnectionStatusSchema = z.enum(["input_required", "awaiting_approval", "disconnect_pending"]);
 export type PendingConnectionStatus = z.infer<typeof pendingConnectionStatusSchema>;
 

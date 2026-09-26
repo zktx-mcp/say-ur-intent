@@ -1,3 +1,6 @@
+import type { ActivityStore } from "../src/core/activity/activityStore.js";
+import type { WalletWorkflow } from "../src/core/session/walletWorkflow.js";
+import { walletWorkflowFixture } from "./fixtures/walletWorkflow.js";
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { ADAPTER_PROMPT_SURFACES } from "../src/adapters/adapterPromptSurfaces.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -126,7 +129,8 @@ const reviewPlan: ActionPlan = {
 
 async function connectTestClient(
   options: {
-    activityStore?: InMemoryActivityStore;
+    activityStore?: ActivityStore;
+    workflow?: WalletWorkflow;
     localSettings?: LocalSettingsService;
     readService?: SuiReadService;
     transactionActivitySource?: SuiTransactionActivitySource;
@@ -147,6 +151,7 @@ async function connectTestClient(
     promptSurfaces: ADAPTER_PROMPT_SURFACES,
     sessions,
     activityStore,
+    ...(options.workflow ? { workflow: options.workflow } : {}),
     localSettings,
     reviewBaseUrl: "http://127.0.0.1:4173",
     logger: testLogger,
@@ -865,7 +870,9 @@ describe("MCP discoverability", () => {
   });
 
   it("exposes live read-only tools through MCP", async () => {
-    const { client, server, activityStore } = await connectTestClient();
+    const walletFixture = await walletWorkflowFixture();
+    try { await walletFixture.run(async () => {
+    const { client, server, activityStore } = await connectTestClient({ activityStore: walletFixture.activity, workflow: walletFixture.workflow });
     try {
       const tools = await client.listTools();
       const deepbookReadToolNames = new Set<string>([
@@ -890,7 +897,7 @@ describe("MCP discoverability", () => {
         ok: false,
         error: {
           kind: "active_account_not_set",
-          details: { action: "connect_wallet_connection" }
+          details: { action: "provide_account" }
         }
       });
       const pendingClassification = await client.callTool({
@@ -901,7 +908,7 @@ describe("MCP discoverability", () => {
         ok: false,
         error: {
           kind: "active_account_not_set",
-          details: { action: "connect_wallet_connection" }
+          details: { action: "provide_account" }
         }
       });
       const explicitWallet = await client.callTool({
@@ -975,7 +982,7 @@ describe("MCP discoverability", () => {
         ok: false,
         error: {
           kind: "active_account_not_set",
-          details: { action: "connect_wallet_connection" }
+          details: { action: "provide_account" }
         }
       });
       const pendingDeepbookAccount = await client.callTool({
@@ -986,9 +993,11 @@ describe("MCP discoverability", () => {
         ok: false,
         error: {
           kind: "active_account_not_set",
-          details: { action: "connect_wallet_connection" }
+          details: { reason: "connected_account_required", followUp: { tool: TOOL_NAMES.sessionGetInteractionStatus } }
         }
       });
+      await walletFixture.approve();
+      walletFixture.notify({ ...walletFixture.transport.session("fixture-topic")!, accounts: [walletAccount] });
       await activityStore.setActiveAccount(walletAccount, "wallet_connection");
       const wallet = await client.callTool({
         name: TOOL_NAMES.readSummarizeWalletAssets,
@@ -1756,6 +1765,7 @@ describe("MCP discoverability", () => {
     } finally {
       await server.close();
     }
+    }); } finally { walletFixture.close(); }
   });
 
   it("fails DeepBook token listing closed when pinned scalar metadata is invalid", async () => {
@@ -3098,7 +3108,7 @@ describe("MCP discoverability", () => {
       await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
       const result = await client.callTool({
         name: TOOL_NAMES.readSummarizeWalletAssets,
-        arguments: {}
+        arguments: { account: walletAccount }
       });
       const payload = JSON.parse((result.content as Array<{ text?: string }>)[0]?.text ?? "");
       expect(payload).toMatchObject({
@@ -3159,7 +3169,7 @@ describe("MCP discoverability", () => {
       await activityStore.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:03.000Z"));
       const result = await client.callTool({
         name: TOOL_NAMES.readSummarizeWalletAssets,
-        arguments: {}
+        arguments: { account: walletAccount }
       });
       expect(textPayload(result)).toMatchObject({
         ok: false,
@@ -3343,4 +3353,66 @@ describe("MCP discoverability", () => {
       await Promise.allSettled([server.close(), client.close()]);
     }
   });
+});
+
+it.each(["missing_selection", "disconnected", "expired", "pending_disconnect", "sdk_missing", "different_account", "cleared", "unavailable", "workflow_absent", "database_error"] as const)("keeps asset recovery usable for each input contract after %s", async (condition) => {
+  const f = await walletWorkflowFixture();
+  const readService = createTestReadService();
+  const inventory = vi.spyOn(readService, "summarizeDeepbookAccountInventory");
+  let finishDisconnect: (() => void) | undefined;
+  let connectionId: string | undefined;
+  try { await f.run(async () => {
+    if (condition !== "missing_selection") connectionId = (await f.approve()).connection.connectionId;
+    const approved = f.transport.session("fixture-topic");
+    if (condition === "disconnected") f.notify();
+    if (condition === "sdk_missing") vi.spyOn(f.transport, "session").mockReturnValue(undefined);
+    if (condition === "different_account") vi.spyOn(f.transport, "session").mockReturnValue({ ...approved!, accounts: [replacementWalletAccount] });
+    if (condition === "expired") vi.spyOn(f.transport, "session").mockReturnValue({ ...approved!, expiresAt: new Date(f.now().getTime() - 1).toISOString() });
+    if (condition === "unavailable") vi.spyOn(f.transport, "session").mockImplementation(() => { throw new Error("PRIVATE SDK FAILURE"); });
+    if (condition === "cleared") await f.activity.clearActiveAccount(f.now());
+    if (condition === "database_error") vi.spyOn(f.activity, "getActiveAccount").mockRejectedValue(new Error("PRIVATE DB FAILURE"));
+    if (condition === "pending_disconnect") {
+      const pending = new Promise<void>((resolve) => { finishDisconnect = resolve; });
+      vi.mocked(f.transport.disconnect).mockImplementationOnce(() => pending);
+      const card = await f.createConnection(); await f.act(card, { action: "disconnect", connectionId });
+    }
+    const { client, server } = await connectTestClient({ activityStore: f.activity, readService,
+      ...(condition === "workflow_absent" ? {} : { workflow: f.workflow }) });
+    try {
+      const result = await client.callTool({ name: TOOL_NAMES.readSummarizeDeepbookAccountInventory, arguments: {} });
+      expect(result.isError).toBe(true);
+      const error = (textPayload(result) as { error: { kind: string; details: Record<string, any> } }).error;
+      const unavailable = condition === "unavailable" || condition === "workflow_absent";
+      expect(error.kind).toBe(condition === "database_error" ? "internal_error" : unavailable ? "wallet_unavailable" : ["missing_selection", "cleared"].includes(condition) ? "active_account_not_set" : "input_invalid");
+      expect(error.details.field).toBeUndefined(); expect(error.details.action).not.toBe("provide_account");
+      expect(JSON.stringify(error)).not.toMatch(/Please provide a Sui address|PRIVATE SDK FAILURE|PRIVATE DB FAILURE/);
+      expect(inventory).not.toHaveBeenCalled();
+      if (!unavailable && condition !== "database_error") {
+        expect(error.details.followUp).toMatchObject({ tool: TOOL_NAMES.sessionGetInteractionStatus,
+          answerFields: ["walletAvailability", "connections", "pendingWalletConnections", "assetReadAccount"] });
+        const tools = (await client.listTools()).tools;
+        expect(tools.some((tool) => tool.name === error.details.followUp.tool)).toBe(true);
+        const state = (textPayload(await client.callTool({ name: error.details.followUp.tool, arguments: {} })) as { data: unknown }).data;
+        for (const field of error.details.followUp.answerFields) expect(state).toHaveProperty(field);
+        expect(tools.find((tool) => tool.name === TOOL_NAMES.readSummarizeDeepbookAccountInventory)!.inputSchema.properties).not.toHaveProperty("account");
+      }
+      for (const [name, args] of [
+        [TOOL_NAMES.readSummarizeWalletAssets, { account: walletAccount }],
+        [TOOL_NAMES.readClassifyWalletAssets, { account: walletAccount }],
+        [TOOL_NAMES.readPreviewIntentEvidence, { account: walletAccount, intentKind: "cover_payment_like_amount", denomination: "dollar", requiredDisplayAmount: "1000" }]
+      ] as const) expect(textPayload(await client.callTool({ name, arguments: args }))).toMatchObject({ ok: true });
+      if (condition === "missing_selection") {
+        await f.approve();
+        expect(textPayload(await client.callTool({ name: TOOL_NAMES.readSummarizeDeepbookAccountInventory, arguments: {} }))).toMatchObject({ ok: true, data: { account: f.account } });
+        expect(inventory).toHaveBeenCalledOnce();
+      }
+      expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+    } finally { await client.close(); await server.close(); }
+  }); } finally {
+    if (finishDisconnect) {
+      finishDisconnect();
+      await vi.waitFor(() => expect(f.run(() => f.records.connection(connectionId!)?.sdkPending)).toBe(false));
+    }
+    inventory.mockRestore(); f.close();
+  }
 });

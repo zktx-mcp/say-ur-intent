@@ -5,13 +5,16 @@ import { TOOL_NAMES } from "./toolNames.js";
 export function interactionStatusUserAnswerUse(): UserAnswerUse {
   return {
     canAnswer: [
-      "current_active_account_read_context",
+      "stored_active_account_read_context",
+      "wallet_connections_when_wallet_availability_is_available",
+      "connection_qualified_default_asset_account",
       "pending_local_wallet_connection_interactions",
       "pending_local_review_interactions",
       "wallet_operation_availability_separate_from_stored_transaction_facts"
     ],
     cannotAnswer: [
       "wallet_login_or_authentication",
+      "implicit_default_unavailability_as_explicit_address_support_for_every_tool",
       "wallet_custody_or_authorization",
       "wallet_unavailability_as_chain_failure_or_lost_stored_result",
       "transaction_execution_result",
@@ -20,7 +23,8 @@ export function interactionStatusUserAnswerUse(): UserAnswerUse {
       "complete_wallet_history",
       "profit_or_pnl"
     ],
-    answerFields: ["activeAccount", "pendingWalletConnections", "pendingReviewSessions", "walletAvailability"],
+    preconditionFields: ["walletAvailability", "assetReadAccount"],
+    answerFields: ["activeAccount", "connections", "assetReadAccount", "pendingWalletConnections", "pendingReviewSessions", "walletAvailability"],
     diagnosticOnlyFields: [
       "pendingWalletConnections.truncated",
       "pendingReviewSessions.truncated"

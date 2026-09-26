@@ -14,7 +14,7 @@ import { sessionStoreToolError } from "../../toolErrors.js";
 export function registerWalletConnectionTools(server: McpServer, deps: McpServerDeps): void {
   const failure = (error: unknown) => sessionStoreToolError(error, deps.logger);
   server.registerTool(TOOL_NAMES.sessionCreateWalletConnection, {
-    title: "Open wallet connection", description: "Open an internal Sui wallet connection and account-selection card.",
+    title: "Open wallet connection controls", description: "Open a card for Sui wallet connection, disconnection and account selection.",
     inputSchema: noParamsInputSchema, outputSchema: successOutputSchema(cardSnapshotSchema.shape),
     _meta: cardMetadata("connect"), annotations: { readOnlyHint: false, openWorldHint: false }
   }, async () => { try { return await createWorkflowCard(server, deps, "connect", {}); } catch (error) { return failure(error); } });
