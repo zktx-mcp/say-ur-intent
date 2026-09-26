@@ -7,12 +7,12 @@
     "url": "https://github.com/stelis-dev/say-ur-intent",
     "source": "github"
   },
-  "version": "0.3.0",
+  "version": "0.4.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@stelis/say-ur-intent",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "transport": {
         "type": "stdio"
       }

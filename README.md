@@ -192,6 +192,18 @@ For quote responses alone, these conclusions are unsupported:
 
 Install from the MCP registry (server `io.github.stelis-dev/say-ur-intent`) or with `npx -y @stelis/say-ur-intent`. For per-client configuration (Claude Code, Claude Desktop, Codex, Cursor) and running from a local checkout, see [docs/MCP_SETUP.md](docs/MCP_SETUP.md).
 
+### Planned package and repository transition
+
+Version 0.4.0 is planned as the final release under `@stelis/say-ur-intent`.
+The planned successor is `say-ur-intent@0.4.1`, with the repository moving from
+`stelis-dev/say-ur-intent` to `zktx-dev/say-ur-intent` while retaining its history.
+The two versions are intended to provide the same functionality; the successor
+changes package and repository identity. Both retain the local Settings page.
+
+This is an advance notice, not confirmation that publication or transfer has
+completed. Continue using the installation name above until the successor's
+publication and installation have been verified and this guide is updated.
+
 After the MCP server is connected, use [docs/MCP_SETUP.md](docs/MCP_SETUP.md#first-use-flow) for first-use setup, [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) for API fields and statuses, and [docs/AGENT_BEHAVIOR.md](docs/AGENT_BEHAVIOR.md) for user-question flow and response wording.
 
 ## Mainnet-Only Product Surface

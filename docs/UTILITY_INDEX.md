@@ -44,9 +44,29 @@ Source-checkout scripts are not packaged product commands, MCP tools, review-tim
 | Stored Sui activity summary | `read.summarize_sui_account_activity` | Implemented | Summarizes stored normalized Sui activity facts, including stored Move call, balance change, object/event, gas, execution error details, and optional protocol activity labels when evidence is available. |
 | Stored account asset timeline | `read.get_account_asset_timeline` | Implemented | Builds stored local account asset net-flow bars and optional DeepBook USDC token-denominated candle references. Not held balances, complete wallet history, USD value, P&L, cost basis, route advice, transaction building, or signing readiness. |
 | Local settings | `settings.create_local_settings_session`, `settings.get_local_settings` | Implemented | MCP creates or reads local settings sessions. Settings mutations happen in the local settings page after token validation and apply after MCP server restart when they affect the endpoint. |
+| Release package check | `npm run release:check` | Maintainer, source checkout | Verifies metadata, tests/build, tarball assets/licenses and installed MCP/Settings startup. Requires network and loopback access; no wallet pairing, signing or publishing. |
 | Mainnet read smoke | `npm run smoke:mainnet` | Manual | Runs selected mainnet read paths from built `dist/`. Build first. Not part of CI or `release:check`; see notes below. |
 | Sui GraphQL function filter probe | `npm exec -- tsx scripts/sui-graphql-function-filter-probe.ts [--endpoint <mainnet-graphql-url>] [--sample-size <1-50>] [--timeout-ms <ms>]` | Manual, source evidence only | Runs a read-only Sui mainnet GraphQL source-shape probe for function-filter diagnostics; see notes below. |
 | Sui CLI transaction diagnostics | `npm exec -- tsx scripts/sui-cli-transaction-diagnostics.ts -- --help` | Manual, source checkout only | Allowlisted local `sui` CLI debug evidence. See notes below. |
+
+## Release Package Check
+
+`npm run release:check` is a source-checkout maintainer command. Node 22 or newer,
+installed development dependencies, npm registry access for a temporary tarball
+installation, local loopback sockets, and reachable Sui mainnet endpoints are
+required. Native SQLite must work both in the checkout and the installed package.
+The runtime uses its built-in endpoints unless `SUI_GRPC_URL` or `SUI_GRAPHQL_URL`
+is supplied; the actual mainnet checks remain enabled.
+
+The command checks metadata, types, tests, builds, package contents and licenses,
+then launches the installed package through stdio MCP with a new data directory
+and an independent port. It reads the registered tools and resources, creates a
+Settings session only in that temporary database, and checks the Settings HTML,
+assets and authenticated status. It waits for child termination before removing
+its installation. A termination failure preserves the temporary files for cleanup
+after the process stops. It does not pair, sign, submit, publish, or mutate the
+user's data. Success verifies this automated package boundary; real Host and
+wallet integration checks remain separate release requirements.
 
 ## Mainnet Read Smoke
 

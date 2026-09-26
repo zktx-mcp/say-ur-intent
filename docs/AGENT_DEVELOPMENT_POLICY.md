@@ -93,6 +93,15 @@ planning rationale, or "why we changed this" notes in README, `docs/`,
 `protocols/`, runtime instructions, MCP resources, tool descriptions, or
 user-facing strings. Keep that history in ignored `.WORK` notes.
 
+Two approved exceptions have a limited delivery purpose. README may carry a
+factual package/repository transition notice tied to installation, distinguishing
+planned destinations from completed publication. Reviewed English development
+records may live under `submission/ethglobal-tokyo-2026/`, with translations and
+retrospective summaries labelled as such. That directory is not product guidance,
+is never registered as an MCP resource, and is excluded from npm packages. These
+exceptions do not permit development history in other product/runtime documents
+or change `.WORK`'s role as ignored working material.
+
 If the intended meaning depends on prior chat, hidden context, vague shorthand,
 or local assumptions, rewrite it.
 
@@ -145,6 +154,7 @@ Use this single responsibility schema when editing documentation:
 | `docs/FRONTEND_POLICY.md` | Review-app frontend implementation policy and local UI boundary rules for coding agents. | Backend API contracts, MCP tool contracts, or user setup flow ownership. |
 | `docs/golden-scenarios/*.md` | Release-review scenario matrices, golden answer shapes, allowed conclusions, and forbidden conclusions. | MCP API contracts or replacement definitions for response fields. |
 | `protocols/*.md` | Protocol references and promotion-gate research notes only. | Runtime registries, supported-protocol lists, live liquidity sources, route recommendations, signing-readiness signals, or support declarations. |
+| `submission/ethglobal-tokyo-2026/` | Reviewed English development records for the approved external delivery. | Product rules, runtime guidance, MCP resources, or npm package contents. |
 | `.WORK/` | Ignored local planning notes. | Product-facing rules unless moved into README, AGENTS, docs, protocols, tests, or code comments. |
 
 Do not remove all repetition. These repeated boundaries are allowed when they

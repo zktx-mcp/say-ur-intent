@@ -508,7 +508,15 @@ with its owner process; the port is not a browser-wallet authorization origin.
 
 ## Packed Package Testing
 
-`npm run release:check` builds, tests, creates an npm tarball, verifies package contents, and installs the packed tarball in a temporary directory. It does not publish to npm.
+`npm run release:check` checks synchronized release metadata, typechecks, tests,
+builds, and verifies the actual npm tarball and bundled licenses. It installs the
+tarball in a temporary directory and runs that installed binary to check MCP
+initialization, tools, document/card resources, and the local Settings page and
+assets. Runtime startup requires reachable Sui mainnet endpoints; a startup
+failure leaves dependent checks unverified. The check uses an isolated data
+directory and port, ends the child process before cleanup, and does not use your
+stored wallet sessions, pair a wallet, sign, submit, reset data, or publish to npm.
+See [Utility Index](UTILITY_INDEX.md#release-package-check) for prerequisites.
 
 ## Current Release Limitations
 
