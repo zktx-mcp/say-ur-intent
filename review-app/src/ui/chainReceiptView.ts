@@ -18,20 +18,19 @@ import { ptbGraphCard } from "./ptbDiagram.js";
 import { qualifiedName, shortHex, shortType, signedRawToDisplay, suiAmount, typeName } from "../format.js";
 import { t } from "../i18n/i18n.js";
 
-// The full v4 receipt layout: status banner + meta → balance changes (in decimals)
+// Receipt layout: observed outcome → balance changes (in decimals)
 // → gas → PTB graph (the left-to-right centerpiece, placeholder when none) →
 // collapsed accordions (inputs, Move calls, object changes, events).
 export function chainReceiptView(receipt: PublicChainReceipt): HTMLElement {
   const wrap = element("div", "ui-chain-receipt");
   const success = receipt.effectsStatus.success;
 
-  // Card — overview: status banner + general facts (digest, sender, checked-at).
+  // Card — overview: independent chain outcome and its observation context.
   const overview = card(t.receipt.facts);
   overview.append(statusBanner(success ? "success" : "failure", success ? t.receipt.success : t.receipt.failure));
   if (!success && receipt.effectsStatus.errorMessage) {
     overview.append(row(t.receipt.error, receipt.effectsStatus.errorMessage));
   }
-  overview.append(row(t.receipt.digest, mono(receipt.txDigest)));
   if (receipt.sender) {
     overview.append(row(t.receipt.sender, monoShort(receipt.sender)));
   }
@@ -71,7 +70,7 @@ export function chainReceiptView(receipt: PublicChainReceipt): HTMLElement {
   // together rather than as four loose top-level disclosures. Being nested, the lists pick up the
   // square-corner treatment (rounded card, square inner lists).
   const records = card(t.receipt.records);
-  records.append(note(t.receipt.recordsTip));
+  records.append(row(t.receipt.digest, mono(receipt.txDigest)), note(t.receipt.recordsTip));
   records.append(inputsAccordion(receipt.inputs));
   records.append(moveCallsAccordion(receipt.packageCalls));
   records.append(objectChangesAccordion(receipt.objectTypes));

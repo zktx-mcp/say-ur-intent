@@ -1,15 +1,27 @@
 import QRCode from "qrcode";
-import { workflowViewSchema } from "../../core/session/workflowView.js";
+import { workflowViewSchema, type WorkflowView } from "../../core/session/workflowView.js";
 import type { CardSnapshot, CardWalletDisplay } from "../contracts.js";
-import { card, element, row } from "../../../review-app/src/ui/ui.js";
+import { card, element, row, accordion } from "../../../review-app/src/ui/ui.js";
 import type { CardRenderer } from "./lifecycle.js";
 import "./workflow.css";
+
+const connectionLabels: Record<NonNullable<WorkflowView["connection"]>["status"], string> = {
+  awaiting_approval: "Waiting for wallet connection approval", connected: "Wallet connected",
+  rejected: "Connection declined", failed: "Connection could not be completed", expired: "Connection expired",
+  stopped: "Connection waiting stopped", disconnected: "Wallet disconnected"
+};
 
 function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unknown>) => void, wallet?: CardWalletDisplay) {
   const data = workflowViewSchema.parse(snapshot.data);
   const node = element("div", "workflow-card");
   const facts = card("Wallet connection");
-  facts.append(row("Network", "Sui mainnet"), row("Read account", data.activeAccount ?? "Not set"));
+  facts.append(row("Read account", data.activeAccount ?? "Not set"), row("Network", "Sui mainnet"));
+  const status = row(data.walletAvailability.status === "unavailable" ? "Last recorded status" : "Status",
+    data.connection ? connectionLabels[data.connection.status] : "No connection selected for this card");
+  status.setAttribute("role", "status"); facts.append(status);
+  if (data.connection?.pendingAction === "disconnect" && data.progress.status === "waiting") facts.append(element("p", "ui-note", "Wallet disconnection is in progress."));
+  if (data.connection?.reason) facts.append(element("p", "ui-note", data.connection.reason));
+  if (data.connection && data.walletAvailability.status === "unavailable") facts.append(row("Updated", data.connection.updatedAt));
   node.append(facts);
   if (data.walletAvailability.status === "unavailable") facts.append(element("p", "ui-note", data.walletAvailability.message));
   const action = (label: string, input: Record<string, unknown>) => {
@@ -45,11 +57,6 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
   }
   let canvas: HTMLCanvasElement | undefined;
   if (data.connection) {
-    if (data.connection.pendingAction === "disconnect" && data.progress.status === "waiting") facts.append(element("p", "ui-note", "Wallet disconnection is in progress."));
-    facts.append(row(data.walletAvailability.status === "unavailable" ? "Last recorded status" : "Status", data.connection.status), row("Updated", data.connection.updatedAt), row("Connection", data.connection.connectionId), row("Expires", data.connection.expiresAt));
-    if (data.connection.walletName) facts.append(row("Wallet", data.connection.walletName));
-    for (const account of data.connection.accounts) facts.append(row("Approved account", account));
-    if (data.connection.reason) facts.append(element("p", "ui-note", data.connection.reason));
     if (data.connection.status === "awaiting_approval" && data.walletAvailability.status === "available") {
       if (wallet && wallet.connectionId === data.connection.connectionId) {
         canvas = document.createElement("canvas"); canvas.className = "workflow-qr";
@@ -60,6 +67,13 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
   }
   if (data.allowedActions.includes("stop_connection")) facts.append(action("Stop waiting", { action: "stop_connection" }));
   if (data.allowedActions.includes("cancel")) facts.append(action("Cancel this selection", { action: "cancel" }));
+  if (data.connection) {
+    const details = accordion("Connection details");
+    details.body.append(row("Connection", data.connection.connectionId), row("Updated", data.connection.updatedAt), row("Expires", data.connection.expiresAt));
+    if (data.connection.walletName) details.body.append(row("Wallet", data.connection.walletName));
+    for (const account of data.connection.accounts) details.body.append(row("Approved account", account));
+    facts.append(details.details);
+  }
   node.append(element("p", "ui-note", data.boundary));
   let disposed = false;
   return { node, mount: () => {
