@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.stelis-dev/say-ur-intent",
+  "name": "io.github.zktx-mcp/say-ur-intent",
   "description": "Local-first Sui DeFi evidence and review for AI clients before wallet signing.",
-  "websiteUrl": "https://github.com/stelis-dev/say-ur-intent",
+  "websiteUrl": "https://github.com/zktx-mcp/say-ur-intent",
   "repository": {
-    "url": "https://github.com/stelis-dev/say-ur-intent",
+    "url": "https://github.com/zktx-mcp/say-ur-intent",
     "source": "github"
   },
-  "version": "0.4.0",
+  "version": "0.4.1",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "@stelis/say-ur-intent",
-      "version": "0.4.0",
+      "identifier": "@zktx.io/say-ur-intent",
+      "version": "0.4.1",
       "transport": {
         "type": "stdio"
       }

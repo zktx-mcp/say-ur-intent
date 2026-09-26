@@ -190,19 +190,26 @@ For quote responses alone, these conclusions are unsupported:
 
 ## Install
 
-Install from the MCP registry (server `io.github.stelis-dev/say-ur-intent`) or with `npx -y @stelis/say-ur-intent`. For per-client configuration (Claude Code, Claude Desktop, Codex, Cursor) and running from a local checkout, see [docs/MCP_SETUP.md](docs/MCP_SETUP.md).
+This release uses npm package `@zktx.io/say-ur-intent` and MCP Registry name
+`io.github.zktx-mcp/say-ur-intent`. Once the requested version is published,
+install through your client's registry support or run `npx -y @zktx.io/say-ur-intent`.
+For per-client configuration (Claude Code, Claude Desktop, Codex, Cursor) and
+running from a local checkout, see [docs/MCP_SETUP.md](docs/MCP_SETUP.md).
 
-### Planned package and repository transition
+### Package and repository transition
 
-Version 0.4.0 is planned as the final release under `@stelis/say-ur-intent`.
-The planned successor is `say-ur-intent@0.4.1`, with the repository moving from
-`stelis-dev/say-ur-intent` to `zktx-dev/say-ur-intent` while retaining its history.
-The two versions are intended to provide the same functionality; the successor
-changes package and repository identity. Both retain the local Settings page.
+Version 0.4.0 is the final release under `@stelis/say-ur-intent`.
+Version 0.4.1 uses `@zktx.io/say-ur-intent`. The repository has moved to
+`zktx-mcp/say-ur-intent` with its history preserved. These versions provide the
+same functionality and retain the local Settings page.
 
-This is an advance notice, not confirmation that publication or transfer has
-completed. Continue using the installation name above until the successor's
-publication and installation have been verified and this guide is updated.
+The unscoped package name and `zktx-dev` destination in the 0.4.0 advance notice
+were superseded by the names above. Existing installations and client settings
+do not move automatically. Before switching, confirm the target release with
+`npm view @zktx.io/say-ur-intent@0.4.1 version`; a repository transfer alone does
+not confirm npm or Registry publication. Keep the MCP registration name and
+executable command exactly `say-ur-intent`, without a suffix. See the
+[setup guide](docs/MCP_SETUP.md#switching-the-installed-package) for the transition.
 
 After the MCP server is connected, use [docs/MCP_SETUP.md](docs/MCP_SETUP.md#first-use-flow) for first-use setup, [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) for API fields and statuses, and [docs/AGENT_BEHAVIOR.md](docs/AGENT_BEHAVIOR.md) for user-question flow and response wording.
 

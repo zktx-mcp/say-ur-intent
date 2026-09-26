@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   publish-npm:
-    name: Publish @stelis/say-ur-intent
+    name: Publish @zktx.io/say-ur-intent
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -103,7 +103,7 @@ jobs:
         run: |
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
 
-      # GitHub OIDC authorizes the io.github.stelis-dev/* namespace from this
+      # GitHub OIDC authorizes the io.github.zktx-mcp/* namespace from this
       # repository, so no token or secret is needed (it reuses the workflow-level
       # id-token: write permission). The registry validates ownership against the
       # published package's "mcpName" field, so this job runs after the npm

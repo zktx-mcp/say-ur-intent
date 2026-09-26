@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { PACKAGE_NAME, SERVER_VERSION } from "../src/mcp/serverInfo.js";
+import { PACKAGE_NAME, SERVER_NAME, SERVER_VERSION } from "../src/mcp/serverInfo.js";
 import { assertPackContents, smokeInstalledRuntime } from "../scripts/release-check.js";
 import { MCP_RESOURCES } from "../src/mcp/resources.js";
 
@@ -25,7 +25,8 @@ describe("npm release metadata", () => {
     expect(packageJson.private).toBeUndefined();
     // Validate the semver shape, not an exact value — pinning the version drifts every release.
     expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
-    expect(PACKAGE_NAME).toBe("@stelis/say-ur-intent");
+    expect(PACKAGE_NAME).toBe("@zktx.io/say-ur-intent");
+    expect(SERVER_NAME).toBe("say-ur-intent");
     expect(SERVER_VERSION).toBe(packageJson.version);
     expect(packageJson.license).toBe("MIT");
     expect(packageJson.publishConfig).toEqual({ access: "public", tag: "latest" });
@@ -45,6 +46,8 @@ describe("npm release metadata", () => {
     expect([lock.name, lock.packages[""].name, server.packages[0].identifier]).toEqual([pkg.name, pkg.name, pkg.name]);
     expect([lock.version, lock.packages[""].version, server.version, server.packages[0].version]).toEqual(Array(4).fill(pkg.version));
     expect(server.name).toBe(pkg.mcpName);
+    expect(pkg.mcpName).toBe("io.github.zktx-mcp/say-ur-intent");
+    expect(pkg.bin).toEqual({ "say-ur-intent": "./dist/runtime/start.js" });
     expect(pkg.files).toContain("LICENSES/");
     expect(pkg.files.some((file: string) => file.startsWith("submission"))).toBe(false);
     expect(MCP_RESOURCES.some((resource) => resource.path.startsWith("submission/"))).toBe(false);
@@ -72,7 +75,7 @@ it.each(["submission/ethglobal-tokyo-2026/plan.md", ".WORK/session.sqlite", "dis
 
 // Only the external MCP process is synthetic. The release helper, Client and
 // StdioClientTransport are real; no SDK close/start/pid method is replaced.
-function runtimePeer(mode: "initialize_error" | "version_mismatch" | "early_exit") {
+function runtimePeer(mode: "initialize_error" | "version_mismatch" | "name_mismatch" | "package_mismatch" | "early_exit") {
   const root = mkdtempSync(join(tmpdir(), "say-release-close-"));
   const installDir = join(root, "installed"), binPath = join(installDir, "peer.mjs");
   const pidFile = join(root, "pid"), closingFile = join(root, "closing"), releaseFile = join(root, "release");
@@ -80,6 +83,7 @@ function runtimePeer(mode: "initialize_error" | "version_mismatch" | "early_exit
   writeFileSync(binPath, `
 import { existsSync, writeFileSync } from "node:fs";
 const mode = ${JSON.stringify(mode)};
+const version = ${JSON.stringify(SERVER_VERSION)};
 writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
 if (mode === "early_exit") process.exit(0);
 // Test-only coordination, not a runtime deadline: the parent decides when
@@ -94,10 +98,19 @@ process.stdin.on("data", chunk => {
     const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
     if (!line) continue;
     const request = JSON.parse(line);
-    if (request.method !== "initialize") continue;
-    const response = mode === "initialize_error"
-      ? { error: { code: -32000, message: "Fixture initialization refused" } }
-      : { result: { protocolVersion: request.params.protocolVersion, capabilities: {}, serverInfo: { name: "fixture", version: "unexpected-fixture-version" } } };
+    let response;
+    if (request.method === "initialize") {
+      response = mode === "initialize_error"
+        ? { error: { code: -32000, message: "Fixture initialization refused" } }
+        : { result: { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: {
+          name: mode === "name_mismatch" ? "fixture" : "say-ur-intent",
+          version: mode === "version_mismatch" ? "unexpected-fixture-version" : version
+        } } };
+    } else if (request.method === "tools/call" && request.params.name === "read.get_server_status") {
+      response = { result: { content: [], structuredContent: { ok: true, data: {
+        packageName: "@fixture/other-package", version, serverName: "say-ur-intent", network: "mainnet"
+      } } } };
+    } else continue;
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, ...response }) + "\\n");
   }
 });
@@ -120,7 +133,12 @@ process.stdin.on("end", () => writeFileSync(${JSON.stringify(closingFile)}, "std
   };
 }
 
-it.each(["initialize_error", "version_mismatch"] as const)("keeps installation files until the child really exits after %s", async (mode) => {
+it.each([
+  ["initialize_error", "MCP error -32000: Fixture initialization refused"],
+  ["version_mismatch", "Installed server version mismatch."],
+  ["name_mismatch", "Installed server name mismatch."],
+  ["package_mismatch", "Installed package identity mismatch."]
+] as const)("keeps installation files until the child really exits after %s", async (mode, message) => {
   const peer = runtimePeer(mode);
   let settled = false;
   const result = smokeInstalledRuntime(peer.installDir, peer.binPath).then(
@@ -137,8 +155,7 @@ it.each(["initialize_error", "version_mismatch"] as const)("keeps installation f
     peer.release();
     const failure = await result;
     expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).cause).toMatchObject({ message: mode === "initialize_error"
-      ? "MCP error -32000: Fixture initialization refused" : "Installed server version mismatch." });
+    expect((failure as Error).cause).toMatchObject({ message });
     expect(peer.alive()).toBe(false);
     expect(existsSync(peer.installDir)).toBe(false);
   } finally { await peer.cleanup(); }

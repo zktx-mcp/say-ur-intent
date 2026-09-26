@@ -114,7 +114,13 @@ it.each([
     const created = await call(TOOL_NAMES.sessionCreateWalletConnection);
     expect(source.init).toHaveBeenCalledTimes(initCalls);
     expect(fingerprint(WALLETCONNECT_PROJECT_ID)).toBe(approvedProjectFingerprint);
-    if (initCalls) expect(fingerprint(source.init.mock.calls[0]![0].projectId)).toBe(approvedProjectFingerprint);
+    if (initCalls) {
+      expect(fingerprint(source.init.mock.calls[0]![0].projectId)).toBe(approvedProjectFingerprint);
+      expect(source.init.mock.calls[0]![0].metadata).toMatchObject({
+        name: "@zktx.io/say-ur-intent",
+        url: "https://github.com/zktx-mcp/say-ur-intent#readme"
+      });
+    }
     if (message) expect(JSON.stringify(created)).toContain(message);
     expect(created.isError).not.toBe(true);
     const interaction = await call(TOOL_NAMES.sessionGetInteractionStatus);

@@ -17,7 +17,7 @@ Say Ur Intent is tested from a local checkout in this repository state.
 - gRPC and GraphQL: Sui SDK transports used by this runtime for mainnet reads.
 - WalletConnect: the backend's transport for wallet-approved connections and individual transaction requests.
 - stdio: standard input/output, the local transport used by MCP clients to talk to this server.
-- Stelis: the GitHub and npm namespace for this package. Say Ur Intent is the product and runtime name.
+- `@zktx.io`: the npm package scope. `zktx-mcp` is the GitHub organization. Say Ur Intent is the product; `say-ur-intent` is the MCP server name and executable command.
 
 ## Requirements
 
@@ -49,7 +49,7 @@ Wallet-account reads require a wallet connection session created through `sessio
 Use this path when you download the repository from GitHub and want to test the local build:
 
 ```bash
-git clone https://github.com/stelis-dev/say-ur-intent.git
+git clone https://github.com/zktx-mcp/say-ur-intent.git
 cd say-ur-intent
 npm install
 npm run build
@@ -101,12 +101,12 @@ npm run smoke:mainnet
 ## Install from the MCP Registry
 
 If your MCP client can install servers from the
-[MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=say-ur-intent),
-find the `io.github.stelis-dev/say-ur-intent` entry and install it through your
+[MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=say-ur-intent),
+find the `io.github.zktx-mcp/say-ur-intent` entry and install it through your
 client. The resulting stdio server command is equivalent to:
 
 ```sh
-npx -y @stelis/say-ur-intent
+npx -y @zktx.io/say-ur-intent
 ```
 
 Clients that do not install from the registry use the published-package and
@@ -114,16 +114,18 @@ per-client configuration below, which give the exact `command` and `args`.
 
 ## Published Package Setup
 
-`@stelis/say-ur-intent` is on npm; there are two ways to run it. Both start
-the same `say-ur-intent` stdio MCP server; pick based on whether you want
-automatic updates or the fastest, most reliable startup.
+The npm package for this release is `@zktx.io/say-ur-intent`. The commands below
+require the requested version to be published; confirm it with
+`npm view @zktx.io/say-ur-intent@0.4.1 version` before switching. Both installation
+methods start the same `say-ur-intent` stdio MCP server. Use a local checkout when
+working on a version that has not been published.
 
 ### Download on demand (npx, tracks the latest release)
 
 ```json
 {
   "command": "npx",
-  "args": ["-y", "@stelis/say-ur-intent"]
+  "args": ["-y", "@zktx.io/say-ur-intent"]
 }
 ```
 
@@ -135,14 +137,14 @@ server before it connects. If that happens, warm the cache once in a terminal an
 then restart the client:
 
 ```bash
-npx -y @stelis/say-ur-intent
+npx -y @zktx.io/say-ur-intent
 # wait until it logs "review server started", then stop it with Ctrl-C
 ```
 
 ### Install once (global, fastest startup, pinned version)
 
 ```bash
-npm install -g @stelis/say-ur-intent
+npm install -g @zktx.io/say-ur-intent
 ```
 
 ```json
@@ -156,13 +158,40 @@ avoids the cold-start timeout, and it stays on the installed version until you
 update it explicitly:
 
 ```bash
-npm install -g @stelis/say-ur-intent@latest
+npm install -g @zktx.io/say-ur-intent@latest
 ```
 
 The per-client sections below use the `npx` form. To use a global install
 instead, replace the published-package command with `"command": "say-ur-intent"`
 and drop the `args`. On native Windows clients that need `cmd`, wrap either
-command, for example `"command": "cmd", "args": ["/c", "npx", "-y", "@stelis/say-ur-intent"]`.
+command, for example `"command": "cmd", "args": ["/c", "npx", "-y", "@zktx.io/say-ur-intent"]`.
+
+## Switching the Installed Package
+
+These steps cover the 0.4.0-to-0.4.1 package transition, which uses the same
+database format. Confirm the new package version is available before changing
+your client configuration. Keep the same data directory and shared review port
+so the existing settings, wallet connection and stored results remain accessible.
+This package-name change does not require deleting the database or repeating a
+financial request.
+
+Stop the old Say Ur Intent MCP processes in all connected clients and wait for
+the shared backend to exit before starting the new package. Clients with the same runtime
+configuration can otherwise attach to an older backend that is still running.
+If a transaction request is in progress, inspect its state and coordinate a safe
+restart first.
+
+Replace the old registration instead of adding a second one. Use exactly
+`say-ur-intent` for the registration name, and select the intended package version
+in its command arguments, such as `@zktx.io/say-ur-intent@0.4.1`. Do not append an
+environment label, version or numeric suffix. With a global install, verify that
+`say-ur-intent` resolves to the intended installation.
+
+After restarting the clients, call `read.get_server_status` in each. Check
+`packageName`, `version` and `serverName`: they must identify the intended npm
+package and version, with `serverName` equal to `say-ur-intent`. Then inspect the
+existing connection and stored results. This check does not require signing or
+submitting another transaction.
 
 ## Claude Code
 
@@ -181,7 +210,7 @@ Published npm package:
 ```bash
 claude mcp add --transport stdio \
   say-ur-intent \
-  -- npx -y @stelis/say-ur-intent
+  -- npx -y @zktx.io/say-ur-intent
 ```
 
 Claude Code scopes:
@@ -244,7 +273,7 @@ Published npm package:
   "mcpServers": {
     "say-ur-intent": {
       "command": "npx",
-      "args": ["-y", "@stelis/say-ur-intent"]
+      "args": ["-y", "@zktx.io/say-ur-intent"]
     }
   }
 }
@@ -257,7 +286,7 @@ On native Windows, use `cmd /c` if direct `npx` or `node` resolution fails:
   "mcpServers": {
     "say-ur-intent": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "@stelis/say-ur-intent"]
+      "args": ["/c", "npx", "-y", "@zktx.io/say-ur-intent"]
     }
   }
 }
@@ -285,7 +314,7 @@ Published npm package:
 
 ```bash
 codex mcp add say-ur-intent \
-  -- npx -y @stelis/say-ur-intent
+  -- npx -y @zktx.io/say-ur-intent
 ```
 
 Verify with:
@@ -311,7 +340,7 @@ Equivalent `~/.codex/config.toml` entry after npm publication:
 ```toml
 [mcp_servers.say-ur-intent]
 command = "npx"
-args = ["-y", "@stelis/say-ur-intent"]
+args = ["-y", "@zktx.io/say-ur-intent"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 ```
@@ -347,7 +376,7 @@ Published npm package:
   "mcpServers": {
     "say-ur-intent": {
       "command": "npx",
-      "args": ["-y", "@stelis/say-ur-intent"]
+      "args": ["-y", "@zktx.io/say-ur-intent"]
     }
   }
 }
@@ -528,10 +557,9 @@ See [Utility Index](UTILITY_INDEX.md#release-package-check) for prerequisites.
   unknown and are not resubmitted automatically.
 - External proposals remain non-signable. `blocked` refers to that review's
   unmet evidence requirements, not to a hidden fallback signing path.
-- The package is published to npm as `@stelis/say-ur-intent`, so the `npx` and
-  global-install client configs in this guide work directly. A developer
-  checkout (local build) or packed tarball is an option for testing local
-  changes.
+- The `npx` and global-install client configs require a published version of
+  `@zktx.io/say-ur-intent`. A developer checkout or packed tarball tests local
+  changes; its existence does not establish public package availability.
 
 ## Mainnet Read Smoke
 
@@ -636,13 +664,15 @@ If the user supplied a specific Sui address for `read.summarize_wallet_assets` o
 
 ### NPM command returns 404
 
-`@stelis/say-ur-intent` is published to npm, so a 404 is not a "package does not
-exist" state. Treat it as a transient registry/network reachability issue, a
-mistyped package name, or a request for a version that does not exist: confirm
-the spelling, check `npm view @stelis/say-ur-intent version`, retry after any
-registry/proxy outage clears, and ensure no private/alternate npm registry is
-configured. Developer Checkout Setup or `npm run release:check` remains an
-option for testing local changes, not a substitute for an unpublished package.
+A 404 means the requested package or version could not be retrieved from the
+selected registry. Confirm the exact name and version, for example with
+`npm view @zktx.io/say-ur-intent@0.4.1 version --registry=https://registry.npmjs.org`.
+A new version may not have been published or become visible yet; a mistyped name
+or an alternate/private registry can also explain the response. Check the
+publication result and registry configuration before retrying. Do not assume
+that the package exists solely because a local checkout builds successfully.
+Developer Checkout Setup or `npm run release:check` can test local changes;
+neither substitutes for public publication.
 
 ## Client Snippets
 

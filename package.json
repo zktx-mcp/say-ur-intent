@@ -1,7 +1,7 @@
 {
-  "name": "@stelis/say-ur-intent",
-  "version": "0.4.0",
-  "mcpName": "io.github.stelis-dev/say-ur-intent",
+  "name": "@zktx.io/say-ur-intent",
+  "version": "0.4.1",
+  "mcpName": "io.github.zktx-mcp/say-ur-intent",
   "description": "Say Ur Intent is a local-first toolkit for helping AI applications and users inspect Sui DeFi actions before execution.",
   "license": "MIT",
   "type": "module",
@@ -27,12 +27,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/stelis-dev/say-ur-intent.git"
+    "url": "git+https://github.com/zktx-mcp/say-ur-intent.git"
   },
   "bugs": {
-    "url": "https://github.com/stelis-dev/say-ur-intent/issues"
+    "url": "https://github.com/zktx-mcp/say-ur-intent/issues"
   },
-  "homepage": "https://github.com/stelis-dev/say-ur-intent#readme",
+  "homepage": "https://github.com/zktx-mcp/say-ur-intent#readme",
   "publishConfig": {
     "access": "public",
     "tag": "latest"

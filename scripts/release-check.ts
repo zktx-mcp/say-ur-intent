@@ -12,6 +12,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/sdk/shared/p
 import { spawnSync } from "node:child_process";
 import { assertSqliteEngineAvailable } from "../src/core/activity/sqliteActivityStore.js";
 import { MCP_RESOURCES } from "../src/mcp/resources.js";
+import { SERVER_NAME } from "../src/mcp/serverInfo.js";
 
 type PackFile = {
   path: string;
@@ -187,6 +188,16 @@ export async function smokeInstalledRuntime(installDir: string, binPath: string)
     childClosed = new Promise<void>((resolve) => { childTransport.onclose = resolve; });
     await client.connect(transport);
     if (client.getServerVersion()?.version !== manifest.version) throw new Error("Installed server version mismatch.");
+    if (client.getServerVersion()?.name !== SERVER_NAME) throw new Error("Installed server name mismatch.");
+    stage = "MCP package identity";
+    const identityResult = await client.callTool({ name: TOOL_NAMES.readGetServerStatus, arguments: {} });
+    const identity = identityResult.structuredContent as { ok?: boolean; data?: {
+      packageName?: string; version?: string; serverName?: string; network?: string;
+    } } | undefined;
+    if (identityResult.isError || identity?.ok !== true || identity.data?.packageName !== manifest.name ||
+        identity.data.version !== manifest.version || identity.data.serverName !== SERVER_NAME || identity.data.network !== "mainnet") {
+      throw new Error("Installed package identity mismatch.");
+    }
     stage = "MCP tools and resources";
     const tools = await client.listTools();
     for (const name of [TOOL_NAMES.readGetServerStatus, TOOL_NAMES.sessionCreateWalletConnection,
