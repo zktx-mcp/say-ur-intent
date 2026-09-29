@@ -210,7 +210,7 @@ same functionality and retain the local Settings page.
 The unscoped package name and `zktx-dev` destination in the 0.4.0 advance notice
 were superseded by the names above. Existing installations and client settings
 do not move automatically. Before switching, confirm the target release with
-`npm view @zktx.io/say-ur-intent@0.4.2 version`; a repository transfer alone does
+`npm view @zktx.io/say-ur-intent@0.4.3 version`; a repository transfer alone does
 not confirm npm or Registry publication. Keep the MCP registration name and
 executable command exactly `say-ur-intent`, without a suffix. See the
 [setup guide](docs/MCP_SETUP.md#switching-the-installed-package) for the transition.
