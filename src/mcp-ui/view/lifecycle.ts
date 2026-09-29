@@ -108,14 +108,18 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
   }
   function updateChrome(): void {
     const workflow = business ? object(snapshot?.data) : undefined;
-    const readyLabel = workflow?.mode === "review_manage" ? "Manage this transaction request." :
-      object(workflow?.review)?.preparing === true ? "Updating review…" : kind === "connect" ? "" : "Choose the input for this card.";
-    if (snapshot) status.textContent = invalidIdentity ? "Card unavailable" :
-      snapshot.state === "running" ? (business ? (object(workflow?.progress)?.status === "unavailable" ? "Stored request state — progress unavailable" : "Request in progress") : "Reading the requested data…") :
-      snapshot.state === "ready" ? (confirmed && reference ? readyLabel : "Input is unavailable until the current state and permission are confirmed.") :
-      snapshot.reason === "completed" ? (business ? "Stored request state" : "Saved result") : snapshot.error ??
-      (snapshot.reason === "expired" ? "The input period has expired. Request a new card." :
-        snapshot.reason === "server_restarted" ? "The server restarted before this request completed. Request a new card." : "This selection is closed.");
+    if (snapshot) {
+      status.textContent = invalidIdentity ? "Card unavailable" :
+        !confirmed && snapshot.state === "ready" ? "Actions are unavailable until the current state and permission are confirmed." :
+        business ? (object(workflow?.progress)?.status === "unavailable" ? "Current progress is unavailable. The last recorded state is shown." :
+          !workflow?.request && snapshot.state === "closed" && ["expired", "server_restarted", "cancelled"].includes(snapshot.reason ?? "")
+            ? "This card no longer accepts actions. Open a new card to continue." : "") :
+        snapshot.state === "running" ? "Reading the requested data…" :
+        snapshot.reason === "completed" ? "" : snapshot.error ??
+        (snapshot.reason === "expired" ? "The input period has expired. Request a new card." :
+          snapshot.reason === "server_restarted" ? "The server restarted before this request completed. Request a new card." : "");
+    }
+    status.hidden = !status.textContent;
     issue.textContent = [operationError, displayError].filter(Boolean).join(" ");
     // A failed replacement may leave the old input form visible. Its controls
     // must stay disabled even if the current DB state is now closed.

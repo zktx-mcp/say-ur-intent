@@ -17,11 +17,13 @@ textual, keyboard accessible and screen-reader labeled.
 Review primary facts include action, selected account, network, send limit
 (`up to` where relevant), expected/minimum receive, status and next action.
 `assetFlowPreview` display inputs are proposals, never signing quantities.
-Show failed/warning checks beside the decision. Keep raw integer amounts and
+Show the final ReviewState failed/warning checks beside the decision.
+Human-readable evidence-stage explanatory notes precede final checks; retain them
+in labelled preparation details rather than presenting them as current failures. Keep raw integer amounts and
 pinned decimals; display signed net gas without clamping a rebate to zero.
 Review details include quote time, raw min-out policy, gas budget/breakdown,
 simulation effects, object/balance changes and a PTB graph from the same revision.
-PTB source labels, diagnostics, timestamps and name/address controls are facts,
+PTB source labels, timestamps and name/address controls are facts,
 not safety or venue recommendations. No text-copy buttons or clipboard fallbacks.
 
 External proposals show source, action, recipients/targets, freshness, missing
@@ -37,7 +39,7 @@ business-state effect. An initial authenticated DB read is required regardless
 of preview rendering success. Missing permission or unknown DB state disables
 business actions without inventing a terminal state.
 
-Connect shows wallet state and the selected account. It keeps pairing explicit, hides additional pairing while connections or connection operations exist, and uses an in-card target-specific Confirm/Cancel step for disconnection. Confirmation is discarded when the card revision or target changes. Connect shows approved accounts and read context. An explicit connection with
+Connect shows wallet state and the selected account. The connected-wallet overview omits the separate Close action; the disconnection confirmation retains Cancel. It keeps pairing explicit, hides additional pairing while connections or connection operations exist, and uses an in-card target-specific Confirm/Cancel step for disconnection. Confirmation is discarded when the card revision or target changes. Connect shows approved accounts and read context. An explicit connection with
 one approved account can set read context; multiple accounts require selection.
 The stored read context persists separately from default asset-read eligibility. An implicit asset read requires a usable current connection for the selected account; explicit-address reads and stored result reads do not. Clearing read context is not wallet disconnection. Reconciliation alone never
 sets it again. A waiting Connect card displays only the same live pairing QR
@@ -61,7 +63,10 @@ current reads can record its failed update and restore the existing update/cance
 choices. The View never restarts computation to repair a progress display.
 The sign action requires backend-permitted
 ready_for_wallet_review, verified transaction review data, a matching live
-account and the user's wallet selection. Only the backend sends bytes to the
+account and the user's wallet selection. With exactly one current candidate,
+show its wallet and account and use the explicit action button as that selection;
+do not require a dropdown. Multiple candidates require an explicit selection.
+Preparation and wallet approval remain separate actions. Only the backend sends bytes to the
 wallet and verifies its response. A card never reports its own chain result.
 
 Use the backend's preparation choices for account compatibility; do not recreate
@@ -98,7 +103,10 @@ state once; it never resends the action. Read errors stop automatic observation
 and retain previous facts with explicit read recovery. Rendering failures keep
 normal DB observation obligations, preserve previous content, and dispose only
 new failed resources. A rendering failure is not a reason to repeat the business
-query. QR and graph resources are disposed once. Backend-computed remaining
+query. QR and graph resources are disposed once. Review detail graphs are created
+only when their disclosure is opened in the document. Opening details uses the
+same saved facts without a new query or action; delayed renders cannot cross
+transaction identities. Receipt summaries import no graph renderer. Backend-computed remaining
 time triggers a state read, not a client-written expiry reason.
 
 An unadmitted ready Review also uses the backend's `nextStateReadAfterMs` hint
@@ -141,7 +149,7 @@ can remove those records and cannot cancel a transaction on Sui.
 
 ## Internal Read Cards
 
-Account and Receipt targets are established in chat, without card input forms. Missing targets produce a concise input-required message with no card record, source request, permissions or polling. The Account card shows SuiNS, the actual query address, coin totals, Display NFTs, an omitted-object count, fetched time and enumeration limits for an explicit or connection-qualified default address. The Receipt card shows execution outcome, balance changes, net gas, sender, digest and fetched time. Technical input, object, call, event and PTB details are not rendered in this summary view. Review retains its full receipt display and all pre-approval review evidence. The Chart card shows one selected DeepBook USDC pair with official intervals, the UTC period and any result-limit notice. Candle count is not a form field; supplied limits, defaults and shortcut query values remain unchanged. Its initial time axis uses the saved request boundaries; omitted boundaries use available candle times, and a request without either boundary fits the returned candles. Boundary whitespace carries no price or volume. Empty results show the requested range and an explicit no-candles message. These are read-only views; they create no wallet connection, review approval, trading authority, P&L or fiat valuation.
+Account and Receipt targets are established in chat, without card input forms. Missing targets produce a concise input-required message with no card record, source request, permissions or polling. The Account card shows SuiNS when available, the actual query address, coin totals, Display NFTs, an omitted-object count, fetched time and enumeration limits for an explicit or connection-qualified default address. The Receipt card shows execution outcome, balance changes, net gas, sender, digest and fetched time. Technical input, object, call, event and PTB details are not rendered in this summary view. Review leads with the same observed-result summary and retains its full receipt and pre-approval evidence in closed, separately labelled disclosures. Reviewed estimates remain distinct from actual chain results. Internal request IDs, revisions and raw JSON dumps are not display requirements. Important failures, warnings and missing choices remain beside the active decision. The Chart card shows one selected DeepBook USDC pair with official intervals, the UTC period and any result-limit notice. Custom date inputs are secondary to existing range shortcuts, and are expanded when supplied boundaries need inspection. Detailed candle numbers are in an accessible disclosure. Candle count is not a form field; supplied limits, defaults and shortcut query values remain unchanged. Its initial time axis uses the saved request boundaries; omitted boundaries use available candle times, and a request without either boundary fits the returned candles. Boundary whitespace carries no price or volume. Empty results show the requested range and an explicit no-candles message. These are read-only views; they create no wallet connection, review approval, trading authority, P&L or fiat valuation.
 
 All read cards use one SQLite-backed input lifecycle and one View lifecycle. The View inserts a result node before invoking its mount callback. Size-dependent renderers wait for positive layout dimensions, ignore hidden zero-size layouts, and release observers and drawing resources on disposal. Chart resizing preserves the current viewport rather than reapplying the initial query range. Initialization reads the same card record. Chat navigation, frame recreation and teardown do not close input or cancel work. A valid unsubmitted selection remains available; admission or backend expiry ends that original input. A read may finish after its View closes. Completed results are static, remain stored until local data replacement/reset, and do not repeat the source query. A different selection after admission needs a new card.
 
@@ -164,7 +172,12 @@ for shared atoms remain in the shared stylesheet.
 
 ## Language
 
-Use short, direct, non-promotional copy.
+Use short, direct, non-promotional copy. Stable cards do not repeat generic
+"Saved result" or "Stored request state" labels above their actual facts.
+Lifecycle messages describe opening, unavailable current state and recovery;
+renderers describe business facts. Show times in UTC with exact values available.
+Unknown token decimals mean the display amount is unavailable; do not present
+raw integers as user token quantities.
 
 Do not say:
 
@@ -206,7 +219,10 @@ The shared UI follows these durable principles:
    alone.
 2. One consistent system: cards share one lifecycle, one component set, and the
    same element positions. Cards and token pages have no cross-page navigation.
-3. Multi-step pages show their full set of steps and mark the current step.
+3. Cards show the current step and next permitted action without permanently
+   listing every earlier step. A completed transaction leads with its observed
+   result; stored request state is not a second outcome. Settings preview and
+   confirmation requirements are unchanged.
 4. Primary result regions keep their position across data availability and show
    an explicit empty or unavailable state. Technical sections intentionally omitted
    from a summary do not require placeholder regions; the Account summary reports

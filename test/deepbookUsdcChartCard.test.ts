@@ -27,7 +27,7 @@ function prepareLayout() {
   const resizeDisconnect = vi.fn(), themeDisconnect = vi.fn();
   const nodes: { className: string; isConnected: boolean; clientWidth: number; clientHeight: number; append: () => void; replaceChildren: () => void }[] = [];
   vi.stubGlobal("document", { createElement: () => {
-    const node = { className: "", textContent: "", isConnected: false, clientWidth: 0, clientHeight: 0, append() {}, replaceChildren() {} };
+    const node = { className: "", textContent: "", isConnected: false, clientWidth: 0, clientHeight: 0, append() {}, replaceChildren() {}, setAttribute() {} };
     nodes.push(node); return node;
   }, documentElement: {} });
   vi.stubGlobal("getComputedStyle", () => ({ getPropertyValue: () => "#333333" }));
@@ -66,7 +66,7 @@ describe("DeepBook chart input and display", () => {
         candles, candleCount: candles.length, source: { fetchedAt: "2026-07-01T12:00:00.000Z" },
         pair: { baseAsset: { symbol: "SUI" }, quoteAsset: { symbol: "USDC" } } });
       expect(result.query).toEqual(query);
-      expect(chartQueryText(result.query)).toBe("Period (UTC): 2026-06-27T00:00:00.000Z → 2026-06-27T01:00:00.000Z");
+      expect(chartQueryText(result.query)).toBe("Period (UTC): 2026-06-27 00:00:00 UTC → 2026-06-27 01:00:00 UTC");
       const { limit: _limit, ...missingLimit } = result.query;
       expect(chartResultSchema.safeParse({ ...result, query: missingLimit }).success).toBe(false);
     }
@@ -74,8 +74,8 @@ describe("DeepBook chart input and display", () => {
   it("keeps omitted UTC boundaries explicit instead of filling them with current or candle times", () => {
     const query = { poolName: "SUI_USDC", interval: "15m", limit: 500 };
     expect(chartQueryText(query)).toBe("Recent candles · UTC");
-    expect(chartQueryText({ ...query, startTimeMs: 1782518400000 })).toBe("Period (UTC): 2026-06-27T00:00:00.000Z → not specified");
-    expect(chartQueryText({ ...query, endTimeMs: 1782522000000 })).toBe("Period (UTC): not specified → 2026-06-27T01:00:00.000Z");
+    expect(chartQueryText({ ...query, startTimeMs: 1782518400000 })).toBe("Period (UTC): 2026-06-27 00:00:00 UTC → not specified");
+    expect(chartQueryText({ ...query, endTimeMs: 1782522000000 })).toBe("Period (UTC): not specified → 2026-06-27 01:00:00 UTC");
     // The source query accepts safe integer milliseconds, including values
     // outside Date's ISO range. Keep that value visible without inventing a date.
     expect(chartQueryText({ ...query, startTimeMs: 9007199254740991 })).toBe("Period (UTC): 9007199254740991 milliseconds since 1970-01-01T00:00:00Z → not specified");

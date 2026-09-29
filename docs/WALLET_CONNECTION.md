@@ -70,6 +70,12 @@ financial request is replayed when reading or recovering results.
 
 ## Transaction approval
 
+A single available wallet/account is displayed without a selection dropdown.
+The explicit review or approval button selects that displayed target. Multiple
+candidates require a selection; the card never chooses the first one silently.
+Displaying the card does not start preparation or a wallet request. Backend
+account, connection, revision and material checks remain authoritative.
+
 An existing review keeps its original account binding. Preparing or updating it
 requires that account to be the selected read account as well as an approved
 account on the chosen connection. If read context changes from A to B, select A

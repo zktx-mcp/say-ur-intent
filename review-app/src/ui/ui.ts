@@ -1,11 +1,5 @@
-// Shared atomic UI components, built as vanilla TypeScript DOM helpers paired
-// with the shared stylesheet. Every page composes these instead of defining its
-// own component CSS. The stylesheet itself ships as a stable static asset
-// (`review-app/public/ui.css`, served at `/review-assets/ui.css`) and is linked
-// from each page's <head>, so it is not bundled per entry and is never
-// code-split into an unlinked chunk.
-
-import { shortAddress, shortHex } from "../format.js";
+// Shared atoms for internal cards and the remaining Settings page.
+import { shortHex, formatUtc } from "../format.js";
 
 export function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -156,95 +150,11 @@ export function row(label: string, value: string | Node): HTMLElement {
   return node;
 }
 
-export function sectionTitle(text: string): HTMLElement {
-  return element("div", "ui-section-title", text);
-}
-
-export function badge(text: string): HTMLElement {
-  return element("span", "ui-badge", text);
-}
-
-export type PillKind = "neutral" | "ok" | "warn" | "danger";
-
-export function pill(text: string, kind: PillKind = "neutral"): HTMLElement {
-  const suffix = kind === "ok" ? " ui-pill--ok" : kind === "warn" ? " ui-pill--warn" : kind === "danger" ? " ui-pill--danger" : "";
-  return element("span", `ui-pill${suffix}`, text);
-}
-
-// Selectable chip (toggle button). The label stays legible in every state and
-// both themes: an unselected chip uses the normal text color, never relying on
-// the selected-state color for legibility.
-export function chip(
-  label: string,
-  options: { selected?: boolean; disabled?: boolean; size?: "sm"; onClick?: () => void } = {}
-): HTMLButtonElement {
-  const node = document.createElement("button");
-  node.type = "button";
-  const classes = ["ui-chip"];
-  if (options.selected) {
-    classes.push("ui-chip--selected");
-  }
-  if (options.size === "sm") {
-    classes.push("ui-chip--sm");
-  }
-  node.className = classes.join(" ");
-  node.textContent = label;
-  node.setAttribute("aria-pressed", options.selected ? "true" : "false");
-  if (options.disabled) {
-    node.disabled = true;
-  }
-  if (options.onClick) {
-    node.addEventListener("click", options.onClick);
-  }
-  return node;
-}
-
-// A connected/bound wallet shown compactly: optional wallet name + the shortened
-// address (full address on hover). Shared by the Connect page and the review header.
-export function walletChip(options: {
-  address: string;
-  walletName?: string;
-  signerStatus?: "ready" | "settling" | "idle";
-}): HTMLElement {
-  const node = element("span", "ui-wallet-chip");
-  if (options.signerStatus) {
-    // A small leading dot reflects whether the browser signer is ready for the
-    // signing step (ready = matches the bound account, settling = reconnecting,
-    // idle = none). Decorative: where readiness actually matters it is also stated
-    // in text (the signing section), so the dot carries no aria role here.
-    const dot = element("span", "ui-wallet-chip-dot");
-    if (options.signerStatus !== "ready") {
-      dot.classList.add(`ui-wallet-chip-dot--${options.signerStatus}`);
-    }
-    dot.setAttribute("aria-hidden", "true");
-    node.append(dot);
-  }
-  if (options.walletName) {
-    node.append(element("span", "ui-wallet-chip-name", options.walletName));
-  }
-  node.append(mono(shortAddress(options.address)));
-  // The visible value is shortened; the full address stays available to assistive
-  // tech and on hover (callers that need it visible/copyable render it separately).
-  node.title = options.address;
-  node.setAttribute("aria-label", options.walletName ? `${options.walletName} ${options.address}` : options.address);
-  return node;
-}
-
-// A badge marking a page opened from the user's AI client (the token pages). The
-// label is passed in (i18n) so the atom carries no copy.
-export function agentOriginBadge(label: string): HTMLElement {
-  return element("span", "ui-agent-badge", label);
-}
-
 export type StatusKind = "success" | "failure" | "pending" | "neutral";
 
-// Single source for the shared check and close glyphs. The status banner, the modal
-// close button, and (CHECK_ICON, exported) the PTB graph card's copy-success state all
-// reuse these, so the same path is never hand-written in two places.
-export const CHECK_ICON =
+// Shared outcome glyphs.
+const CHECK_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
-export const COPY_ICON =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
 const CLOSE_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
@@ -327,27 +237,6 @@ export function accordion(summaryText: string, open = false): { details: HTMLDet
   return { details, body };
 }
 
-// Centered modal dialog. The caller renders the returned overlay only while open,
-// so closing is the caller clearing its open flag and re-rendering; click-outside
-// and the close button both invoke onClose. Append page content to `body`.
-export function modal(options: { title: string; onClose: () => void }): { overlay: HTMLElement; body: HTMLElement } {
-  const overlay = element("div", "ui-modal");
-  overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-modal", "true");
-  const dialog = element("div", "ui-modal-dialog");
-  const head = element("div", "ui-modal-head");
-  head.append(element("h2", "ui-modal-title", options.title), iconButton(CLOSE_ICON, "Close", options.onClose));
-  const body = element("div", "ui-modal-body");
-  dialog.append(head, body);
-  overlay.append(dialog);
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay) {
-      options.onClose();
-    }
-  });
-  return { overlay, body };
-}
-
 export type FeedbackKind = "ok" | "error";
 
 // Result/error feedback tied to an action: persistent (it stays until the next
@@ -369,90 +258,9 @@ export function placeholder(message: string): HTMLElement {
   return element("div", "ui-placeholder", message);
 }
 
-// Shimmering placeholder bar shown before the first query or while content loads,
-// so a page is never blank. Decorative, so hidden from assistive tech.
-export function skeleton(options: { variant?: "title" | "line" | "block"; width?: "40" | "60" | "80" } = {}): HTMLElement {
-  const width = options.width ? ` ui-skeleton--w${options.width}` : "";
-  const node = element("div", `ui-skeleton ui-skeleton--${options.variant ?? "line"}${width}`);
-  node.setAttribute("aria-hidden", "true");
-  return node;
-}
-
-// Prompt shown with an empty/loading skeleton: the readable instruction (what to
-// enter) or status (loading) over the quiet ghost.
-export function skeletonHint(text: string): HTMLElement {
-  return element("div", "ui-skeleton-hint", text);
-}
-
-// A label/value pair of skeleton bars matching the .ui-row grid, for previewing a
-// key/value section while it loads.
-export function skeletonRow(): HTMLElement {
-  const node = element("div", "ui-skeleton-row");
-  node.setAttribute("aria-hidden", "true");
-  node.append(
-    element("div", "ui-skeleton ui-skeleton--line ui-skeleton--w40"),
-    element("div", "ui-skeleton ui-skeleton--line")
-  );
-  return node;
-}
-
-export function h1(text: string): HTMLElement {
-  return element("h1", "ui-h1", text);
-}
-
-export function subtitle(text: string): HTMLElement {
-  return element("p", "ui-subtitle", text);
-}
-
 // Quiet boundary/scope note (tier T4).
 export function note(text: string): HTMLElement {
   return element("p", "ui-note", text);
-}
-
-export type WarningToastTone = "warning" | "error" | "info";
-
-// An alert toast: a tone-coloured bar carrying one warning/error/info message. It is
-// placed by the caller per the UI's toast policy — between a card's head and its
-// content when the alert belongs to that card, or directly under the page header
-// when it concerns the whole view — never as a bare line floating between cards.
-export function warningToast(tone: WarningToastTone, message: string): HTMLElement {
-  const node = element("div", `ui-toast ui-toast--${tone}`, message);
-  node.setAttribute("role", "status");
-  node.setAttribute("aria-live", "polite");
-  return node;
-}
-
-// Page footer: the consistent bottom slot for a page's boundary/disclaimer notes,
-// so every page carries its scope statement in the same place and style.
-export function footer(notes: string[]): HTMLElement {
-  const node = element("footer", "ui-footer");
-  for (const text of notes) {
-    node.append(note(text));
-  }
-  return node;
-}
-
-// Page header: title + description on the left, an optional control (e.g. a search
-// field) aligned to the right; stacks on narrow widths. One layout for every
-// title-with-search page.
-export function pageHeader(options: { title: string; lede: string; ledeTip?: string; aside?: HTMLElement }): HTMLElement {
-  const head = element("div", "ui-page-head");
-  const lead = element("div", "ui-page-head-main");
-  lead.append(h1(options.title));
-  const lede = element("p", "ui-subtitle");
-  if (options.ledeTip) {
-    lede.append(`${options.lede} `, info(options.ledeTip));
-  } else {
-    lede.textContent = options.lede;
-  }
-  lead.append(lede);
-  head.append(lead);
-  if (options.aside) {
-    const aside = element("div", "ui-page-head-aside");
-    aside.append(options.aside);
-    head.append(aside);
-  }
-  return head;
 }
 
 // Monospace span for ids, addresses, and digests.
@@ -469,6 +277,14 @@ export function monoShort(value: string): HTMLElement {
   return node;
 }
 
+export function timeValue(value: string): HTMLElement {
+  const node = element("time", undefined, formatUtc(value));
+  node.dateTime = value;
+  node.title = value;
+  node.setAttribute("aria-label", value);
+  return node;
+}
+
 // Inline info marker. Keeps the visible copy minimal while the full detail is a
 // hover/focus tooltip (and is exposed to assistive tech via aria-label).
 export function info(detail: string): HTMLElement {
@@ -478,78 +294,4 @@ export function info(detail: string): HTMLElement {
   node.setAttribute("role", "img");
   node.tabIndex = 0;
   return node;
-}
-
-// Single source for copy-to-clipboard with transient confirmation. Wired onto any
-// button element so the shared copyButton atom and not-yet-migrated pages (which
-// style their own bare button) share one behavior. Restores the button's prior
-// label after the confirmation.
-export function copyToClipboard(target: HTMLButtonElement, getText: () => string, copiedLabel: string): void {
-  const idle = target.textContent ?? "";
-  void navigator.clipboard
-    .writeText(getText())
-    .then(() => {
-      target.textContent = copiedLabel;
-      target.disabled = true;
-      window.setTimeout(() => {
-        target.textContent = idle;
-        target.disabled = false;
-      }, 1500);
-    })
-    .catch(() => {
-      // Clipboard unavailable; leave the button unchanged.
-    });
-}
-
-// Secondary button that copies text to the clipboard and briefly confirms. The
-// text is produced lazily so the caller serializes current state at click time.
-export function copyButton(label: string, getText: () => string, copiedLabel: string): HTMLButtonElement {
-  const node = button(label, () => copyToClipboard(node, getText, copiedLabel), "secondary");
-  return node;
-}
-
-// A copy action as a title-bar icon (copy → check confirmation), for card heads where a
-// full-width text button would be too heavy. Shares the COPY/CHECK icons with the graph card.
-export function copyIconButton(getText: () => string, ariaLabel: string): HTMLButtonElement {
-  const node = iconButton(COPY_ICON, ariaLabel, () => {
-    void navigator.clipboard
-      .writeText(getText())
-      .then(() => {
-        node.innerHTML = CHECK_ICON;
-        setTimeout(() => {
-          node.innerHTML = COPY_ICON;
-        }, 1500);
-      })
-      .catch(() => window.prompt(ariaLabel, getText()));
-  });
-  return node;
-}
-
-const SEARCH_ICON =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>';
-
-// Search field: one control with the input and a magnifier button inside it on
-// the right. `onSearch` fires on the button or Enter.
-export function searchField(options: {
-  value?: string;
-  placeholder?: string;
-  ariaLabel: string;
-  onSearch: (value: string) => void;
-}): HTMLElement {
-  const wrap = element("div", "ui-search");
-  const control = input({ value: options.value ?? "", placeholder: options.placeholder ?? "" });
-  control.spellcheck = false;
-  const submit = document.createElement("button");
-  submit.type = "button";
-  submit.className = "ui-search-btn";
-  submit.setAttribute("aria-label", options.ariaLabel);
-  submit.innerHTML = SEARCH_ICON;
-  submit.addEventListener("click", () => options.onSearch(control.value));
-  control.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      options.onSearch(control.value);
-    }
-  });
-  wrap.append(control, submit);
-  return wrap;
 }

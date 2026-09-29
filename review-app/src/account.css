@@ -2,14 +2,8 @@
    module (ui.css); this file declares no `.ui-*` rule and no bare interactive
    element rule. */
 
-.account-actions {
-  margin-top: 14px;
-  display: flex;
-  justify-content: flex-end;
-}
-
 /* One coin's holdings as a list item: symbol on the left, total on the right with
-   an info marker whose tooltip shows the held-as split (object vs account). */
+   a verified total without storage-format breakdowns. */
 .account-asset {
   display: flex;
   justify-content: space-between;

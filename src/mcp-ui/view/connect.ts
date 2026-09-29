@@ -1,7 +1,7 @@
 import QRCode from "qrcode";
 import { workflowViewSchema, type WorkflowView } from "../../core/session/workflowView.js";
 import type { CardSnapshot, CardWalletDisplay } from "../contracts.js";
-import { card, element, row, monoShort } from "../../../review-app/src/ui/ui.js";
+import { card, element, row, monoShort, button, field, select, timeValue } from "../../../review-app/src/ui/ui.js";
 import type { CardRenderer } from "./lifecycle.js";
 import "./workflow.css";
 
@@ -19,21 +19,19 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
   const available = connected.filter((connection) => connection.pendingAction === undefined);
   const pending = data.connections.some((connection) => connection.status === "awaiting_approval" || connection.pendingAction === "disconnect");
   const action = (label: string, input: Record<string, unknown>) => {
-    const button = document.createElement("button"); button.type = "button"; button.textContent = label;
-    button.dataset.cardAction = String(input.action); button.disabled = !act;
-    button.addEventListener("click", () => { if (!disposed) act?.(input); }); return button;
+    const control = button(label, () => { if (!disposed) act?.(input); }, input.action === "disconnect" ? "danger" : input.action === "connect" ? "primary" : "secondary");
+    control.dataset.cardAction = String(input.action); control.disabled = !act; return control;
   };
   facts.append(row("Network", "Sui · Mainnet"));
   const status = row(data.walletAvailability.status === "unavailable" ? "Last recorded status" : "Status",
-    data.connection ? connectionLabels[data.connection.status] : connected.length ? "Wallet connected" : data.walletAvailability.status === "unavailable" ? "Connection not confirmed" : "No wallet connected");
+    pending && connected.some((item) => item.pendingAction === "disconnect") ? "Disconnecting wallet…" : data.connection ? connectionLabels[data.connection.status] : connected.length ? "Wallet connected" : data.walletAvailability.status === "unavailable" ? "Connection not confirmed" : "No wallet connected");
   status.setAttribute("role", "status"); facts.append(status);
   if (data.walletAvailability.status === "unavailable") {
     facts.append(element("p", "ui-note", "The wallet connection cannot be checked right now. Restart the apps using Say Ur Intent, then try again."));
     if (data.connection && !connected.some((connection) => connection.connectionId === data.connection!.connectionId)) {
-      facts.append(row("Last updated", data.connection.updatedAt));
+      facts.append(row("Last updated", timeValue(data.connection.updatedAt)));
     }
   }
-  if (pending && connected.some((connection) => connection.pendingAction === "disconnect")) facts.append(element("p", "ui-note", "Disconnecting wallet…"));
   if (data.connection?.reason) facts.append(element("p", "ui-note", data.connection.reason));
   if (data.activeAccount && connected.some((connection) => connection.accounts.some((account) => account !== data.activeAccount))) {
     facts.append(row("Selected account", monoShort(data.activeAccount)));
@@ -43,40 +41,36 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
 
   const choices = available.flatMap((connection) => connection.accounts.map((account) => ({ connection, account })));
   if (data.allowedActions.includes("use_account") && choices.some((choice) => choice.account !== data.activeAccount)) {
-    const form = document.createElement("form"), select = document.createElement("select");
-    select.className = "workflow-select"; select.required = true; select.setAttribute("aria-label", "Account to use");
-    const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "Select an account"; select.append(placeholder);
-    for (const choice of choices) {
-      const option = document.createElement("option"); option.value = `${choice.connection.connectionId}:${choice.account}`;
-      option.textContent = `${choice.connection.walletName ?? "Wallet"} · ${choice.account}`; select.append(option);
-    }
-    const use = document.createElement("button"); use.type = "submit"; use.textContent = "Use account"; use.dataset.cardAction = "use_account";
-    form.append(select, use); form.addEventListener("submit", (event) => {
-      event.preventDefault(); const choice = choices.find((item) => `${item.connection.connectionId}:${item.account}` === select.value);
+    const form = document.createElement("form"), choiceInput = select({ choices: [{ value: "", label: "Select an account" }, ...choices.map((choice) => ({ value: `${choice.connection.connectionId}:${choice.account}`, label: `${choice.connection.walletName ?? "Wallet"} · ${choice.account}` }))] });
+    form.className = "ui-form";
+    choiceInput.required = true; choiceInput.setAttribute("aria-label", "Account to use");
+    const use = button("Use account", () => undefined); use.type = "submit"; use.dataset.cardAction = "use_account";
+    form.append(field("Account", choiceInput), use); form.addEventListener("submit", (event) => {
+      event.preventDefault(); const choice = choices.find((item) => `${item.connection.connectionId}:${item.account}` === choiceInput.value);
       if (!disposed && choice) act?.({ action: "use_account", connectionId: choice.connection.connectionId, account: choice.account });
     }); facts.append(form);
   }
   for (const connection of connected) {
-    const item = card(connection.walletName ?? "Connected wallet");
-    if (data.walletAvailability.status === "unavailable") item.append(row("Last updated", connection.updatedAt));
-    for (const account of connection.accounts) item.append(row("Account", monoShort(account)));
+    const item = element("div");
+    if (data.walletAvailability.status === "unavailable") item.append(row("Last updated", timeValue(connection.updatedAt)));
+    for (const account of connection.accounts) item.append(row(connection.walletName ?? "Wallet", monoShort(account)));
     if (!connection.pendingAction && data.allowedActions.includes("disconnect")) {
       const controls = element("div", "card-actions");
-      const open = document.createElement("button"); open.type = "button"; open.textContent = "Disconnect"; open.dataset.cardAction = "disconnect"; open.disabled = !act;
+      const open = button("Disconnect", () => undefined, "secondary"); open.dataset.cardAction = "disconnect"; open.disabled = !act;
       open.addEventListener("click", () => {
         if (disposed) return;
         const original = [...node.children];
         const confirmation = card("Disconnect wallet?");
         confirmation.append(row("Wallet", connection.walletName ?? "Wallet"), row("Network", "Sui · Mainnet"));
         for (const account of connection.accounts) confirmation.append(row("Account", monoShort(account)));
-        const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel";
+        const cancel = button("Cancel", () => undefined, "secondary");
         cancel.addEventListener("click", () => { if (!disposed) node.replaceChildren(...original); });
         confirmation.append(action("Confirm disconnect", { action: "disconnect", connectionId: connection.connectionId }), cancel);
         node.replaceChildren(confirmation);
       });
       controls.append(open); item.append(controls);
     }
-    node.append(item);
+    facts.append(item);
   }
   let canvas: HTMLCanvasElement | undefined;
   if (data.connection?.status === "awaiting_approval" && data.walletAvailability.status === "available") {
@@ -87,7 +81,7 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
     } else facts.append(element("p", "ui-note", "The QR code is unavailable. Reopen this same card to check the connection."));
   }
   if (data.allowedActions.includes("stop_connection")) facts.append(action("Stop waiting", { action: "stop_connection" }));
-  if (data.allowedActions.includes("cancel")) facts.append(action("Close", { action: "cancel" }));
+  if (!connected.length && data.allowedActions.includes("cancel")) facts.append(action("Close", { action: "cancel" }));
   return { node, mount: () => {
     if (canvas && wallet) void QRCode.toCanvas(canvas, wallet.pairingUri).catch(() => {
       if (!disposed) facts.append(element("p", "ui-error", "The QR code could not be displayed. Reopen this same card."));

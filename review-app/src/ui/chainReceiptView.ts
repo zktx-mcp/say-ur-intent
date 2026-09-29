@@ -1,152 +1,37 @@
-// Shared on-chain receipt view: the verified facts for one transaction digest,
-// composed from shared atoms. Both the internal Receipt card and the
-// review page's post-sign Result state render this same component from the same
-// `PublicChainReceipt`. Standalone receipts may omit the technical detail;
-// review results retain the full evidence display. It renders the display only — the page owns its own surrounding chrome,
-// and the loading/error states.
-
-import type {
-  PublicChainReceipt,
-  PublicChainReceiptBalanceChange,
-  PublicChainReceiptEvent,
-  PublicChainReceiptGas,
-  PublicChainReceiptInput
-} from "../../../src/core/action/suiChainReceiptReader.js";
+// Detailed chain facts used only by the Review disclosure. The standalone
+// Receipt imports the graph-free summary module instead.
+import type { PublicChainReceipt, PublicChainReceiptEvent, PublicChainReceiptInput } from "../../../src/core/action/suiChainReceiptReader.js";
 import type { SuiChainReceiptPackageCall } from "../../../src/core/action/suiChainReceiptEvidence.js";
-import { accordion, card, detailItem, element, info, mono, monoShort, note, placeholder, row, statusBanner } from "./ui.js";
+import { accordion, element, detailItem, mono, placeholder, row } from "./ui.js";
 import { ptbGraphCard } from "./ptbDiagram.js";
-import { qualifiedName, shortHex, shortType, signedRawToDisplay, suiAmount, typeName } from "../format.js";
+import { qualifiedName, shortHex, shortType, suiAmount, typeName } from "../format.js";
 import { t } from "../i18n/i18n.js";
 
-// Receipt layout: observed outcome → balance changes (in decimals)
-// → gas → PTB graph (the left-to-right centerpiece, placeholder when none) →
-// collapsed accordions (inputs, Move calls, object changes, events).
-export function chainReceiptView(receipt: PublicChainReceipt, options: { summary?: boolean } = {}): HTMLElement {
-  const wrap = element("div", "ui-chain-receipt");
-  const success = receipt.effectsStatus.success;
-
-  // Card — overview: independent chain outcome and its observation context.
-  const overview = card(t.receipt.facts);
-  overview.append(statusBanner(success ? "success" : "failure", success ? t.receipt.success : t.receipt.failure));
-  if (!success && receipt.effectsStatus.errorMessage) {
-    overview.append(row(t.receipt.error, receipt.effectsStatus.errorMessage));
+export function chainReceiptDetails(receipt: PublicChainReceipt): HTMLElement {
+  const node = element("div");
+  for (const item of gasRows(receipt.gas)) node.append(item);
+  if (receipt.gas.budgetMist !== undefined) node.append(row(t.receipt.gasBudget, suiAmount(receipt.gas.budgetMist)));
+  if (receipt.gas.priceMist !== undefined) node.append(row(t.receipt.gasPrice, `${receipt.gas.priceMist} MIST`));
+  if (receipt.gas.paymentObjectId !== undefined) node.append(row(t.receipt.gasPayment, mono(receipt.gas.paymentObjectId)));
+  if (receipt.balanceChanges.length) {
+    const balances = accordion("Balance change records");
+    for (const change of receipt.balanceChanges) balances.body.append(detailItem({
+      title: change.symbol ?? typeName(change.coinType), trailing: `${change.amountRaw} raw units`,
+      metas: [{ label: "Account", value: change.address }, { value: change.coinType }]
+    }));
+    node.append(balances.details);
   }
-  if (receipt.sender) {
-    overview.append(row(t.receipt.sender, monoShort(receipt.sender)));
-  }
-  overview.append(row(t.receipt.checkedAt, receipt.fetchedAt));
-  if (options.summary) overview.append(row("Transaction hash", monoShort(receipt.txDigest)));
-  wrap.append(overview);
-
-  // Card — balance changes (signed, in decimals when resolved, up/down tinted).
-  const balances = card(t.receipt.balanceChanges);
-  if (receipt.balanceChanges.length === 0) {
-    balances.append(placeholder(t.receipt.noBalanceChanges));
-  } else {
-    for (const change of receipt.balanceChanges) {
-      balances.append(balanceChangeItem(change, receipt.sender, options.summary));
-    }
-  }
-  wrap.append(balances);
-
-  // Card — gas (always SUI, known decimals).
-  const gasCard = card(t.receipt.gas);
-  gasCard.append(options.summary ? row(t.receipt.gasTotal, suiAmount(receipt.gas.totalMist)) : gasSection(receipt.gas));
-  wrap.append(gasCard);
-  if (options.summary) return wrap;
-
-  // The shared Transaction graph card (name/address toggle); a
-  // placeholder card holds the same slot when the transaction has no renderable graph.
-  if (receipt.ptbGraph) {
-    wrap.append(
-      ptbGraphCard({ source: "receipt", mermaid: receipt.ptbGraph.mermaid })
-    );
-  } else {
-    const graphCard = infoTitleCard(t.receipt.graph, t.receipt.graphTip);
-    graphCard.append(placeholder(t.receipt.noGraph));
-    wrap.append(graphCard);
-  }
-
-  // Card — the detailed on-chain records (inputs, Move calls, object changes, events) grouped as
-  // nested sliding lists under one titled card with a short note, so the technical breakdown sits
-  // together rather than as four loose top-level disclosures. Being nested, the lists pick up the
-  // square-corner treatment (rounded card, square inner lists).
-  const records = card(t.receipt.records);
-  records.append(row(t.receipt.digest, mono(receipt.txDigest)), note(t.receipt.recordsTip));
-  records.append(inputsAccordion(receipt.inputs));
-  records.append(moveCallsAccordion(receipt.packageCalls));
-  records.append(objectChangesAccordion(receipt.objectTypes));
-  records.append(eventsAccordion(receipt.events));
-  wrap.append(records);
-
-  return wrap;
-}
-
-// A card whose title carries an info tooltip (the graph note).
-function infoTitleCard(titleText: string, tip: string): HTMLElement {
-  const node = card();
-  const head = element("h2", "ui-card-head");
-  head.append(`${titleText} `, info(tip));
-  node.append(head);
+  if (receipt.ptbGraph) node.append(ptbGraphCard({ source: "receipt", mermaid: receipt.ptbGraph.mermaid }));
+  else node.append(placeholder("Input values or the transaction graph may be unavailable; missing details do not mean the transaction had no inputs."));
+  node.append(inputsAccordion(receipt.inputs), moveCallsAccordion(receipt.packageCalls),
+    objectChangesAccordion(receipt.objectTypes), eventsAccordion(receipt.events));
   return node;
 }
 
-function balanceChangeItem(change: PublicChainReceiptBalanceChange, sender: string | undefined, summary = false): HTMLElement {
-  const symbol = change.symbol ?? typeName(change.coinType);
-  // The raw amount already carries the sign for a decrease; an increase gets an
-  // explicit "+" so direction reads at a glance (with the up/down tint below).
-  const magnitude =
-    change.decimals !== undefined ? signedRawToDisplay(change.amountRaw, change.decimals) : change.amountRaw;
-  const amount = change.direction === "increase" ? `+${magnitude}` : magnitude;
-  if (summary) {
-    const item = row(symbol, change.decimals === undefined ? "Amount unavailable" : amount);
-    if (change.address !== sender) item.append(row(t.receipt.account, monoShort(change.address)));
-    return item;
-  }
-  const metas: Array<{ label?: string; value: string; full?: string }> = [
-    { value: shortType(change.coinType), full: change.coinType }
-  ];
-  if (change.address !== sender) {
-    metas.push({ label: t.receipt.account, value: shortHex(change.address), full: change.address });
-  }
-  return change.direction === "zero"
-    ? detailItem({ title: symbol, trailing: amount, metas })
-    : detailItem({ title: symbol, trailing: amount, trailingTone: change.direction === "increase" ? "up" : "down", metas });
-}
-
-// Shared gas-cost rows (Total fee / Computation / Storage / Storage rebate) for the receipt
-// gas section and the review's Transaction details, so the labels and the "<n> SUI" idiom
-// live in one place. Callers pass pre-named mist values: the receipt uses its
-// PublicChainReceiptGas fields; the review passes its simulation net total + components.
-export function gasRows(gas: {
-  totalMist: string;
-  computationMist: string;
-  storageMist: string;
-  storageRebateMist: string;
-}): HTMLElement[] {
-  return [
-    row(t.receipt.gasTotal, suiAmount(gas.totalMist)),
-    row(t.receipt.gasComputation, suiAmount(gas.computationMist)),
-    row(t.receipt.gasStorage, suiAmount(gas.storageMist)),
-    row(t.receipt.gasRebate, suiAmount(gas.storageRebateMist))
-  ];
-}
-
-function gasSection(gas: PublicChainReceiptGas): HTMLElement {
-  const wrap = element("div", "ui-chain-receipt-gas");
-  for (const gasRow of gasRows(gas)) {
-    wrap.append(gasRow);
-  }
-  if (gas.budgetMist !== undefined) {
-    wrap.append(row(t.receipt.gasBudget, suiAmount(gas.budgetMist)));
-  }
-  if (gas.priceMist !== undefined) {
-    wrap.append(row(t.receipt.gasPrice, `${gas.priceMist} MIST`));
-  }
-  if (gas.paymentObjectId !== undefined) {
-    wrap.append(row(t.receipt.gasPayment, monoShort(gas.paymentObjectId)));
-  }
-  return wrap;
+// Total is already in the primary summary; this disclosure shows components.
+export function gasRows(gas: { computationMist: string; storageMist: string; storageRebateMist: string }): HTMLElement[] {
+  return [row(t.receipt.gasComputation, suiAmount(gas.computationMist)),
+    row(t.receipt.gasStorage, suiAmount(gas.storageMist)), row(t.receipt.gasRebate, suiAmount(gas.storageRebateMist))];
 }
 
 function inputsAccordion(inputs: PublicChainReceiptInput[]): HTMLElement {

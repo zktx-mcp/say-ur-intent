@@ -9,16 +9,14 @@ describe("wallet asset row formatting", () => {
       unit: { status: "available", decimals: 9, symbol: "SUI", name: "Sui" },
       display: { amount: "1.180514208", symbol: "SUI", source: "raw_balance_with_verified_decimals" }
     };
-    // No coinBalance/addressBalance on this entry, so the held-as split is absent.
+    // The display quantity is grounded in verified decimals.
     expect(formatWalletAssetRow(entry)).toEqual({
       symbol: "SUI",
-      total: "1.180514208",
-      object: undefined,
-      account: undefined
+      total: "1.180514208"
     });
   });
 
-  it("splits object-held and account-held balances when the server provides them", () => {
+  it("shows the total without storage-format breakdowns", () => {
     const entry = {
       balance: "1426505546346",
       coinType: "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
@@ -29,13 +27,11 @@ describe("wallet asset row formatting", () => {
     };
     expect(formatWalletAssetRow(entry)).toEqual({
       symbol: "SUI",
-      total: "1426.505546346",
-      object: "1426.505546346",
-      account: "0"
+      total: "1426.505546346"
     });
   });
 
-  it("formats a non-zero account balance from its raw amount with the coin decimals", () => {
+  it("formats the total of object and address balances using verified decimals", () => {
     const entry = {
       balance: "3000000",
       coinType: "0xb::usdc::USDC",
@@ -46,13 +42,11 @@ describe("wallet asset row formatting", () => {
     // No display block: the total is computed from the raw balance with the decimals.
     expect(formatWalletAssetRow(entry)).toEqual({
       symbol: "USDC",
-      total: "3",
-      object: "1",
-      account: "2"
+      total: "3"
     });
   });
 
-  it("falls back to the raw balance and omits the split when the unit is unavailable", () => {
+  it("reports the token amount as unavailable when decimals are unverified", () => {
     const entry = {
       balance: "4344929000",
       coinType: "0x356a26eb9e012a68958082340d4c4116e7f55615cf27affcff209cf0ae544f59::wal::WAL",
@@ -60,12 +54,10 @@ describe("wallet asset row formatting", () => {
       addressBalance: "0",
       unit: { status: "unavailable", reason: "coin_metadata_unavailable" }
     };
-    // Without decimals the split would be a misleading raw integer, so it is omitted.
+    // Raw 4344929000 does not establish a display quantity without decimals.
     expect(formatWalletAssetRow(entry)).toEqual({
       symbol: "WAL",
-      total: "raw 4344929000",
-      object: undefined,
-      account: undefined
+      total: "Amount unavailable"
     });
   });
 
@@ -73,27 +65,21 @@ describe("wallet asset row formatting", () => {
     const entry = { balance: "5", coinType: "0xabc::foo::FOO", unit: { status: "available", symbol: "FOOBAR" } };
     expect(formatWalletAssetRow(entry)).toEqual({
       symbol: "FOOBAR",
-      total: "raw 5",
-      object: undefined,
-      account: undefined
+      total: "Amount unavailable"
     });
   });
 
   it("reports amount unavailable when neither a display amount nor a raw balance is present", () => {
     expect(formatWalletAssetRow({ coinType: "0xabc::foo::FOO" })).toEqual({
       symbol: "FOO",
-      total: "amount unavailable",
-      object: undefined,
-      account: undefined
+      total: "Amount unavailable"
     });
   });
 
   it("uses a generic label when even the coin type is missing", () => {
     expect(formatWalletAssetRow({ balance: "9" })).toEqual({
       symbol: "(unknown coin)",
-      total: "raw 9",
-      object: undefined,
-      account: undefined
+      total: "Amount unavailable"
     });
   });
 

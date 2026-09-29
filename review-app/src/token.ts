@@ -1,5 +1,4 @@
-// Shared per-session bearer-token reader for token-gated pages (Connect,
-// Settings, Review & Execution). The token is the URL fragment value after "#";
+// Bearer-token reader for the remaining Settings page. The token is the URL fragment value after "#";
 // it is never a query parameter, which would leak into server logs and browser
 // history. Every request to a token-gated endpoint carries the token in the
 // header below, which the server checks with a constant-time compare.

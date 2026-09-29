@@ -1,8 +1,8 @@
+import { formatUtc } from "../review-app/src/format.js";
 import { describe, expect, it } from "vitest";
 import {
   mistToSui,
   rawToDisplay,
-  shortAddress,
   shortHex,
   shortType,
   signedRawToDisplay,
@@ -71,18 +71,6 @@ describe("mistToSui", () => {
 // The shared shorteners (consumed by the review and receipt pages). Behavioral:
 // they walk the real boundary lengths and, for types, the segment-aware logic.
 
-describe("shortAddress", () => {
-  it("collapses a long 0x value to head…tail and leaves a short one intact", () => {
-    expect(shortAddress("0xa0766ff7b0325c18e4c7416ad4ea4d01e92f09147b8c5e7e4a582dc84ca3a874")).toBe("0xa076…a874");
-    expect(shortAddress("0x2")).toBe("0x2");
-  });
-
-  it("shortens only above 12 characters", () => {
-    expect(shortAddress("0x1234567890")).toBe("0x1234567890"); // 12 chars: untouched
-    expect(shortAddress("0x12345678901")).toBe("0x1234…8901"); // 13 chars: shortened
-  });
-});
-
 describe("shortHex", () => {
   it("uses a wider 8…6 window and shortens only above 14 characters", () => {
     expect(shortHex("0xa0766ff7b0325c18e4c7416ad4ea4d01e92f09147b8c5e7e4a582dc84ca3a874")).toBe("0xa0766f…a3a874");
@@ -102,4 +90,10 @@ describe("shortType", () => {
   it("leaves a short package id untouched", () => {
     expect(shortType("0x2::sui::SUI")).toBe("0x2::sui::SUI");
   });
+});
+
+it("formats observation times in UTC without replacing an out-of-range source value", () => {
+  // 09:30 in UTC+9 is 00:30 UTC; millisecond precision stays in the source value.
+  expect(formatUtc("2030-01-01T09:30:12.345+09:00")).toBe("2030-01-01 00:30:12 UTC");
+  expect(formatUtc(9007199254740991)).toBe("9007199254740991 milliseconds since 1970-01-01T00:00:00Z");
 });

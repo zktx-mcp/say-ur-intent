@@ -118,73 +118,8 @@ body {
   display: none;
 }
 
-.ui-nav {
-  display: flex;
-  gap: 4px;
-  margin-left: 6px;
-}
-
-.ui-nav a {
-  font-size: 13.5px;
-  color: var(--ui-text-muted);
-  text-decoration: none;
-  padding: 6px 10px;
-  border-radius: 8px;
-  transition: background 0.12s, color 0.12s;
-}
-
-.ui-nav a:hover {
-  background: var(--ui-surface-2);
-  color: var(--ui-text);
-}
-
-.ui-nav a[aria-current="page"] {
-  color: var(--ui-text);
-  background: var(--ui-surface-2);
-}
-
 .ui-header-spacer {
   margin-left: auto;
-}
-
-/* Mobile menu button + drawer; the menu button exists only at mobile width and is
-   hidden (so non-functional) on desktop. The compound selector keeps this winning
-   over the base `.ui-icon-btn` display regardless of rule order in this file. */
-.ui-icon-btn.ui-menu-btn {
-  display: none;
-}
-
-.ui-drawer {
-  display: none;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 16px 12px;
-  background: var(--ui-surface);
-  border-bottom: 0.5px solid var(--ui-border);
-}
-
-.ui-drawer a {
-  font-size: 14px;
-  color: var(--ui-text);
-  text-decoration: none;
-  padding: 9px 10px;
-  border-radius: 8px;
-}
-
-.ui-drawer a:hover {
-  background: var(--ui-surface-2);
-}
-
-@media (max-width: 640px) {
-  .ui-nav {
-    display: none;
-  }
-  .ui-icon-btn.ui-menu-btn {
-    display: inline-flex;
-  }
-  .ui-shell.ui-drawer-open .ui-drawer {
-    display: flex;
-  }
 }
 
 .ui-main {
@@ -384,51 +319,6 @@ input.ui-input {
   box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
-/* Search field: the input with a magnifier button inside it on the right. */
-.ui-search {
-  position: relative;
-  display: block;
-  width: 100%;
-}
-
-.ui-search .ui-input {
-  padding-right: 44px;
-}
-
-.ui-search-btn {
-  position: absolute;
-  top: 50%;
-  right: 4px;
-  transform: translateY(-50%);
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ui-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.12s, background 0.12s;
-}
-
-.ui-search-btn:hover {
-  color: var(--ui-accent);
-  background: var(--ui-surface-2);
-}
-
-.ui-search-btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
-.ui-search-btn svg {
-  width: 18px;
-  height: 18px;
-}
-
 /* Cards and key/value rows. */
 .ui-card {
   background: var(--ui-surface);
@@ -469,15 +359,6 @@ input.ui-input {
   border-top: 0;
 }
 
-.ui-section-title {
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--ui-text-muted);
-  margin: 16px 0 6px;
-}
-
 .ui-row {
   display: grid;
   grid-template-columns: minmax(140px, 0.34fr) minmax(0, 1fr);
@@ -502,152 +383,9 @@ input.ui-input {
   text-align: right;
 }
 
-/* Badges and pills. */
-.ui-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--ui-text-muted);
-  border: 0.5px solid var(--ui-border);
-  border-radius: 999px;
-  padding: 4px 10px;
-  white-space: nowrap;
-}
-
-.ui-wallet-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border: 0.5px solid var(--ui-border);
-  border-radius: 999px;
-  background: var(--ui-surface);
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-
-.ui-wallet-chip-name {
-  font-weight: 500;
-}
-
 /* Signer-readiness dot (the review header): ready = matches the bound account,
    settling = reconnecting, idle = no browser signer. Colour is a cue, not the only
    signal — the signing section states readiness in text. */
-.ui-wallet-chip-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-  background: var(--ui-ok-text);
-}
-
-.ui-wallet-chip-dot--settling {
-  background: var(--ui-warn-text);
-}
-
-.ui-wallet-chip-dot--idle {
-  background: var(--ui-text-muted);
-}
-
-.ui-agent-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border: 0.5px solid var(--ui-border);
-  border-radius: 999px;
-  background: var(--ui-surface);
-  color: var(--ui-text-muted);
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-
-.ui-pill {
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 3px 10px;
-  border-radius: 999px;
-  white-space: nowrap;
-  background: var(--ui-surface-2);
-  color: var(--ui-text-muted);
-}
-
-.ui-pill--ok {
-  background: var(--ui-ok-bg);
-  color: var(--ui-ok-text);
-}
-
-.ui-pill--warn {
-  background: var(--ui-warn-bg);
-  color: var(--ui-warn-text);
-}
-
-.ui-pill--danger {
-  background: var(--ui-danger-bg);
-  color: var(--ui-danger);
-}
-
-/* Selectable chip (toggle): legible label in every state and both themes. The
-   unselected chip uses the normal text color, never the selected-state color. */
-.ui-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 5px 13px;
-  border: 0.5px solid var(--ui-border-strong);
-  border-radius: 999px;
-  background: var(--ui-surface);
-  color: var(--ui-text);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.06s;
-}
-
-.ui-chip:hover {
-  border-color: var(--ui-accent);
-}
-
-.ui-chip:active {
-  transform: scale(0.96);
-}
-
-.ui-chip:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--ui-focus);
-}
-
-.ui-chip--selected {
-  background: var(--ui-accent);
-  border-color: var(--ui-accent);
-  color: var(--ui-on-accent);
-}
-
-/* Compact chip for dense selectors (the chart pair list). */
-.ui-chip--sm {
-  min-height: 22px;
-  gap: 4px;
-  padding: 2px 9px;
-  font-size: 11.5px;
-  font-weight: 400;
-}
-
-.ui-chip--selected:hover {
-  background: var(--ui-accent-hover);
-  border-color: var(--ui-accent-hover);
-}
-
-.ui-chip:disabled {
-  cursor: not-allowed;
-  color: var(--ui-text-muted);
-  background: var(--ui-surface-2);
-  border-color: var(--ui-border);
-}
 
 /* Result banner: a prominent outcome with an icon and color (not color alone). */
 .ui-status-banner {
@@ -778,37 +516,6 @@ input.ui-input {
   overflow-wrap: anywhere;
 }
 
-/* Alert toast: a tone-coloured bar for a warning/error/info message, placed between
-   a card's head and its content or under the page header — never as a bare line. */
-.ui-toast {
-  border: 0.5px solid var(--ui-border);
-  border-left-width: 3px;
-  border-radius: 8px;
-  padding: 9px 13px;
-  margin: 0 0 12px;
-  font-size: 13px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.ui-toast--warning {
-  background: var(--ui-warn-bg);
-  color: var(--ui-warn-text);
-  border-color: var(--ui-warn-text);
-}
-
-.ui-toast--error {
-  background: var(--ui-danger-bg);
-  color: var(--ui-danger);
-  border-color: var(--ui-danger);
-}
-
-.ui-toast--info {
-  background: var(--ui-surface-2);
-  color: var(--ui-text);
-  border-color: var(--ui-border-strong);
-}
-
 /* Placeholder card: shown in a slot whose content is empty, unsupported, or
    unavailable, stating why. Keeps the slot's position; the layout never collapses. */
 .ui-placeholder {
@@ -819,70 +526,6 @@ input.ui-input {
   font-size: 13.5px;
   color: var(--ui-text-muted);
   text-align: center;
-}
-
-/* Skeleton: a static layout ghost shown before the first query or while content
-   loads, so a page is never blank. Intentionally NOT animated — a shimmer reads as
-   "loading" even when the page is just waiting for input; the prompt text
-   (.ui-skeleton-hint) says what to do instead. Decorative. */
-.ui-skeleton {
-  height: 12px;
-  border-radius: 6px;
-  background: var(--ui-surface-2);
-}
-
-.ui-skeleton--title {
-  height: 15px;
-  width: 38%;
-  margin-bottom: 14px;
-}
-
-.ui-skeleton--line {
-  height: 12px;
-  margin: 8px 0;
-}
-
-.ui-skeleton--block {
-  height: 240px;
-  margin: 4px 0;
-}
-
-.ui-skeleton--w40 {
-  width: 40%;
-}
-
-.ui-skeleton--w60 {
-  width: 60%;
-}
-
-.ui-skeleton--w80 {
-  width: 80%;
-}
-
-.ui-skeleton-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.34fr) minmax(0, 1fr);
-  gap: 12px;
-  padding: 10px 0;
-  border-top: 0.5px solid var(--ui-border);
-}
-
-.ui-skeleton-row:first-child {
-  border-top: 0;
-}
-
-.ui-skeleton-row .ui-skeleton {
-  margin: 0;
-}
-
-/* Prompt shown with the empty/loading skeleton: tells the user what to enter (or
-   that content is loading), the readable focal point over the quiet ghost. */
-.ui-skeleton-hint {
-  padding: 20px 16px;
-  text-align: center;
-  font-size: 14px;
-  color: var(--ui-text-muted);
-  line-height: 1.6;
 }
 
 /* Full-page loading overlay: set aria-busy="true" on the shell to lock the page
@@ -902,8 +545,7 @@ input.ui-input {
 }
 
 .ui-shell[aria-busy="true"] .ui-header,
-.ui-shell[aria-busy="true"] .ui-main,
-.ui-shell[aria-busy="true"] .ui-drawer {
+.ui-shell[aria-busy="true"] .ui-main {
   filter: opacity(0.55);
   pointer-events: none;
 }
@@ -939,63 +581,6 @@ input.ui-input {
   }
 }
 
-/* Modal dialog: a centered overlay panel (e.g. the chart's settings). Rendered
-   only while open, so visibility needs no toggle class. */
-.ui-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: color-mix(in srgb, var(--ui-bg) 55%, transparent);
-}
-
-.ui-modal-dialog {
-  width: min(440px, 100%);
-  max-height: 88vh;
-  overflow-y: auto;
-  background: var(--ui-surface);
-  border: 0.5px solid var(--ui-border-strong);
-  border-radius: 14px;
-}
-
-.ui-modal-head {
-  position: sticky;
-  top: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-  background: var(--ui-surface);
-  border-bottom: 0.5px solid var(--ui-border);
-}
-
-.ui-modal-title {
-  font-size: 14px;
-  font-weight: 500;
-  margin: 0;
-}
-
-.ui-modal-body {
-  padding: 14px 16px;
-}
-
-.ui-h1 {
-  font-size: 19px;
-  font-weight: 500;
-  margin: 0 0 4px;
-}
-
-.ui-subtitle {
-  font-size: 13px;
-  color: var(--ui-text-muted);
-  line-height: 1.6;
-  margin: 0 0 18px;
-}
-
 /* Quiet boundary/scope note (T4): present but low-emphasis. */
 .ui-note {
   font-size: 12.5px;
@@ -1004,69 +589,11 @@ input.ui-input {
   margin: 12px 0 0;
 }
 
-/* Page header: title + description on the left, an optional control (search field)
-   aligned to the right. Stacks on narrow widths. */
-.ui-page-head {
-  display: flex;
-  justify-content: space-between;
-  /* Bottom-align the search with the title block so its bottom edge matches the
-     description's — an even gap down to the first card. */
-  align-items: flex-end;
-  gap: 20px;
-  margin: 0 0 18px;
-}
-
-.ui-page-head-main {
-  min-width: 0;
-}
-
-.ui-page-head-main .ui-h1 {
-  margin-bottom: 4px;
-}
-
-.ui-page-head-main .ui-subtitle {
-  margin: 0;
-}
-
-.ui-page-head-aside {
-  flex: none;
-  width: min(360px, 44%);
-}
-
-@media (max-width: 640px) {
-  .ui-page-head {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-  }
-
-  .ui-page-head-aside {
-    width: 100%;
-  }
-}
-
-/* Page footer: the consistent bottom slot for boundary/disclaimer notes. */
-.ui-footer {
-  margin-top: 28px;
-  padding-top: 14px;
-  border-top: 0.5px solid var(--ui-border);
-}
-
-.ui-footer .ui-note {
-  margin: 6px 0 0;
-}
-
-.ui-footer .ui-note:first-child {
-  margin-top: 0;
-}
-
 /* Inline info marker: minimal label stays visible, the detail is a tooltip. */
 .ui-info {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* Sized in em so the marker tracks the surrounding font size (≈ 1em circle)
-     instead of looming over small text as a fixed-px badge. */
   width: 1.3em;
   height: 1.3em;
   margin-left: 0.3em;
@@ -1088,7 +615,7 @@ input.ui-input {
   color: var(--ui-accent);
 }
 
-/* PTB graph: the rendered Mermaid SVG container. Mermaid's own injected <style>
+/* PTB graph: the rendered Mermaid SVG container. Mermaid's own injected \3c style>
    does not apply in this page context (SVG defaults to black fills), so the
    flowchart is painted from these always-applied token rules, theming it for both
    light and dark. The same render mechanism feeds the review and receipt pages. */
@@ -1141,7 +668,7 @@ input.ui-input {
 }
 
 /* The graph's node/edge/label/text colours are NOT set here: Mermaid injects an
-   id-scoped <style> into the SVG that beats external rules, so the whole palette is
+   id-scoped \3c style> into the SVG that beats external rules, so the whole palette is
    driven from the app's design tokens through Mermaid's themeVariables in
    ptbDiagram.ts (theme "base"), re-rendered on theme toggle. */
 
@@ -1282,3 +809,16 @@ input.ui-input {
   /* Retain room for the controls without a tall empty graph on narrow cards. */
   .ui-ptb-graph--interactive { height: clamp(280px, 75cqi, 420px); }
 }
+
+/* Shared failure text and compact timestamp/identifier disclosures. */
+.ui-error:not(:empty) { color: var(--ui-danger); }
+.ui-note:empty, .ui-error:empty { display: none; }
+
+/* Shared form controls compose consistently in narrow embedded cards. */
+.ui-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.ui-form > * { min-width: 0; max-width: 100%; }
+.ui-form > input, .ui-form > select, .ui-form > label { flex: 1 1 14rem; }
+.ui-form label { display: flex; flex-direction: column; gap: 6px; }
+.ui-form label > input, .ui-form label > select { width: 100%; }
+.ui-form > details, .ui-form > p, .ui-form > .card-actions { flex-basis: 100%; }
+@container mcp-card (max-width: 28rem) { .ui-form > button { width: 100%; } }

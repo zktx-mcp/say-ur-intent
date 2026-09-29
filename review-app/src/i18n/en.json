@@ -1,83 +1,27 @@
 {
   "brand": "Say Ur Intent",
   "shell": {
-    "toggleTheme": "Toggle theme",
-    "openMenu": "Menu",
-    "publicPages": "Public pages",
-    "nav": {
-      "account": "Account",
-      "receipt": "Receipt",
-      "chart": "DeepBook chart"
-    }
-  },
-  "home": {
-    "hook": "Know what you sign.",
-    "lede": "Verified on-chain evidence for Sui DeFi, reviewed locally before you sign.",
-    "agentNote": "Connect, Review, and Settings open from your AI client.",
-    "cards": {
-      "account": {
-        "title": "Account",
-        "desc": "Public on-chain asset balances for any Sui mainnet address."
-      },
-      "receipt": {
-        "title": "Receipt analytics",
-        "desc": "On-chain receipt facts for any Sui mainnet transaction digest."
-      },
-      "chart": {
-        "title": "DeepBook USDC chart",
-        "desc": "Official DeepBookV3 Indexer USDC candle history, quoted in USDC."
-      }
-    }
+    "toggleTheme": "Toggle theme"
   },
   "account": {
-    "title": "Account",
-    "lede": "On-chain assets for any address.",
-    "ledeTip": "The active wallet's address loads automatically; type any Sui mainnet address to view it instead. This page takes no token, binds nothing, and reads only public on-chain data.",
-    "searchLabel": "View assets",
-    "searchPlaceholder": "Sui mainnet address (0x…)",
-    "hint": "Enter a Sui mainnet address in the search above to view its on-chain assets.",
-    "loading": "Loading on-chain assets from the local server.",
-    "identity": "Identity",
     "name": "Name",
-    "noName": "No SuiNS name",
     "address": "Address",
     "balances": "Balances",
-    "heldObject": "Object",
-    "heldAccount": "Account",
     "checkedAt": "Checked at",
     "noBalances": "No coin balances in this snapshot.",
     "nfts": "NFTs",
     "noNfts": "No NFTs in the scanned objects.",
     "noImage": "No image",
-    "objects": "Other objects",
-    "noObjects": "No other objects in the scanned range.",
-    "objectsTruncated": "Some objects beyond the scanned range are omitted.",
-    "boundaryTip": "This is a public on-chain asset snapshot at its fetched time. It is not P&L, not tax or cost-basis data, not payment readiness, and not signing readiness.",
-    "errorLoad": "Could not load public assets for this address.",
-    "errorShape": "The server returned an unexpected snapshot shape."
+    "objectsTruncated": "Some objects beyond the scanned range are omitted."
   },
   "receipt": {
-    "title": "Receipt analytics",
-    "lede": "On-chain receipt facts for a transaction digest.",
-    "ledeTip": "Enter a Sui mainnet transaction digest to view its execution status, balance changes, Move calls, and object changes. This page takes no token and reads only public on-chain data.",
-    "searchLabel": "View receipt",
-    "searchPlaceholder": "Sui transaction digest",
-    "facts": "Receipt facts",
-    "hint": "Enter a Sui transaction digest in the search above to view its on-chain receipt.",
-    "boundaryTip": "These are public on-chain receipt facts only. They are not review evidence, not a safety verdict, not P&L, and not payment readiness.",
-    "loading": "Loading the on-chain receipt from the local server.",
     "success": "Transaction succeeded on Sui",
     "failure": "Transaction failed on Sui",
-    "error": "Error",
-    "digest": "Digest",
     "sender": "Sender",
     "checkedAt": "Checked at",
     "account": "Account",
     "object": "Object",
-    "balanceChanges": "Balance changes",
     "noBalanceChanges": "No balance changes were recorded.",
-    "gas": "Gas",
-    "gasTotal": "Total fee",
     "gasComputation": "Computation",
     "gasStorage": "Storage",
     "gasRebate": "Storage rebate",
@@ -92,13 +36,8 @@
     "graphZoomIn": "Zoom in",
     "graphZoomOut": "Zoom out",
     "graphCenter": "Center",
-    "graphCopy": "Copy graph source",
-    "graphCopied": "Copied",
     "graphShowAddresses": "Show raw addresses",
     "graphShowNames": "Show package names",
-    "noGraph": "No transaction graph is available for this transaction.",
-    "records": "Transaction records",
-    "recordsTip": "The inputs, Move calls, object changes, and events recorded on-chain for this transaction — expand each list for the details.",
     "moveCalls": "Move calls",
     "noMoveCalls": "No Move calls were recorded.",
     "inputs": "Inputs",
@@ -115,49 +54,13 @@
     "events": "Events",
     "noEvents": "No events were recorded.",
     "objectChanges": "Object changes",
-    "noObjectChanges": "No object changes were recorded.",
-    "errorInvalidDigest": "That is not a valid Sui transaction digest.",
-    "errorNotFound": "No transaction was found for this digest on Sui mainnet.",
-    "errorGeneric": "The local server could not return this receipt.",
-    "errorShape": "The local server returned an unexpected receipt shape."
+    "noObjectChanges": "No object changes were recorded."
   },
   "chart": {
-    "title": "DeepBook USDC chart",
-    "lede": "Official DeepBookV3 Indexer candles, quoted in USDC.",
-    "ledeTip": "Read-only price history from the DeepBookV3 official Indexer, read through the local server. USDC is a token reference asset here, not fiat USD. This page takes no token and performs no wallet, signing, order, or route action.",
-    "pair": "Pair",
-    "more": "More tokens",
-    "searchPlaceholder": "Find a token (SUI, DEEP, WAL…)",
-    "noPools": "No official USDC pools match the search.",
-    "settings": "Settings",
-    "interval": "Interval",
-    "range": "Range",
-    "advanced": "Custom range",
-    "utcStart": "UTC start",
-    "utcEnd": "UTC end",
-    "limit": "Limit",
-    "reload": "Reload",
-    "loadingCandles": "Loading candles…",
-    "noCandles": "No candles for this selection.",
-    "details": "Details",
-    "window": "UTC window",
-    "returnedCandles": "Returned candles",
-    "lastReload": "Last local reload",
     "boundaryUsdc": "Prices are in USDC, not USD; dollar parity is not guaranteed.",
     "boundaryScope": "Historical prices, not live quotes.",
     "source": "Source: DeepBookV3 Indexer.",
     "renderedWith": "Rendered with",
-    "library": "TradingView Lightweight Charts",
-    "loadingPools": "Loading official DeepBook USDC pools from the local server.",
-    "errorPools": "The local server could not load official DeepBook USDC pools."
-  },
-  "notFound": {
-    "title": "Page not found",
-    "lede": "This page doesn't exist.",
-    "home": "Back to home"
-  },
-  "common": {
-    "copyMarkdown": "Copy as Markdown",
-    "copied": "Copied"
+    "library": "TradingView Lightweight Charts"
   }
 }

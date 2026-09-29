@@ -23,9 +23,9 @@ describe("theme toggle icon reflects the current theme (Plan B)", () => {
 const BARE_INTERACTIVE_ELEMENTS = ["button", "input", "select", "textarea"];
 
 it("internal cards do not invoke clipboard APIs or offer copy controls", () => {
-  for (const file of ["src/mcp-ui/view/lifecycle.ts", "src/mcp-ui/view/account.ts", "src/mcp-ui/view/receipt.ts", "src/mcp-ui/view/chart.ts", "review-app/src/ui/ptbDiagram.ts"]) {
+  for (const file of ["src/mcp-ui/view/lifecycle.ts", "src/mcp-ui/view/account.ts", "src/mcp-ui/view/receipt.ts", "src/mcp-ui/view/chart.ts", "src/mcp-ui/view/review.ts", "src/mcp-ui/view/connect.ts", "review-app/src/ui/receiptSummary.ts", "review-app/src/ui/chainReceiptView.ts", "review-app/src/ui/ui.ts", "review-app/src/ui/ptbDiagram.ts"]) {
     const source = readFileSync(join(process.cwd(), file), "utf8");
-    expect(source, file).not.toMatch(/navigator\.clipboard|execCommand|copyTextButton|copyIconButton|copyButton|Copy Markdown/);
+    expect(source, file).not.toMatch(/navigator\.clipboard|execCommand|copyTextButton|copyIconButton|copyButton|Copy Markdown|window\.prompt/);
   }
 });
 
@@ -56,27 +56,18 @@ describe("shared-vs-page styling boundary (Plan B B1)", () => {
     const atoms = [
       ".ui-shell",
       ".ui-header",
-      ".ui-nav",
       ".ui-btn",
       ".ui-btn-row",
       ".ui-input",
       ".ui-card",
       ".ui-row",
-      ".ui-badge",
-      ".ui-pill",
-      ".ui-chip",
-      ".ui-wallet-chip",
-      ".ui-wallet-chip-dot",
-      ".ui-agent-badge",
       ".ui-select",
       ".ui-status-banner",
       ".ui-detail-item",
       ".ui-ptb-graph",
       ".ui-accordion",
       ".ui-feedback",
-      ".ui-toast",
       ".ui-placeholder",
-      ".ui-skeleton",
       ".ui-overlay"
     ];
     for (const atom of atoms) {
@@ -84,12 +75,11 @@ describe("shared-vs-page styling boundary (Plan B B1)", () => {
     }
   });
 
-  // Pages migrated onto the shared module in Unit B1. Later units add their pages
-  // to this list as they migrate.
+  // Current layouts consume shared controls without defining a second style source.
   const migratedPageCss = [
     "review-app/src/account.css",
     "src/mcp-ui/view/workflow.css",
-    "review-app/src/receipt.css",
+    "src/mcp-ui/view/style.css",
     "review-app/src/settings.css"
   ];
 

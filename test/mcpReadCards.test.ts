@@ -18,7 +18,6 @@ import { cardReceiptTransaction } from "./fixtures/cardReceiptTransaction.js";
 import { readPublicChainReceipt } from "../src/core/action/suiChainReceiptReader.js";
 import type { AccountInventorySummary } from "../src/core/read/readServiceTypes.js";
 import { receiptForCard } from "../src/mcp-ui/view/receiptData.js";
-import { receiptToMarkdown } from "../review-app/src/receiptMarkdown.js";
 
 const account = `0x${"a".repeat(64)}`;
 const fetchedAt = "2026-09-22T00:00:00.000Z";
@@ -109,8 +108,7 @@ describe("MCP read cards, persisted results and private display", () => {
       expect(details.pureInputs).toEqual([{ index: 0, bytes: "0x00" }, { index: 1, bytes: "0x98c276f632000000" }]);
       expect(details.ptbGraph?.mermaid.text).toContain("flowchart LR");
       const receipt = receiptForCard(result, details);
-      const markdown = receiptToMarkdown(receipt.txDigest, receipt);
-      expect(markdown).toContain("0x00"); expect(markdown).toContain("0x98c276f632000000");
+      expect(receipt.inputs).toMatchObject([{ index: 0, kind: "pure", bytes: "0x00" }, { index: 1, kind: "pure", bytes: "0x98c276f632000000" }]);
       expect(receipt.ptbGraph).toEqual(details.ptbGraph);
       const saved = await context.client.readResource({ uri: `${CARD_RESOURCE_PREFIX}${result.cardId}` });
       const model = JSON.stringify({ content: response.content, structuredContent: response.structuredContent, saved });

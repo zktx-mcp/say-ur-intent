@@ -2,7 +2,7 @@ import { projectReadCardResult } from "../src/core/read/readCardResult.js";
 import { receiptForCard } from "../src/mcp-ui/view/receiptData.js";
 import { accountRenderer } from "../src/mcp-ui/view/account.js";
 import { receiptRenderer } from "../src/mcp-ui/view/receipt.js";
-import { chainReceiptView } from "../review-app/src/ui/chainReceiptView.js";
+import { chainReceiptDetails } from "../review-app/src/ui/chainReceiptView.js";
 import { readPublicChainReceipt } from "../src/core/action/suiChainReceiptReader.js";
 import { cardReceiptTransaction } from "./fixtures/cardReceiptTransaction.js";
 import { chainReceiptDigest } from "./fixtures/chainReceipt.js";
@@ -20,6 +20,9 @@ import { createDeepbookUsdcChartService } from "../src/core/read/deepbookUsdcCha
 import { DEEPBOOK_OFFICIAL_INDEXER_CANONICAL_USDC_COIN_TYPE, DEEPBOOK_OFFICIAL_INDEXER_SOURCE_STATEMENT } from "../src/core/read/deepbookOfficialIndexerSource.js";
 import { chartRenderer } from "../src/mcp-ui/view/chart.js";
 import { reviewRenderer } from "../src/mcp-ui/view/review.js";
+import { externalProposalSchema } from "../src/core/proposal/schemas.js";
+import { externalProposalToActionPlan } from "../src/core/proposal/externalProposalReview.js";
+import { computeReviewState } from "../src/core/review/reviewComputation.js";
 import { workflowViewSchema, REVIEW_BOUNDARY, type WorkflowView } from "../src/core/session/workflowView.js";
 import { connectRenderer } from "../src/mcp-ui/view/connect.js";
 import { registerWalletConnectionTools } from "../src/mcp/tools/session/walletConnectionTools.js";
@@ -56,6 +59,9 @@ class Element extends EventTarget {
   dataset: Record<string, string> = {};
   value = "";
   readOnly = false;
+  open = false;
+  hidden = false;
+  isConnected = true;
   constructor(readonly tagName: string) { super(); }
   set textContent(text: string) { this.ownText = text; this.children = []; }
   get textContent(): string { return this.ownText + this.children.map((child) => child.textContent).join(""); }
@@ -346,7 +352,7 @@ it.each(["result", "mount"] as const)("contains a %s failure after a known submi
   await vi.waitFor(() => expect(submitButton()?.disabled).toBe(false));
   submitButton()!.click();
   await vi.waitFor(() => expect(root.textContent).toContain("could not be displayed"));
-  expect(root.textContent).toContain("Saved result");
+  expect(root.textContent).not.toContain("Saved result");
   expect(root.textContent).not.toContain("Request a new card");
   expect(submitButton()?.disabled).toBe(true);
   submitButton()!.click();
@@ -458,7 +464,7 @@ it("consumes real MCP/SQLite chart preparation failures and valid choices in the
     root.querySelectorAll("select")[0]!.value = "SUI_USDC";
     root.querySelector("form")!.dispatchEvent(new Event("submit", { cancelable: true }));
     await vi.waitFor(() => expect(root.textContent).toContain("No candles returned for this range"));
-    expect(root.textContent).toContain("Saved result");
+    expect(root.textContent).not.toContain("Saved result");
     expect(poolCalls).toBe(2); expect(candleCalls).toBe(1);
     expect(app.callServerTool.mock.calls.map(([call]) => call.name)).toEqual([CARD_TOOLS.read, CARD_TOOLS.submit]);
     await app.onteardown!();
@@ -480,6 +486,12 @@ it.each(["success", "failure"] as const)("the actual Connect view observes a del
     const first = host(call); startCard("connect", connectRenderer); first.ontoolresult!(created);
     await vi.waitFor(() => expect(root.querySelectorAll("button").find((button) => button.dataset.cardAction === "disconnect")?.disabled).toBe(false));
     expect(root.querySelectorAll("h1, h2").filter((heading) => heading.textContent === "Wallet connection")).toHaveLength(1);
+    expect(root.querySelectorAll("section").filter((section) => section.className === "ui-card")).toHaveLength(1);
+    expect(factValues(root, "Network")).toEqual(["Sui · Mainnet"]);
+    expect(factValues(root, "Status")).toEqual(["Wallet connected"]);
+    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect"]);
+    const walletRow = root.querySelectorAll("div").find((item) => item.className === "ui-row" && item.children[0]?.textContent === "Fixture Wallet")!;
+    expect((walletRow.children[1]!.children[0] as unknown as HTMLElement).title).toBe(f.account);
     root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
     expect(root.textContent.match(/Sui · Mainnet/g)).toHaveLength(1);
     expect(f.transport.disconnect).not.toHaveBeenCalled();
@@ -493,6 +505,8 @@ it.each(["success", "failure"] as const)("the actual Connect view observes a del
     root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
     root.querySelectorAll("button").find((button) => button.textContent === "Cancel")!.click();
     expect(f.transport.disconnect).not.toHaveBeenCalled();
+    expect(root.querySelectorAll("section").filter((section) => section.className === "ui-card")).toHaveLength(1);
+    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect"]);
     root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
     root.querySelectorAll("button").find((button) => button.textContent === "Confirm disconnect")!.click();
     await vi.waitFor(() => expect(root.textContent).toContain("Disconnecting wallet…"));
@@ -535,16 +549,26 @@ it("renders verified review conditions before decisions and preserves the exact 
     expect(text).toContain("You send, up to1 SUI");
     expect(text).toContain("Expected receive123.456789 USDC");
     expect(text).toContain("Minimum receive if execution succeeds122.839505 USDC");
-    expect(text.indexOf("Reviewed account")).toBeLessThan(text.indexOf("You send, up to"));
+    expect(text.indexOf("Send and receive account")).toBeLessThan(text.indexOf("You send, up to"));
     expect(text.indexOf("Minimum receive")).toBeLessThan(text.indexOf("StatusReady for wallet review"));
     expect(text).toContain("ask for a new review in chat");
     expect(text).not.toContain("Review revision");
-    const form = primary.querySelectorAll("form").find((item) => item.querySelectorAll("button").some((button) => button.dataset.cardAction === "request_signature"))!;
-    form.querySelector("select")!.value = connection.connectionId;
-    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    expect(text).not.toContain("has not simulated");
+    const disclosure = node.querySelectorAll("details").find((item) => item.textContent === "Review details")!;
+    disclosure.open = true; disclosure.dispatchEvent(new Event("toggle"));
+    const stageNotes = disclosure.querySelectorAll("details").find((item) => item.textContent.startsWith("Notes from evidence preparation"))!;
+    expect(stageNotes.open).toBe(false);
+    expect(stageNotes.textContent).toContain("before final checks");
+    expect(stageNotes.textContent).toContain("No execution readiness");
+    expect(primary.textContent).not.toContain("No execution readiness");
+
+    expect(primary.querySelectorAll("select")).toEqual([]);
+    expect(act).not.toHaveBeenCalled();
+    const approve = primary.querySelectorAll("button").find((item) => item.dataset.cardAction === "request_signature")!;
+    approve.click();
     expect(act).toHaveBeenCalledExactlyOnceWith({ action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
     expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
-    rendered.dispose();
+    rendered.dispose(); approve.click(); expect(act).toHaveBeenCalledOnce();
     data.review!.preparing = true; data.allowedActions = [];
     const preparing = reviewRenderer.result({ ...snapshot, data }, undefined, act);
     expect(preparing.node.textContent).toContain("Updating review…");
@@ -581,8 +605,12 @@ it.each([
   const node = rendered.node as unknown as Element, primary = node.children[0]!;
   expect(primary.textContent).toContain(`Status${label}`);
   expect(primary.textContent).toContain("Stored interruption reason");
-  expect(primary.textContent).toContain("No chain execution result has been confirmed");
-  expect(primary.textContent).toContain("Proposed send (display input)1 SUI");
+  if (["stopped", "request_failed"].includes(requestStatus)) expect(primary.textContent).toContain("No chain execution result has been confirmed");
+  expect(primary.textContent).not.toContain("Proposed send (display input)");
+  expect(node.textContent.split(label)).toHaveLength(2);
+  const conditions = node.querySelectorAll("details").find((item) => item.textContent === "Reviewed conditions")!;
+  conditions.open = true; conditions.dispatchEvent(new Event("toggle"));
+  expect(conditions.textContent).toContain("Proposed send (display input)1 SUI");
   expect(node.textContent).not.toContain("Transaction succeeded on Sui");
   expect(node.textContent).not.toContain("Transaction failed on Sui");
   expect(primary.querySelectorAll("button").map((button) => button.dataset.cardAction)).toEqual(["read_result"]);
@@ -604,7 +632,15 @@ it.each(["success", "failure"] as const)("puts independently verified %s before 
     expect(node.children[0]!.textContent).toContain(outcome === "success" ? "Transaction succeeded on Sui" : "Transaction failed on Sui");
     expect(node.children[0]!.textContent).not.toContain("Transaction request record");
     expect(node.textContent).toContain(data.request!.transactionDigest);
-    expect(node.textContent).toContain("Review revision1");
+    expect(node.textContent).not.toContain("Review revision");
+    expect(node.textContent).not.toContain("Estimated net network fee");
+    const conditions = node.querySelectorAll("details").find((item) => item.textContent === "Reviewed conditions")!;
+    conditions.open = true; conditions.dispatchEvent(new Event("toggle"));
+    expect(conditions.textContent).toContain("Estimated net network fee");
+    const original = conditions.textContent;
+    conditions.open = false; conditions.dispatchEvent(new Event("toggle"));
+    conditions.open = true; conditions.dispatchEvent(new Event("toggle"));
+    expect(conditions.textContent).toBe(original);
     expect(node.querySelectorAll("button").some((button) => button.dataset.cardAction === "request_signature")).toBe(false);
     expect(f.sign).toHaveBeenCalledOnce(); expect(f.submit).toHaveBeenCalledOnce();
     rendered.dispose();
@@ -639,7 +675,7 @@ it("keeps stored content and offers explicit reading without polling when wallet
   const app = host(async () => result(pending));
   startCard("review", renderer); app.ontoolresult!(result(pending, true));
   await vi.waitFor(() => expect(root.textContent).toContain("Stored result"));
-  expect(root.textContent).toContain("progress unavailable");
+  expect(root.textContent).toContain("progress is unavailable");
   expect(root.querySelectorAll("button").some((button) => button.textContent === "Read saved state")).toBe(true);
   await vi.advanceTimersByTimeAsync(30_000); expect(app.callServerTool).toHaveBeenCalledTimes(1);
   root.querySelectorAll("button").find((button) => button.textContent === "Read saved state")!.click();
@@ -696,8 +732,9 @@ it("summarizes the real receipt without removing the full Review receipt display
   expect(summary.textContent).toContain("0.00000013 SUI"); // (100 + 50 - 20) MIST, independently computed.
   expect(summary.textContent).not.toContain("Transaction graph"); expect(summary.textContent).not.toContain("Transaction records");
   expect(summary.textContent).not.toContain("Computation");
-  const full = chainReceiptView(receiptForCard(snapshot));
-  expect(full.textContent).toContain("Transaction records"); expect(full.textContent).toContain("Computation");
+  const full = chainReceiptDetails(receiptForCard(snapshot));
+  expect(full.textContent).toContain("Inputs"); expect(full.textContent).toContain("Computation");
+  expect(full.textContent).toContain(response.receipt.balanceChanges[0]!.coinType);
   expect(receiptRenderer.controls().querySelectorAll("input")).toHaveLength(0);
 });
 
@@ -712,10 +749,245 @@ it("shows last-recorded connection freshness when the wallet cannot be checked",
     const view = connectRenderer.controls(current.snapshot, vi.fn(), undefined, undefined);
     expect(view.node.textContent).toContain("Last recorded status");
     expect(view.node.textContent).toContain("Last updated");
-    expect(view.node.textContent).toContain(connection.updatedAt);
+    expect(view.node.textContent).toContain("2030-01-01 00:00:00 UTC");
+    expect((view.node.querySelector("time") as HTMLTimeElement).dateTime).toBe(connection.updatedAt);
     expect(view.node.textContent).not.toContain("PRIVATE SDK ERROR");
-    expect(view.node.querySelectorAll('[data-card-action]')).toHaveLength(1); // Only closing the card remains.
+    expect(view.node.querySelectorAll('[data-card-action]')).toHaveLength(0); // Saved connected-wallet facts remain visible without Close or wallet actions.
     expect(f.transport.disconnect).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled();
     view.dispose();
+  } finally { f.close(); }
+});
+
+
+it("takes a single displayed wallet from preparation through actual SQLite admission without implicit actions", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    const { connection } = await f.approve();
+    const created = await f.run(() => f.sessions.createReviewSession([f.plan], f.now()));
+    let card = await f.run(() => f.cards.create("review", { reviewSessionId: created.session.id }));
+    let pending: Promise<unknown> | undefined;
+    const act = vi.fn((input: Record<string, unknown>) => { pending = f.act(card, input); });
+    let rendered = reviewRenderer.result(card.snapshot, undefined, act);
+    let node = rendered.node as unknown as Element;
+    expect(node.querySelectorAll("select")).toHaveLength(0);
+    expect(f.quote).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled();
+    node.querySelectorAll("button").find((item) => item.dataset.cardAction === "prepare_review")!.click();
+    await pending;
+    await vi.waitFor(async () => {
+      card = await f.read(card);
+      expect(workflowViewSchema.parse(card.snapshot.data).review?.status).toBe("ready_for_wallet_review");
+    });
+    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "prepare_review", connectionId: connection.connectionId, account: f.account, reviewRevision: 0 });
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+    rendered.dispose();
+    rendered = reviewRenderer.result(card.snapshot, undefined, act); node = rendered.node as unknown as Element;
+    expect(node.querySelectorAll("select")).toHaveLength(0);
+    const approve = node.querySelectorAll("button").find((item) => item.dataset.cardAction === "request_signature")!;
+    expect(f.sign).not.toHaveBeenCalled(); approve.click(); await pending;
+    await vi.waitFor(() => expect(f.run(() => f.records.currentRequest(created.session.id)?.requestStatus)).toBe("completed"));
+    expect(f.sign).toHaveBeenCalledOnce(); expect(f.submit).toHaveBeenCalledOnce();
+    expect(act).toHaveBeenLastCalledWith({ action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
+    rendered.dispose(); approve.click(); expect(act).toHaveBeenCalledTimes(2);
+  } finally { f.close(); }
+});
+
+it("requires an explicit wallet for multiple candidates and offers no signature for zero or unavailable candidates", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    const { connection } = await f.approve(), { card } = await f.prepare(connection.connectionId);
+    const snapshot = structuredClone(card.snapshot), data = workflowViewSchema.parse(snapshot.data);
+    data.connections.push({ ...data.connections[0]!, connectionId: "second-connection", walletName: "Second wallet" });
+    snapshot.data = data;
+    const act = vi.fn(), rendered = reviewRenderer.result(snapshot, undefined, act);
+    const node = rendered.node as unknown as Element;
+    const form = node.querySelectorAll("form").find((item) => item.querySelectorAll("button").some((b) => b.dataset.cardAction === "request_signature"))!;
+    form.dispatchEvent(new Event("submit", { cancelable: true })); expect(act).not.toHaveBeenCalled();
+    form.querySelector("select")!.value = "second-connection";
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "request_signature", connectionId: "second-connection", account: f.account, reviewRevision: 1 });
+    rendered.dispose();
+    for (const unavailable of [false, true]) {
+      data.connections = unavailable ? [connection] : [];
+      if (unavailable) data.walletAvailability = { status: "unavailable", reason: "restoration_failed", message: "Wallet state cannot be checked." };
+      const blocked = reviewRenderer.result({ ...snapshot, data }, undefined, act);
+      expect((blocked.node as unknown as Element).querySelectorAll("button").some((b) => b.dataset.cardAction === "request_signature")).toBe(false);
+      blocked.dispose();
+    }
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+  } finally { f.close(); }
+});
+
+function factValues(node: Element, label: string): string[] {
+  return node.querySelectorAll("div").filter((item) => item.className === "ui-row" && item.children[0]?.textContent === label)
+    .map((item) => item.children[1]!.textContent);
+}
+
+const proposalEvaluationTime = new Date("2030-01-01T00:00:00.000Z");
+const proposalRecipient = `0x${"c".repeat(64)}`;
+const proposalBase = {
+  id: "private-proposal-record", source: { kind: "ai_client", name: "Invoice assistant", reference: "https://example.com/invoice/42" },
+  network: "sui:mainnet", createdAt: "2029-12-31T23:00:00.000Z", expiresAt: "2030-01-01T01:23:45.000Z",
+  purpose: "Inspect invoice 42"
+};
+function proposalCardFixture(input: unknown) {
+  const plan = externalProposalToActionPlan(externalProposalSchema.parse(input), proposalEvaluationTime);
+  const data: WorkflowView = {
+    kind: "review", mode: "review", allowedActions: ["cancel"], actionRemainingMs: 1000, observe: false,
+    progress: { status: "idle" }, walletAvailability: { status: "available" }, connections: [], boundary: REVIEW_BOUNDARY,
+    review: { reviewSessionId: "external-review", plan, reviewRevision: 0, status: "proposed", preparing: false }
+  };
+  return { plan, snapshot: state("review", { data }) };
+}
+function openDetails(node: Element): void {
+  for (const item of node.querySelectorAll("details")) { item.open = true; item.dispatchEvent(new Event("toggle")); }
+}
+
+it("preserves declared payment facts without requiring a wallet or duplicating preview amounts", () => {
+  const { snapshot } = proposalCardFixture({ ...proposalBase, type: "payment", payment: {
+    amount: { amountDisplay: "123.4500", denomination: "USD" }, recipient: { label: "Invoice recipient", address: proposalRecipient }, target: "invoice-42"
+  } });
+  const data = workflowViewSchema.parse(snapshot.data);
+  data.walletAvailability = { status: "unavailable", reason: "restoration_failed", message: "Wallet state cannot be checked." };
+  const act = vi.fn(), rendered = reviewRenderer.result({ ...snapshot, data }, undefined, act), node = rendered.node as unknown as Element;
+  openDetails(node);
+  expect(node.querySelectorAll("h2").map((item) => item.textContent)).toEqual(["External proposal — not signable"]);
+  expect(factValues(node, "Source")).toEqual(["Invoice assistant"]);
+  expect(factValues(node, "Source kind")).toEqual(["AI client"]);
+  expect(factValues(node, "Source reference")).toEqual(["https://example.com/invoice/42"]);
+  expect(node.querySelectorAll("a")).toHaveLength(0);
+  expect(factValues(node, "Action")).toEqual(["Payment"]);
+  expect(factValues(node, "Purpose")).toEqual(["Inspect invoice 42"]);
+  expect(factValues(node, "Declared network").filter((value) => value === "sui:mainnet")).toEqual(["sui:mainnet"]);
+  expect(factValues(node, "Proposed recipient")).toEqual([`Invoice recipient · ${proposalRecipient}`]);
+  expect(factValues(node, "Proposed target")).toEqual(["invoice-42"]);
+  expect(factValues(node, "Proposed send")).toEqual(["123.4500 (denomination: USD)"]);
+  expect(factValues(node, "Proposed receive")).toEqual([]);
+  expect(factValues(node, "Proposed fee")).toEqual([]);
+  expect(node.textContent).not.toContain("Proposed send (display input)");
+  expect(node.textContent).not.toContain("Account to review");
+  expect(node.textContent).not.toContain("private-proposal-record");
+  expect(node.textContent).not.toContain("rejectedExecutableFields");
+  expect(node.querySelectorAll("pre")).toHaveLength(0);
+  expect(node.textContent).toContain("non-signable");
+  expect(node.textContent).toContain("Choose settlement asset");
+  expect(node.textContent).toContain("not connected-chain verification");
+  expect(node.querySelectorAll("button").map((item) => item.dataset.cardAction)).toEqual(["cancel"]);
+  expect(act).not.toHaveBeenCalled(); rendered.dispose();
+});
+
+it("renders Sui action targets, recipients and fees from the actual proposal model once", async () => {
+  const { snapshot, plan } = proposalCardFixture({ ...proposalBase, type: "sui_action", action: {
+    actionKind: "inspect_transfer", target: { label: "Treasury action", packageId: "0x2", module: "treasury", function: "release", objectId: "0x123" },
+    recipient: { label: "Treasury", address: proposalRecipient }, assetFlow: [
+      { direction: "outgoing", amount: { amountDisplay: "1", symbol: "SUI", denomination: "USD", coinType: "0x2::sui::SUI" }, recipient: { label: "Invoice recipient", address: proposalRecipient } },
+      { direction: "expected_incoming", amount: { amountDisplay: "2.50", symbol: "DEEP" }, recipient: { label: "Return recipient" } },
+      { direction: "fee", amount: { amountDisplay: "0.019876", symbol: "SUI" } }
+    ]
+  } });
+  const data = workflowViewSchema.parse(snapshot.data), review = data.review!;
+  review.state = await computeReviewState({ reviewSessionId: review.reviewSessionId, plan, account: proposalRecipient, now: proposalEvaluationTime });
+  review.status = review.state.status;
+  const act = vi.fn(), rendered = reviewRenderer.result({ ...snapshot, data }, undefined, act), node = rendered.node as unknown as Element;
+  openDetails(node);
+  expect(factValues(node, "Action")).toEqual(["Sui action"]);
+  expect(node.textContent).toContain("Review Sui action proposal: inspect_transfer");
+  expect(factValues(node, "Proposed target")).toEqual(["Treasury action"]);
+  expect(factValues(node, "Package")).toEqual(["0x2"]);
+  expect(factValues(node, "Module")).toEqual(["treasury"]);
+  expect(factValues(node, "Function")).toEqual(["release"]);
+  expect(factValues(node, "Object")).toEqual(["0x123"]);
+  expect(factValues(node, "Proposed recipient")).toEqual([`Treasury · ${proposalRecipient}`, `Invoice recipient · ${proposalRecipient}`, "Return recipient"]);
+  expect(factValues(node, "Proposed send")[0]).toContain("1 SUI (denomination: USD)");
+  expect(factValues(node, "Proposed send")).toHaveLength(1);
+  expect(factValues(node, "Declared coin type")).toEqual(["0x2::sui::SUI"]);
+  expect(factValues(node, "Proposed receive")).toEqual(["2.50 DEEP"]);
+  expect(factValues(node, "Proposed fee")).toEqual(["0.019876 SUI"]);
+  expect(node.textContent).not.toContain("Proposed send (display input)");
+  expect(factValues(node, "Proposal created")[0]).toContain("2029-12-31 23:00:00 UTC");
+  expect(factValues(node, "Proposal expires")[0]).toContain("2030-01-01 01:23:45 UTC");
+  expect(factValues(node, "Evaluated at")[0]).toContain("2030-01-01 00:00:00 UTC");
+  const decision = node.querySelectorAll("div").find((item) => item.className === "workflow-decision")!;
+  expect(decision.textContent.split("Declared network:")).toHaveLength(2);
+  expect(decision.textContent.split("Non-signable review:")).toHaveLength(2);
+  const passed = node.querySelectorAll("div").find((item) => item.children[0]?.tagName === "h3" && item.children[0].textContent === "Passed checks")!;
+  expect(factValues(passed, "External proposal contract")).toEqual(["The external proposal matched the read-only proposal schema."]);
+  expect(factValues(passed, "Proposal freshness")).toEqual(["The proposal timestamps are current for this local review."]);
+  const previous = node.textContent;
+  for (const detail of node.querySelectorAll("details")) { detail.open = false; detail.dispatchEvent(new Event("toggle")); }
+  openDetails(node); expect(node.textContent).toBe(previous);
+  expect(node.querySelectorAll("button").map((item) => item.dataset.cardAction)).toEqual(["cancel"]);
+  expect(act).not.toHaveBeenCalled(); rendered.dispose(); openDetails(node); expect(act).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["2029-12-31T23:00:00.000Z", "2030-01-01T00:00:01.000Z", "Current at evaluation"],
+  ["2029-12-31T23:00:00.000Z", "2030-01-01T00:00:00.000Z", "Expired at evaluation"],
+  ["2030-01-01T00:00:01.000Z", "2030-01-01T01:00:00.000Z", "Created after evaluation time"],
+  ["2029-12-31T23:00:00.000Z", undefined, "Expiry not provided"]
+])("keeps proposal freshness evaluated from %s / %s as %s", (createdAt, expiresAt, label) => {
+  // Evaluation is fixed at midnight 2030; the View's current clock is unrelated.
+  vi.setSystemTime(new Date("2040-01-01T00:00:00.000Z"));
+  const { snapshot } = proposalCardFixture({ ...proposalBase, createdAt, expiresAt, source: { kind: "user", name: "Chat" }, type: "sui_action",
+    action: { actionKind: "inspect", target: { objectId: "0x456" } } });
+  const rendered = reviewRenderer.result(snapshot, undefined, undefined), node = rendered.node as unknown as Element;
+  openDetails(node);
+  expect(factValues(node, "Declared timing")).toEqual([label]);
+  expect(factValues(node, "Source reference")).toEqual([]);
+  expect(factValues(node, "Module")).toEqual([]);
+  expect(factValues(node, "Declared coin type")).toEqual([]);
+  expect(factValues(node, "Proposed send")).toEqual([]);
+  expect(factValues(node, "Proposal expires")).toEqual(expiresAt ? expect.arrayContaining([expect.stringContaining("2030-01-01")]) : ["Not provided"]);
+  expect(factValues(node, "Object")).toEqual(["0x456"]);
+  expect(node.textContent).not.toContain("undefined"); rendered.dispose();
+});
+
+it("keeps current review checks authoritative over copied proposal checks", async () => {
+  const { snapshot, plan } = proposalCardFixture({ ...proposalBase, type: "payment", payment: { amount: { amountDisplay: "1", symbol: "SUI" }, recipient: { address: proposalRecipient } } });
+  const data = workflowViewSchema.parse(snapshot.data), review = data.review!;
+  review.state = await computeReviewState({ reviewSessionId: review.reviewSessionId, plan, account: proposalRecipient, now: proposalEvaluationTime });
+  // A schema-valid empty current list is authoritative, not a request to fall back.
+  review.state.checks = []; review.error = "Previous review update: Evidence could not be refreshed.";
+  const rendered = reviewRenderer.result({ ...snapshot, data }, undefined, undefined), node = rendered.node as unknown as Element;
+  openDetails(node);
+  const decision = node.querySelectorAll("div").find((item) => item.className === "workflow-decision")!;
+  expect(decision.textContent).not.toContain("Declared network:");
+  expect(decision.textContent).not.toContain("Non-signable review:");
+  expect(decision.textContent).toContain("Previous review update: Evidence could not be refreshed.");
+  expect(node.textContent).not.toContain("The external proposal matched the read-only proposal schema.");
+  expect(node.textContent).toContain("non-signable"); rendered.dispose();
+});
+
+it("owns missing wallet guidance per permitted action without blocking the other action", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    const { connection } = await f.approve(), { card } = await f.prepare(connection.connectionId);
+    const otherAccount = `0x${"d".repeat(64)}`;
+    const scenarios = [
+      { name: "both empty", connections: [], activeAccount: f.account, hints: ["No wallet connection is available for this account."], actions: [] },
+      { name: "only signing empty", connections: [{ ...connection, methods: [] }], activeAccount: f.account, hints: ["No wallet connection can approve this transaction."], actions: ["prepare_review"] },
+      { name: "only preparation empty", connections: [connection], activeAccount: otherAccount, hints: ["No wallet connection is available to update the review for the selected account."], actions: ["request_signature"] },
+      { name: "different accounts empty", connections: [], activeAccount: otherAccount, hints: ["No wallet connection can approve this transaction.", "No wallet connection is available to update the review for the selected account."], actions: [] },
+      { name: "wallet unavailable", connections: [], activeAccount: f.account, unavailable: true, hints: [], actions: [] },
+      { name: "neither permitted", connections: [], activeAccount: f.account, permitted: [], hints: [], actions: [] },
+      { name: "preparation alone", connections: [], activeAccount: f.account, permitted: ["prepare_review"] as const, hints: ["No wallet connection is available to update the review for the selected account."], actions: [] },
+      { name: "signing alone", connections: [], activeAccount: f.account, permitted: ["request_signature"] as const, hints: ["No wallet connection can approve this transaction."], actions: [] }
+    ];
+    for (const scenario of scenarios) {
+      const data = workflowViewSchema.parse(structuredClone(card.snapshot.data));
+      data.connections = scenario.connections; data.activeAccount = scenario.activeAccount;
+      if (scenario.permitted) data.allowedActions = [...scenario.permitted];
+      if (scenario.unavailable) data.walletAvailability = { status: "unavailable", reason: "restoration_failed", message: "Wallet state cannot be checked." };
+      const act = vi.fn(), rendered = reviewRenderer.result({ ...card.snapshot, data }, undefined, act), node = rendered.node as unknown as Element;
+      expect(node.querySelectorAll("p").filter((item) => item.textContent.startsWith("No wallet connection")).map((item) => item.textContent), scenario.name).toEqual(scenario.hints);
+      const controls = node.querySelectorAll("button").filter((item) => ["prepare_review", "request_signature"].includes(item.dataset.cardAction ?? ""));
+      expect(controls.map((item) => item.dataset.cardAction), scenario.name).toEqual(scenario.actions);
+      expect(act).not.toHaveBeenCalled();
+      for (const control of controls) {
+        control.click();
+        expect(act).toHaveBeenLastCalledWith({ action: control.dataset.cardAction, connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
+      }
+      const calls = act.mock.calls.length; rendered.dispose(); for (const control of controls) control.click(); expect(act).toHaveBeenCalledTimes(calls);
+    }
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
   } finally { f.close(); }
 });

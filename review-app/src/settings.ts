@@ -157,7 +157,7 @@ function renderWalletPanel(): HTMLElement {
   const panel = card("Wallet");
   panel.append(
     note(
-      "Clear active account removes only the local read context; it does not disconnect a wallet or revoke onchain permission. To connect a wallet, open the connect link from your AI client; binding happens only on the Connect page."
+      "Clear active account removes only the local read context; it does not disconnect a wallet or revoke onchain permission. To connect or disconnect a wallet, ask your AI client to open the wallet connection card. Disconnection requires confirmation in that card."
     )
   );
   panel.append(endRow(button("Clear active account", () => void clearActiveAccount(), "secondary")));

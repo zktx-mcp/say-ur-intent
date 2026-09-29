@@ -1,13 +1,12 @@
 // Shared PTB (Mermaid) graph renderer — the single source for turning Mermaid
-// text into an SVG in the page. Both the review page (the locally stored
-// transaction shape) and the internal Receipt card (an on-chain transaction's PTB
-// graph) render through this, so the caching, no-flash refresh, and error
+// text into an SVG for Review preparation and observed-chain detail disclosures.
+// The standalone Receipt summary does not import this renderer. Caching and error
 // handling live in one place. The surrounding chrome (name toggle, Mermaid
 // source, diagnostics, boundary note) stays with each caller.
 //
 // An opt-in pan/zoom mode (wheel to zoom toward the cursor, drag to pan, plus
 // zoom-in/out/center controls) makes a large graph legible. It is off by default
-// so the review page's current behaviour is unchanged until it migrates.
+// for callers that only need a static diagram.
 import mermaid from "mermaid";
 import { card, element, iconButton, info } from "./ui.js";
 import { t } from "../i18n/i18n.js";
@@ -69,7 +68,6 @@ export function disposePtbGraphs(root: HTMLElement): void {
 }
 let renderSequence = 0;
 const svgCache = new Map<string, string>();
-let lastRenderedSvg: string | undefined;
 
 const ZOOM_IN_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
@@ -116,6 +114,7 @@ export function createPtbGraphView(labels?: {
   content.textContent = renderingLabel;
 
   let lastText: string | undefined;
+  let lastRenderedSvg: string | undefined;
   let disposed = false;
   let revision = 0;
   const render = (text: string): void => {

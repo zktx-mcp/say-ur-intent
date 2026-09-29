@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createChart, CandlestickSeries, HistogramSeries, type CandlestickData, type HistogramData, type UTCTimestamp, type WhitespaceData } from "lightweight-charts";
-import { element, link } from "../../../review-app/src/ui/ui.js";
+import { element, link, button, input, select, field, accordion, timeValue } from "../../../review-app/src/ui/ui.js";
+import { formatUtc } from "../../../review-app/src/format.js";
 import { t } from "../../../review-app/src/i18n/i18n.js";
 import type { CardRenderer } from "./lifecycle.js";
 
@@ -18,34 +19,34 @@ export const chartResultSchema = z.object({ status: z.enum(["ok", "empty_result"
   pair: z.object({ baseAsset: z.object({ symbol: z.string() }), quoteAsset: z.object({ symbol: z.literal("USDC") }) }) })
   .refine((value) => value.candleCount === value.candles.length, "Candle count differs from returned rows.");
 
-function labelled(label: string, control: HTMLElement): HTMLLabelElement {
-  const node = document.createElement("label"); node.append(document.createTextNode(label), control); return node;
-}
 export const chartRenderer = {
   title: "DeepBook USDC chart",
   controls(snapshot, submit) {
     const choices = poolsSchema.parse(snapshot.data);
-    const form = document.createElement("form");
-    const pool = document.createElement("select"); pool.required = true;
-    pool.append(new Option("Choose a pair", ""));
-    for (const item of choices.pools) pool.append(new Option(`${item.baseAsset.symbol} / USDC`, item.poolName));
-    const interval = document.createElement("select");
-    for (const value of choices.intervals) interval.append(new Option(value, value));
+    const form = document.createElement("form"); form.className = "ui-form";
+    const pool = select({ choices: [{ label: "Choose a pair", value: "" }, ...choices.pools.map((item) => ({ label: `${item.baseAsset.symbol} / USDC`, value: item.poolName }))] }); pool.required = true;
+    const interval = select({ choices: choices.intervals.map((value) => ({ label: value, value })) });
     interval.value = typeof snapshot.input.interval === "string" ? snapshot.input.interval : choices.defaultInterval;
-    const start = document.createElement("input"); start.placeholder = "YYYY-MM-DDTHH:mm";
-    const end = document.createElement("input"); end.placeholder = "YYYY-MM-DDTHH:mm";
+    const start = input({ placeholder: "YYYY-MM-DDTHH:mm" });
+    const end = input({ placeholder: "YYYY-MM-DDTHH:mm" });
     if (typeof snapshot.input.startTimeMs === "number") start.value = utcMsToInputValue(snapshot.input.startTimeMs);
     if (typeof snapshot.input.endTimeMs === "number") end.value = utcMsToInputValue(snapshot.input.endTimeMs);
     let candleLimit = Number(snapshot.input.limit ?? choices.defaultLimit);
+    const custom = accordion("Custom range", snapshot.input.startTimeMs !== undefined || snapshot.input.endTimeMs !== undefined);
+    custom.body.append(field("Start (UTC)", start), field("End (UTC)", end));
+    const rangeLabel = element("p", "ui-note", chartQueryText(snapshot.input as z.infer<typeof chartResultSchema>["query"]));
+    for (const control of [start, end]) control.addEventListener("input", () => { rangeLabel.textContent = "Custom range · UTC"; });
     const ranges = element("div", "card-actions");
     for (const shortcut of DEEPBOOK_USDC_CHART_SHORTCUTS) {
-      const button = document.createElement("button"); button.type = "button"; button.textContent = shortcut === "Latest 500" ? "Recent" : shortcut;
-      button.addEventListener("click", () => { const range = shortcutQuery(shortcut, new Date()); start.value = range.startInput; end.value = range.endInput; candleLimit = Number(range.limitInput); });
-      ranges.append(button);
+      const control = button(shortcut === "Latest 500" ? "Recent" : shortcut, () => {
+        const range = shortcutQuery(shortcut, new Date()); start.value = range.startInput; end.value = range.endInput; candleLimit = Number(range.limitInput);
+        rangeLabel.textContent = shortcut === "Latest 500" ? "Recent candles · UTC" : `${shortcut} · UTC`;
+      }, "secondary");
+      ranges.append(control);
     }
-    const button = document.createElement("button"); button.type = "submit"; button.textContent = "Show chart";
+    const show = button("Show chart", () => undefined); show.type = "submit";
     const error = element("p", "ui-error"); error.setAttribute("role", "alert");
-    form.append(labelled("Pair", pool), labelled("Interval", interval), labelled("Start (UTC)", start), labelled("End (UTC)", end), ranges, button, error);
+    form.append(field("Pair", pool), field("Interval", interval), ranges, rangeLabel, custom.details, show, error);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       try {
@@ -69,9 +70,14 @@ export const chartRenderer = {
     const data = parsed.data;
     const node = element("div");
     node.append(
-      element("p", "ui-note", `${data.pair.baseAsset.symbol} / USDC · ${data.query.interval} · Checked at: ${data.source.fetchedAt}`),
+      element("p", "ui-note", `${data.pair.baseAsset.symbol} / USDC · ${data.query.interval}`),
       element("p", "ui-note", chartQueryText(data.query))
     );
+    const checked = element("p", "ui-note", "Checked at: "); checked.append(timeValue(data.source.fetchedAt)); node.append(checked);
+    const exactTime = (value: number | undefined) => value === undefined ? "not specified" :
+      Number.isFinite(new Date(value).getTime()) ? new Date(value).toISOString() : formatUtc(value);
+    const exact = accordion("Exact UTC times"); exact.body.append(element("p", undefined,
+      `Start: ${exactTime(data.query.startTimeMs)} · End: ${exactTime(data.query.endTimeMs)} · Checked at: ${data.source.fetchedAt}`)); node.append(exact.details);
     if (data.candleCount >= data.query.limit) node.append(element("p", "ui-note", `This view is limited to ${data.query.limit} candles; the requested period may contain more.`));
     const boundary = element("p", "ui-note", `${t.chart.boundaryUsdc} ${t.chart.boundaryScope} ${t.chart.source}`);
     const attribution = link(t.chart.library, "https://www.tradingview.com/");
@@ -80,8 +86,8 @@ export const chartRenderer = {
     if (data.candles.length === 0) { node.append(element("p", "ui-note", "No candles returned for this range."), boundary); return { node }; }
     const container = element("div", "card-chart"); const legend = element("p", "ui-note");
     const last = data.candles.at(-1)!;
-    const describe = (candle: ChartCandle) => `${candle.start} UTC · O ${candle.open} H ${candle.high} L ${candle.low} C ${candle.close} · V ${candle.volume}`;
-    legend.textContent = describe(last); node.append(legend, container);
+    const describe = (candle: ChartCandle) => `${formatUtc(candle.start)} · Open ${candle.open} · High ${candle.high} · Low ${candle.low} · Close ${candle.close} · Volume ${candle.volume}`;
+    legend.textContent = describe(last); const candleDetails = accordion("Candle details"); candleDetails.body.append(legend); node.append(container, candleDetails.details);
     node.append(boundary);
     let chart: ReturnType<typeof createChart> | undefined;
     let resizeObserver: ResizeObserver | undefined;
@@ -178,7 +184,7 @@ export function chartQueryText(query: z.infer<typeof chartResultSchema>["query"]
     const date = new Date(timestamp);
     return Number.isNaN(date.getTime())
       ? `${timestamp} milliseconds since 1970-01-01T00:00:00Z`
-      : date.toISOString();
+      : formatUtc(timestamp);
   };
   return `Period (UTC): ${utc(query.startTimeMs)} → ${utc(query.endTimeMs)}`;
 }

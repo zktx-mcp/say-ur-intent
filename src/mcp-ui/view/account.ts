@@ -1,6 +1,6 @@
 import { formatWalletAssetRow, type WalletAssetRow } from "../../../review-app/src/walletAssetRow.js";
 import { asRecord } from "../../../review-app/src/parse.js";
-import { card, element, monoShort, placeholder, row } from "../../../review-app/src/ui/ui.js";
+import { card, element, monoShort, placeholder, row, timeValue } from "../../../review-app/src/ui/ui.js";
 import { qualifiedName } from "../../../review-app/src/format.js";
 import { t } from "../../../review-app/src/i18n/i18n.js";
 import type { CardRenderer } from "./lifecycle.js";
@@ -21,13 +21,13 @@ export const accountRenderer = {
 } satisfies CardRenderer;
 
 function identityCard(address: string, payload: Record<string, unknown>): HTMLElement {
-  const node = card(t.account.identity);
+  const node = card();
   const name = typeof payload.name === "string" && payload.name.length > 0 ? payload.name : undefined;
-  node.append(row(t.account.name, name ?? t.account.noName));
+  if (name) node.append(row(t.account.name, name));
   node.append(row(t.account.address, monoShort(address)));
   const fetchedAt = typeof payload.fetchedAt === "string" ? payload.fetchedAt : undefined;
   if (fetchedAt) {
-    node.append(row(t.account.checkedAt, fetchedAt));
+    node.append(row(t.account.checkedAt, timeValue(fetchedAt)));
   }
   return node;
 }

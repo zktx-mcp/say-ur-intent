@@ -38,16 +38,8 @@ export function suiAmount(mist: string): string {
   return `${mistToSui(mist)} SUI`;
 }
 
-// Shorten a 0x address/id for compact display; the full value belongs in a title
-// or copy control. Single source so every page shortens addresses the same way.
-export function shortAddress(address: string): string {
-  return address.length > 12 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
-}
-
 // Shorten a longer 0x value (full object id, digest, or a package id inside a Move
-// type) for compact display, with a wider window than shortAddress because these
-// appear in the raw-evidence audit where a little more context helps. The full
-// value belongs in a title or copy control.
+// type) for compact display. The full value stays in accessible details.
 export function shortHex(value: string): string {
   return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
 }
@@ -86,4 +78,12 @@ export function qualifiedName(value: string): string {
   const base = value.split("<")[0] ?? value;
   const parts = base.split("::");
   return parts.length >= 2 ? parts.slice(-2).join("::") : base || value;
+}
+
+// Presentation only: never feed this lower-precision label back into a query.
+export function formatUtc(value: string | number): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return typeof value === "number"
+    ? `${value} milliseconds since 1970-01-01T00:00:00Z` : value;
+  return `${date.toISOString().slice(0, 19).replace("T", " ")} UTC`;
 }

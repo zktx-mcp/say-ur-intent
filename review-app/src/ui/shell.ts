@@ -50,8 +50,6 @@ export function renderShell(mount: HTMLElement): Shell {
     const next = toggleTheme();
     themeButton.innerHTML = themeToggleIcon(next);
   });
-  // The theme toggle comes before the mobile menu button; the menu button is the
-  // last item and shows only at mobile width.
   header.append(themeButton);
 
   const main = element("main", "ui-main");

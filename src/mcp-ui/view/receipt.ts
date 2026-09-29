@@ -1,10 +1,8 @@
 import { receiptForCard } from "./receiptData.js";
-import { chainReceiptView } from "../../../review-app/src/ui/chainReceiptView.js";
-import { disposePtbGraphs } from "../../../review-app/src/ui/ptbDiagram.js";
+import { receiptSummary } from "../../../review-app/src/ui/receiptSummary.js";
 import { asRecord } from "../../../review-app/src/parse.js";
 import { element } from "../../../review-app/src/ui/ui.js";
 import type { CardRenderer } from "./lifecycle.js";
-import "../../../review-app/src/receipt.css";
 
 export const receiptRenderer = {
   title: "Transaction result",
@@ -16,7 +14,6 @@ export const receiptRenderer = {
       return { node: element("p", "ui-note", message) };
     }
     const receipt = receiptForCard(snapshot, display);
-    const node = chainReceiptView(receipt, { summary: true });
-    return { node, dispose: () => disposePtbGraphs(node) };
+    return { node: receiptSummary(receipt) };
   }
 } satisfies CardRenderer;

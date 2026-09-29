@@ -182,7 +182,10 @@ material-bound quote policy evidence, while object ownership is cited only as
 review evidence from stored transaction material and Sui owner/type reads.
 Do not use `reviewState.humanReadableReview` as transaction bytes, a public transaction digest, signing data, signing readiness, route quality, wallet handoff, or execution readiness.
 Treat any display amount in this field as presentation context only, not as a
-signing or review-time simulation input.
+signing or review-time simulation input. Its explanatory notes, including missing evidence and unsupported claims, were recorded
+during the human-readable evidence stage. Use the final review checks and
+adapterLifecycle.missingStages for current missing stages; do not present an
+earlier simulation note as a current failure after simulation completed.
 
 Use `reviewState.simulation` only as a public summary of server-side
 review-time simulation evidence for the stored local material. It can explain
@@ -322,6 +325,8 @@ success/failure. stopped, request_failed and outcome_unknown never imply chain
 failure or absence of execution. Use `session.get_execution_result` to read the
 known digest without resubmitting. `session.open_review_management` requires the
 exact reviewSessionId and attemptId and grants no new signing/refresh action.
+With one available wallet/account, the Review card shows the target and uses its explicit action button for selection; no dropdown is needed. Multiple candidates require a selection. Preparation and approval remain separate user actions. The standalone Receipt card is a result summary, without input/PTB controls. Private display metadata does not prove those controls are visible; detailed reviewed/chain facts are available in Review disclosures.
+
 Frame recreation and chat navigation only reread DB state. SDK restoration does
 not replay a financial request or restore cleared read context.
 
