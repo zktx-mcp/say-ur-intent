@@ -68,6 +68,33 @@ after the process stops. It does not pair, sign, submit, publish, or mutate the
 user's data. Success verifies this automated package boundary; real Host and
 wallet integration checks remain separate release requirements.
 
+## Public npm Availability Before MCP Registry Registration
+
+`node scripts/wait-for-npm-publication.ts` is a read-only source-checkout
+maintainer/CI command. It requires Node 22.18 or newer with native TypeScript
+support and public npm access; it needs no installed dependencies or npm token.
+Run it from the checkout root. It reads `name`, `version` and `mcpName` from
+`package.json` and requires matching metadata from that exact public npm version
+endpoint before succeeding. It does not install, publish, approve a staged
+package, change dist-tags, or call a wallet or Sui endpoint.
+
+The publication workflow runs it after the npm job succeeds and before the MCP
+publisher is installed or authenticated. HTTP 404, 429, 5xx and network failures
+are retried within a 20-minute CI budget. This reuses the npm job's existing
+20-minute allowance; it is not a promise that npm scanning completes in that
+time. Checks are 30 seconds apart (at most 40 requests), with a 10-second request
+and response-body deadline matching the Registry's npm validator. A longer
+`Retry-After` is respected within the overall budget. The Registry job retains
+its original 10-minute registration allowance in addition to the wait, for a
+30-minute job limit.
+
+Other HTTP errors, invalid JSON and mismatched or missing metadata fail the
+check. A timeout also fails without attempting Registry registration. Check npm
+availability and retry only the Registry job; re-uploading a version that is
+still being scanned can produce a staged-version conflict. The script is not a
+packaged command or MCP tool. Re-running an existing GitHub Actions run uses its
+original workflow revision, so changes to this gate apply to subsequent releases.
+
 ## Mainnet Read Smoke
 
 This is a manual maintainer check for a specific mainnet provider. Normal quickstart use does not require Sui endpoint setup. Run it for people operating releases or debugging mainnet read shape.

@@ -65,7 +65,8 @@ jobs:
           # Build provenance needs a public repository, so it is enabled only when
           # the repo is public; on a private repo it stays off so the publish still runs.
           provenance: ${{ !github.event.repository.private }}
-          # Re-running the workflow is a no-op once this version is already on npm.
+          # Already-public versions are skipped. A version still being scanned
+          # is not public yet; retry the downstream Registry job, not this upload.
           strategy: upgrade
           # Prerelease GitHub releases publish under the `next` dist-tag; stable
           # (non-prerelease) releases publish under `latest`.
@@ -80,11 +81,18 @@ jobs:
     # publish to npm under the "next" dist-tag (handled by the job above).
     if: ${{ !github.event.release.prerelease }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Up to 20 minutes for public npm availability, plus the original 10-minute
+    # budget for metadata checks, publisher installation and registration.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node for the public npm check
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       # Publish exactly the metadata that passed the package release check.
       - name: Verify MCP Registry package metadata
@@ -98,6 +106,9 @@ jobs:
             throw new Error('MCP Registry metadata differs from the verified package');
           }
           NODE
+
+      - name: Wait for the published npm version to become public
+        run: node scripts/wait-for-npm-publication.ts
 
       - name: Install mcp-publisher
         run: |
