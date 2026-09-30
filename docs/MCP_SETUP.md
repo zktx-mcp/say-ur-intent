@@ -116,7 +116,7 @@ per-client configuration below, which give the exact `command` and `args`.
 
 The npm package for this release is `@zktx.io/say-ur-intent`. The commands below
 require the requested version to be published; confirm it with
-`npm view @zktx.io/say-ur-intent@0.4.3 version` before switching. Both installation
+`npm view @zktx.io/say-ur-intent@0.4.4 version` before switching. Both installation
 methods start the same `say-ur-intent` stdio MCP server. Use a local checkout when
 working on a version that has not been published.
 
@@ -168,8 +168,8 @@ command, for example `"command": "cmd", "args": ["/c", "npx", "-y", "@zktx.io/sa
 
 ## Switching the Installed Package
 
-These steps cover switching to 0.4.3 from 0.4.0, 0.4.1 or 0.4.2, which use the same
-database format. Confirm the new package version is available before changing
+These steps cover switching to 0.4.4 from 0.4.0–0.4.3, which use the same database
+format. Confirm the new package version is available before changing
 your client configuration. Keep the same data directory and shared review port
 so the existing settings, wallet connection and stored results remain accessible.
 This package update does not require deleting the database or repeating a
@@ -183,7 +183,7 @@ restart first.
 
 Replace the old registration instead of adding a second one. Use exactly
 `say-ur-intent` for the registration name, and select the intended package version
-in its command arguments, such as `@zktx.io/say-ur-intent@0.4.3`. Do not append an
+in its command arguments, such as `@zktx.io/say-ur-intent@0.4.4`. Do not append an
 environment label, version or numeric suffix. With a global install, verify that
 `say-ur-intent` resolves to the intended installation.
 
@@ -666,7 +666,7 @@ If the user supplied a specific Sui address for `read.summarize_wallet_assets` o
 
 A 404 means the requested package or version could not be retrieved from the
 selected registry. Confirm the exact name and version, for example with
-`npm view @zktx.io/say-ur-intent@0.4.3 version --registry=https://registry.npmjs.org`.
+`npm view @zktx.io/say-ur-intent@0.4.4 version --registry=https://registry.npmjs.org`.
 A new version may not have been published or become visible yet; a mistyped name
 or an alternate/private registry can also explain the response. Check the
 publication result and registry configuration before retrying. Do not assume

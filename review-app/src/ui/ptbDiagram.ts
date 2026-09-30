@@ -178,6 +178,12 @@ export function createPtbGraphView(labels?: {
 
 type PanZoomHandle = { center: () => void; zoomBy: (factor: number) => void };
 
+// A button press or 100 CSS pixels of wheel travel uses a 1.1x zoom step
+// (the reciprocal for zooming out). Small trackpad deltas contribute
+// proportionally; equal total travel has the same effect across event rates.
+const ZOOM_STEP = 1.1;
+const WHEEL_PIXELS_PER_STEP = 100;
+
 // Wheel-to-zoom (toward the cursor) and drag-to-pan, applied as a CSS transform on
 // the content layer (CSSOM transforms are not subject to the style-src CSP). The
 // clipping + cursor come from the stylesheet; this only writes the transform.
@@ -210,9 +216,21 @@ function attachPanZoom(viewport: HTMLElement, content: HTMLElement): PanZoomHand
   viewport.addEventListener(
     "wheel",
     (event) => {
+      if (event.deltaY === 0) return;
+      // Wheel deltas can be pixels, text lines, or pages. Use this viewport's
+      // rendered line/page size; a normal line height falls back to one em.
+      let unit = 1;
+      if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+        const style = getComputedStyle(viewport);
+        unit = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize);
+      } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+        unit = viewport.clientHeight;
+      }
+      const pixels = event.deltaY * unit;
+      if (!Number.isFinite(pixels) || pixels === 0) return;
       event.preventDefault();
       const rect = viewport.getBoundingClientRect();
-      zoomAt(event.clientX - rect.left, event.clientY - rect.top, event.deltaY < 0 ? 1.12 : 1 / 1.12);
+      zoomAt(event.clientX - rect.left, event.clientY - rect.top, ZOOM_STEP ** (-pixels / WHEEL_PIXELS_PER_STEP));
     },
     { passive: false }
   );
@@ -254,8 +272,8 @@ function attachPanZoom(viewport: HTMLElement, content: HTMLElement): PanZoomHand
 function buildControls(handle: PanZoomHandle, labels?: { zoomIn?: string; zoomOut?: string; center?: string }): HTMLElement {
   const controls = element("div", "ui-ptb-graph-controls");
   controls.append(
-    iconButton(ZOOM_IN_ICON, labels?.zoomIn ?? "Zoom in", () => handle.zoomBy(1.25)),
-    iconButton(ZOOM_OUT_ICON, labels?.zoomOut ?? "Zoom out", () => handle.zoomBy(1 / 1.25)),
+    iconButton(ZOOM_IN_ICON, labels?.zoomIn ?? "Zoom in", () => handle.zoomBy(ZOOM_STEP)),
+    iconButton(ZOOM_OUT_ICON, labels?.zoomOut ?? "Zoom out", () => handle.zoomBy(1 / ZOOM_STEP)),
     iconButton(CENTER_ICON, labels?.center ?? "Center", () => handle.center())
   );
   // A click on a control must not also start a pan on the viewport beneath it.

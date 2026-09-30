@@ -7,12 +7,12 @@
     "url": "https://github.com/zktx-mcp/say-ur-intent",
     "source": "github"
   },
-  "version": "0.4.3",
+  "version": "0.4.4",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@zktx.io/say-ur-intent",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "transport": {
         "type": "stdio"
       }
