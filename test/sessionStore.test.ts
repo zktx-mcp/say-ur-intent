@@ -932,6 +932,14 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
         status: "success"
       }
     });
+    const expiredAt = new Date(Date.parse(materialHandle.expiresAt) + 1);
+    const expired = await store.getReviewSession(session.id, () => expiredAt);
+    expect(expired?.reviewState).toMatchObject({ status: "blocked", blockedReason: "wallet_review_contract_emit_missing",
+      evidenceValidity: "invalidated", checks: reviewState.checks, adapterLifecycle: reviewState.adapterLifecycle });
+    expect(expired?.reviewState?.humanReadableReview).toBeUndefined();
+    expect(expired?.reviewState?.simulation).toBeUndefined();
+    expect(await readPrivateArtifacts(store, session.id, expiredAt)).toBeUndefined();
+
   });
 
   it("rejects public review-time simulation state that is not projected from private evidence", async () => {
@@ -1092,7 +1100,7 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     expect(materialStore.getTransactionMaterial(materialHandle, new Date("2026-06-06T00:01:00.000Z"))).toBeUndefined();
   });
 
-  it("marks private-derived human-readable review state refresh-required after material expiry", async () => {
+  it("invalidates expired human-readable evidence while preserving the failed producer stage", async () => {
     const materialStore = new InMemoryLocalTransactionMaterialStore();
     const store = createSessionStore({ transactionMaterialStore: materialStore });
     const createdAt = new Date("2026-06-06T00:00:00.000Z");
@@ -1157,11 +1165,13 @@ describe.each(SESSION_STORE_BACKENDS)("LocalSessionStore (%s)", (_backendLabel, 
     const staleSession = await store.getReviewSession(session.id, () => new Date("2026-06-06T00:00:31.000Z"));
 
     expect(staleSession).toMatchObject({
-      status: "refresh_required",
+      status: "blocked",
       reviewState: {
-        status: "refresh_required",
-        refreshReason: "quote_stale",
-        checks: [expect.objectContaining({ id: "private_review_artifacts_refresh_required", status: "fail" })]
+        status: "blocked",
+        blockedReason: "producer_stage_missing",
+        evidenceValidity: "invalidated",
+        checks: reviewState.checks,
+        adapterLifecycle: reviewState.adapterLifecycle
       }
     });
     expect(staleSession?.reviewState?.humanReadableReview).toBeUndefined();

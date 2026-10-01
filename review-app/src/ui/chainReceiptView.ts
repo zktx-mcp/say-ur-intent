@@ -1,30 +1,30 @@
-// Detailed chain facts used only by the Review disclosure. The standalone
-// Receipt imports the graph-free summary module instead.
+// Supplementary chain facts inside one disclosure, without nested disclosures.
 import type { PublicChainReceipt, PublicChainReceiptEvent, PublicChainReceiptInput } from "../../../src/core/action/suiChainReceiptReader.js";
 import type { SuiChainReceiptPackageCall } from "../../../src/core/action/suiChainReceiptEvidence.js";
-import { accordion, element, detailItem, mono, placeholder, row } from "./ui.js";
-import { ptbGraphCard } from "./ptbDiagram.js";
+import { section, detailItem, element, mono, placeholder, row, timeValue } from "./ui.js";
 import { qualifiedName, shortHex, shortType, suiAmount, typeName } from "../format.js";
 import { t } from "../i18n/i18n.js";
 
 export function chainReceiptDetails(receipt: PublicChainReceipt): HTMLElement {
-  const node = element("div");
+  const node = section();
+  node.append(row("Transaction hash", mono(receipt.txDigest)), row(t.common.retrievedAt, timeValue(receipt.fetchedAt)));
+  if (!receipt.effectsStatus.success && receipt.effectsStatus.errorMessage) node.append(row("Failure details", receipt.effectsStatus.errorMessage));
+  node.append(element("h3", "ui-section-title", "Network fee breakdown"));
+  node.append(element("p", "ui-note", t.receipt.netFeeExplanation));
   for (const item of gasRows(receipt.gas)) node.append(item);
-  if (receipt.gas.budgetMist !== undefined) node.append(row(t.receipt.gasBudget, suiAmount(receipt.gas.budgetMist)));
+  if (receipt.gas.budgetMist !== undefined) node.append(row(t.receipt.gasBudget, suiAmount(receipt.gas.budgetMist)), element("p", "ui-note", t.receipt.gasLimitExplanation));
   if (receipt.gas.priceMist !== undefined) node.append(row(t.receipt.gasPrice, `${receipt.gas.priceMist} MIST`));
   if (receipt.gas.paymentObjectId !== undefined) node.append(row(t.receipt.gasPayment, mono(receipt.gas.paymentObjectId)));
   if (receipt.balanceChanges.length) {
-    const balances = accordion("Balance change records");
-    for (const change of receipt.balanceChanges) balances.body.append(detailItem({
+    const balances = section("Balance change records (raw units)");
+    for (const change of receipt.balanceChanges) balances.append(detailItem({
       title: change.symbol ?? typeName(change.coinType), trailing: `${change.amountRaw} raw units`,
-      metas: [{ label: "Account", value: change.address }, { value: change.coinType }]
+      metas: [{ label: t.receipt.account, value: change.address }, { value: change.coinType }]
     }));
-    node.append(balances.details);
+    node.append(balances);
   }
-  if (receipt.ptbGraph) node.append(ptbGraphCard({ source: "receipt", mermaid: receipt.ptbGraph.mermaid }));
-  else node.append(placeholder("Input values or the transaction graph may be unavailable; missing details do not mean the transaction had no inputs."));
-  node.append(inputsAccordion(receipt.inputs), moveCallsAccordion(receipt.packageCalls),
-    objectChangesAccordion(receipt.objectTypes), eventsAccordion(receipt.events));
+  node.append(inputsSection(receipt.inputs), moveCallsSection(receipt.packageCalls),
+    objectChangesSection(receipt.objectTypes), eventsSection(receipt.events));
   return node;
 }
 
@@ -34,8 +34,8 @@ export function gasRows(gas: { computationMist: string; storageMist: string; sto
     row(t.receipt.gasStorage, suiAmount(gas.storageMist)), row(t.receipt.gasRebate, suiAmount(gas.storageRebateMist))];
 }
 
-function inputsAccordion(inputs: PublicChainReceiptInput[]): HTMLElement {
-  const { details, body } = accordion(`${t.receipt.inputs} (${inputs.length})`);
+function inputsSection(inputs: PublicChainReceiptInput[]): HTMLElement {
+  const body = section(`${t.receipt.inputs} (${inputs.length})`);
   if (inputs.length === 0) {
     body.append(placeholder(t.receipt.noInputs));
   } else {
@@ -50,11 +50,11 @@ function inputsAccordion(inputs: PublicChainReceiptInput[]): HTMLElement {
       body.append(detailItem({ title: t.receipt.inputKinds[inputEntry.kind], metas }));
     }
   }
-  return details;
+  return body;
 }
 
-function moveCallsAccordion(calls: SuiChainReceiptPackageCall[]): HTMLElement {
-  const { details, body } = accordion(`${t.receipt.moveCalls} (${calls.length})`);
+function moveCallsSection(calls: SuiChainReceiptPackageCall[]): HTMLElement {
+  const body = section(`${t.receipt.moveCalls} (${calls.length})`);
   if (calls.length === 0) {
     body.append(placeholder(t.receipt.noMoveCalls));
   } else {
@@ -64,12 +64,12 @@ function moveCallsAccordion(calls: SuiChainReceiptPackageCall[]): HTMLElement {
       );
     }
   }
-  return details;
+  return body;
 }
 
-function objectChangesAccordion(objectTypes: Record<string, string>): HTMLElement {
+function objectChangesSection(objectTypes: Record<string, string>): HTMLElement {
   const entries = Object.entries(objectTypes);
-  const { details, body } = accordion(`${t.receipt.objectChanges} (${entries.length})`);
+  const body = section(`${t.receipt.objectChanges} (${entries.length})`);
   if (entries.length === 0) {
     body.append(placeholder(t.receipt.noObjectChanges));
   } else {
@@ -85,11 +85,11 @@ function objectChangesAccordion(objectTypes: Record<string, string>): HTMLElemen
       );
     }
   }
-  return details;
+  return body;
 }
 
-function eventsAccordion(events: PublicChainReceiptEvent[]): HTMLElement {
-  const { details, body } = accordion(`${t.receipt.events} (${events.length})`);
+function eventsSection(events: PublicChainReceiptEvent[]): HTMLElement {
+  const body = section(`${t.receipt.events} (${events.length})`);
   if (events.length === 0) {
     body.append(placeholder(t.receipt.noEvents));
   } else {
@@ -102,6 +102,5 @@ function eventsAccordion(events: PublicChainReceiptEvent[]): HTMLElement {
       );
     }
   }
-  return details;
+  return body;
 }
-

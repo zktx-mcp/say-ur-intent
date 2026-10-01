@@ -23,7 +23,7 @@ describe("theme toggle icon reflects the current theme (Plan B)", () => {
 const BARE_INTERACTIVE_ELEMENTS = ["button", "input", "select", "textarea"];
 
 it("internal cards do not invoke clipboard APIs or offer copy controls", () => {
-  for (const file of ["src/mcp-ui/view/lifecycle.ts", "src/mcp-ui/view/account.ts", "src/mcp-ui/view/receipt.ts", "src/mcp-ui/view/chart.ts", "src/mcp-ui/view/review.ts", "src/mcp-ui/view/connect.ts", "review-app/src/ui/receiptSummary.ts", "review-app/src/ui/chainReceiptView.ts", "review-app/src/ui/ui.ts", "review-app/src/ui/ptbDiagram.ts"]) {
+  for (const file of ["src/mcp-ui/view/lifecycle.ts", "src/mcp-ui/view/account.ts", "src/mcp-ui/view/receipt.ts", "src/mcp-ui/view/chart.ts", "src/mcp-ui/view/review.ts", "src/mcp-ui/view/connect.ts", "review-app/src/ui/receiptSummary.ts", "review-app/src/ui/receiptView.ts", "review-app/src/ui/chainReceiptView.ts", "review-app/src/ui/ui.ts", "review-app/src/ui/ptbDiagram.ts"]) {
     const source = readFileSync(join(process.cwd(), file), "utf8");
     expect(source, file).not.toMatch(/navigator\.clipboard|execCommand|copyTextButton|copyIconButton|copyButton|Copy Markdown|window\.prompt/);
   }

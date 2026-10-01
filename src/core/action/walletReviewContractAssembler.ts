@@ -145,7 +145,7 @@ export function mapReviewTimeSimulationEvidenceToContractDraft(
     id: sourceId,
     kind: "review_time_simulation",
     network: "sui:mainnet",
-    source: "Checks-enabled Sui gRPC simulation with identical returned transaction bytes and effects digest",
+    source: "Sui gRPC simulation with validation enabled; returned transaction bytes and effects matched the stored transaction",
     verifiedAt: evidence.simulatedAt,
     fields: [...WALLET_REVIEW_REQUIRED_SIMULATION_FIELDS]
   }) as AdapterSourceOfTruth;
@@ -208,7 +208,7 @@ export function mapReviewTimeSimulationGasToContractDraft(
       id: gasUsedSourceId,
       kind: "review_time_simulation",
       network: "sui:mainnet",
-      source: "Gas cost summary components from checks-enabled simulation of stored local transaction material",
+      source: "Network fee components estimated by simulation of the stored transaction with validation enabled",
       verifiedAt: evidence.simulatedAt,
       fields: ["gasUsedRaw", "asset", "amountRole"]
     }) as AdapterSourceOfTruth);
@@ -231,7 +231,7 @@ export function mapReviewTimeSimulationGasToContractDraft(
       id: gasBudgetSourceId,
       kind: "review_time_simulation",
       network: "sui:mainnet",
-      source: "Gas budget from the simulated stored local transaction data",
+      source: "Network fee limit (gas budget) recorded in the transaction used for simulation",
       verifiedAt: evidence.simulatedAt,
       fields: ["gasBudgetRaw", "asset", "amountRole"]
     }) as AdapterSourceOfTruth);
@@ -280,7 +280,7 @@ export function mapSwapQuotePolicyExpiryToContractDraft(
     id: sourceId,
     kind: "validated_request_fact",
     network: "sui:mainnet",
-    source: "Quote policy expiry window (quote fetchedAt plus staleAfterMs) checked against the review-time clock",
+    source: "Quote validity period (retrieval time plus validity duration), checked when the review was prepared",
     verifiedAt: checkedAt,
     fields: ["checkedAt", "expiresAt"]
   }) as AdapterSourceOfTruth;

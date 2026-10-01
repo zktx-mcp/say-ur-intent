@@ -1,6 +1,5 @@
 // Shared PTB (Mermaid) graph renderer — the single source for turning Mermaid
-// text into an SVG for Review preparation and observed-chain detail disclosures.
-// The standalone Receipt summary does not import this renderer. Caching and error
+// text into an SVG for reviewed and executed transactions. Caching and error
 // handling live in one place. The surrounding chrome (name toggle, Mermaid
 // source, diagnostics, boundary note) stays with each caller.
 //
@@ -8,7 +7,7 @@
 // zoom-in/out/center controls) makes a large graph legible. It is off by default
 // for callers that only need a static diagram.
 import mermaid from "mermaid";
-import { card, element, iconButton, info } from "./ui.js";
+import { section, element, iconButton, info } from "./ui.js";
 import { t } from "../i18n/i18n.js";
 
 // Mermaid is themed from the app's own design tokens (read live from the document),
@@ -51,8 +50,8 @@ function ensureMermaid(): void {
   if (initialized && key === mermaidThemeKey) {
     return;
   }
-  mermaidThemeKey = key;
   mermaid.initialize(mermaidConfig());
+  mermaidThemeKey = key;
   initialized = true;
   // Cached SVGs were painted for the previous theme; drop them so the next render
   // repaints with the new tokens.
@@ -80,7 +79,7 @@ export type PtbGraphView = {
   // Append this where the graph should appear.
   readonly element: HTMLElement;
   // Render (or re-render) the given Mermaid text into the element.
-  render(mermaidText: string): void;
+  render(mermaidText: string): Promise<"rendered" | "failed" | "discarded">;
   dispose(): void;
 };
 
@@ -115,47 +114,70 @@ export function createPtbGraphView(labels?: {
 
   let lastText: string | undefined;
   let lastRenderedSvg: string | undefined;
+  let renderedText: string | undefined;
+  let renderedTheme: string | undefined;
+  let showingSvg = false;
   let disposed = false;
   let revision = 0;
-  const render = (text: string): void => {
-    if (disposed) return;
-    const requestedRevision = ++revision;
+  type RenderOutcome = "rendered" | "failed" | "discarded";
+  let latestRender: Promise<RenderOutcome> = Promise.resolve("discarded");
+  const renderSvg = async (text: string, requestedRevision: number): Promise<RenderOutcome> => {
+    if (disposed) return "discarded";
     lastText = text;
     // Re-init Mermaid when the app theme changed since the last render so the SVG is
     // repainted with the current tokens (this also clears the now-stale SVG cache).
-    ensureMermaid();
+    try { ensureMermaid(); }
+    catch (error) {
+      showingSvg = false;
+      content.textContent = `${failedLabel}: ${error instanceof Error ? error.message : String(error)}`;
+      element.classList.add("ui-ptb-graph--error");
+      return "failed";
+    }
+    if (showingSvg && lastRenderedSvg && renderedText === text && renderedTheme === mermaidThemeKey) return "rendered";
     element.classList.remove("ui-ptb-graph--error");
     const cached = svgCache.get(text);
     if (cached) {
       // Already rendered this exact graph: inject synchronously, no flash.
       content.innerHTML = cached;
+      showingSvg = true;
       lastRenderedSvg = cached;
+      renderedText = text;
+      renderedTheme = mermaidThemeKey;
       panZoom?.center();
-      return;
+      return "rendered";
     }
     // Keep the previous graph visible while the new one renders so a refresh
     // never blanks to a placeholder.
-    if (lastRenderedSvg) {
-      content.innerHTML = lastRenderedSvg;
-    } else {
+    if (!lastRenderedSvg) {
       content.textContent = renderingLabel;
     }
     renderSequence += 1;
-    void mermaid
-      .render(`ptb-graph-${renderSequence}`, text)
-      .then((rendered) => {
-        if (disposed || requestedRevision !== revision) return;
+    try {
+        const rendered = await mermaid.render(`ptb-graph-${renderSequence}`, text);
+        if (disposed || requestedRevision !== revision) return "discarded" as const;
         svgCache.set(text, rendered.svg);
         lastRenderedSvg = rendered.svg;
+        renderedText = text;
+        renderedTheme = mermaidThemeKey;
         content.innerHTML = rendered.svg;
+        showingSvg = true;
         panZoom?.center();
-      })
-      .catch((error: unknown) => {
-        if (disposed || requestedRevision !== revision) return;
+        return "rendered" as const;
+    } catch (error: unknown) {
+        if (disposed || requestedRevision !== revision) return "discarded" as const;
         // Name the failure rather than hiding it behind the placeholder text.
         content.textContent = `${failedLabel}: ${error instanceof Error ? error.message : String(error)}`;
+        showingSvg = false;
         element.classList.add("ui-ptb-graph--error");
-      });
+        return "failed" as const;
+    }
+  };
+  const render = (text: string): Promise<RenderOutcome> => {
+    const requestedRevision = ++revision;
+    const completion = renderSvg(text, requestedRevision).then((outcome) =>
+      outcome === "discarded" && !disposed && requestedRevision !== revision ? latestRender : outcome);
+    latestRender = completion;
+    return completion;
   };
 
   // Re-render through the theme-aware Mermaid config whenever the app theme toggles,
@@ -290,46 +312,56 @@ const EYE_OFF_ICON =
 
 // Shared presentation does not imply shared evidence provenance. Every caller
 // identifies whether its diagram came from local preparation or a chain receipt.
-export function ptbGraphCard(opts: { source: "review" | "receipt"; mermaid: { text: string; namedText: string } }): HTMLElement {
-  const panel = card();
-  panel.classList.add("ptb-graph-card");
+export function transactionGraph(opts: { source: "review" | "receipt"; mermaid: { text: string; namedText: string } }): HTMLElement {
+  return createTransactionGraph(opts).node;
+}
+
+export function createTransactionGraph(opts: { source: "review" | "receipt"; mermaid: { text: string; namedText: string } }) {
+  const panel = section();
+  panel.classList.add("transaction-graph");
   // Title bar: the "Transaction graph" text with its diagnostics-only ⓘ tooltip right
   // beside it; the eye action sits on the far side.
-  const head = element("h2", "ui-card-head");
-  const title = element("span", "ptb-graph-title", t.receipt.graph);
+  const head = element("h2", "ui-section-title");
+  const title = element("span", "ptb-graph-title", opts.source === "review" ? "Transaction being reviewed" : "Executed transaction");
   title.append(" ", info(opts.source === "review" ? t.receipt.graphReviewTip : t.receipt.graphTip));
   head.append(title);
   panel.append(head);
-  const { text, namedText } = opts.mermaid;
-  const hasNames = namedText !== text;
-  let showingNames = hasNames;
+  let { text, namedText } = opts.mermaid;
+  let showingNames = true;
 
-  const view = createPtbGraphView({
-    rendering: t.receipt.graphRendering,
-    failed: t.receipt.graphFailed,
-    panZoom: true,
-    zoomIn: t.receipt.graphZoomIn,
-    zoomOut: t.receipt.graphZoomOut,
-    center: t.receipt.graphCenter
-  });
-  // view.element already carries .ui-ptb-graph, themed by ui.css on every page, so the
-  // graph looks identical on the review and receipt pages.
+  // One graph surface serves both the review and observed result cards.
   const slot = element("div", "ui-chain-receipt-ptb");
-  slot.append(view.element);
+  let view: PtbGraphView | undefined, disposed = false;
+  const render = () => {
+    if (disposed) return Promise.resolve("discarded" as const);
+    if (!view) {
+      try {
+        view = createPtbGraphView({ rendering: t.receipt.graphRendering, failed: t.receipt.graphFailed,
+          panZoom: true, zoomIn: t.receipt.graphZoomIn, zoomOut: t.receipt.graphZoomOut, center: t.receipt.graphCenter });
+        slot.replaceChildren(view.element);
+      } catch {
+        slot.replaceChildren(element("p", "ui-note", "The transaction graph could not be displayed. Transaction facts remain available below."));
+        return Promise.resolve("failed" as const);
+      }
+    }
+    return view.render(showingNames ? namedText : text);
+  };
 
   const actions = element("div", "ui-ptb-actions");
-  if (hasNames) {
-    const eyeButton = iconButton(EYE_ICON, t.receipt.graphShowAddresses, () => {
+  const eyeButton = iconButton(EYE_ICON, t.receipt.graphShowAddresses, () => {
       showingNames = !showingNames;
       eyeButton.innerHTML = showingNames ? EYE_ICON : EYE_OFF_ICON;
       eyeButton.setAttribute("aria-label", showingNames ? t.receipt.graphShowAddresses : t.receipt.graphShowNames);
-      view.render(showingNames ? namedText : text);
+      void render();
     });
-    actions.append(eyeButton);
-  }
+  if (namedText !== text) actions.append(eyeButton);
   head.append(actions);
 
   panel.append(slot);
-  view.render(showingNames ? namedText : text);
-  return panel;
+  const ready = render();
+  return { node: panel, ready, update: (mermaid: typeof opts.mermaid) => {
+    text = mermaid.text; namedText = mermaid.namedText;
+    actions.replaceChildren(...(namedText !== text ? [eyeButton] : []));
+    return render();
+  }, dispose: () => { disposed = true; view?.dispose(); } };
 }

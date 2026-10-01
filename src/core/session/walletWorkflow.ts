@@ -124,13 +124,13 @@ export class WalletWorkflow {
     if (kind === "connect") return availability.status === "available" ? { status: "ready" } : {
       status: "failed", error: availability.message
     };
-    if (typeof input.reviewSessionId !== "string") throw new WorkflowConflict("An exact review session is required.");
+    if (typeof input.reviewSessionId !== "string") throw new WorkflowConflict("The requested review was not specified.");
     const session = await this.options.sessions.getReviewSession(input.reviewSessionId, () => this.now()); this.assertCurrent();
     if (!session) throw new WorkflowConflict("The review session is unavailable.");
     if (input.mode === "manage") {
-      if (typeof input.attemptId !== "string") throw new WorkflowConflict("An exact transaction attempt is required.");
+      if (typeof input.attemptId !== "string") throw new WorkflowConflict("The transaction request to check was not specified.");
       const request = this.options.records.request(input.attemptId);
-      if (!request || request.reviewSessionId !== session.id) throw new WorkflowConflict("The attempt does not belong to this review session.");
+      if (!request || request.reviewSessionId !== session.id) throw new WorkflowConflict("This transaction request does not belong to the specified review.");
     }
     return { status: "ready" };
   }
@@ -237,7 +237,7 @@ export class WalletWorkflow {
         return;
       }
       case "use_account": {
-        if (!action.account) throw new WorkflowConflict("Select an account approved by the wallet.");
+        if (!action.account) throw new WorkflowConflict("No account from the connected wallet was selected.");
         const target = this.options.records.connection(action.connectionId);
         if (target?.topic) this.reconcile(target.topic);
         this.options.records.useAccount(record, action, action.connectionId, action.account); return;
@@ -272,7 +272,7 @@ export class WalletWorkflow {
         const id = String(record.state.input.reviewSessionId);
         const connection = this.requireWallet(action.connectionId, action.account);
         const session = this.options.sessions.readReviewSession(id);
-        if (!session || session.reviewRevision !== action.reviewRevision || !session.plans[0]) throw new WorkflowConflict("Review revision changed.");
+        if (!session || session.reviewRevision !== action.reviewRevision || !session.plans[0]) throw new WorkflowConflict("This request does not match the current review.");
         let material;
         try { material = await this.options.sessions.prepareReviewedTransaction(id, session.plans[0].id, action.account, this.now()); }
         catch (error) {
@@ -280,7 +280,7 @@ export class WalletWorkflow {
           if (this.options.records.recoverRequest(record, action, { reviewSessionId: id, reviewRevision: action.reviewRevision,
             account: action.account, connectionId: action.connectionId })) return;
           await this.evaluateReview(id);
-          throw new WorkflowConflict("Reviewed evidence is unavailable. Read and update the review before signing.");
+          throw new WorkflowConflict("The transaction details needed for this approval request are no longer available.");
         }
         this.assertWalletAvailable();
         let admitted;
@@ -339,7 +339,7 @@ export class WalletWorkflow {
         const current = this.options.records.connection(id);
         if (current?.connection.status === "awaiting_approval") this.options.records.updateConnection(id,
           { status: error instanceof WalletUserRejectedError ? "rejected" : "failed",
-            reason: this.walletFailure ? "Wallet connection could not be confirmed. Check the connection in your wallet app and restart the local backend." :
+            reason: this.walletFailure ? "The wallet connection could not be confirmed because the wallet service is unavailable." :
               error instanceof WalletUserRejectedError ? error.message : "Wallet connection could not be confirmed." }, this.now(), undefined, false);
       }
     } finally { try { if (!this.stopped) this.options.records.settleConnection(id); } finally { this.pairings.delete(id); } }

@@ -133,7 +133,7 @@ function proposalReviewModel(proposal: ExternalProposal, now: Date): ProposalRev
     nonSignableReason: {
       code: "external_proposal_review_only",
       message:
-        "This review is non-signable because it only records an untrusted external proposal and does not build or verify transaction material.",
+        "You cannot request wallet approval or submit a transaction from this proposal. Its information was supplied by an external source and has not been independently verified as a transaction.",
       blockedCapabilities: [
         "transaction_building",
         "wallet_signing",
@@ -154,7 +154,7 @@ function freshnessSummary(proposal: ExternalProposal, now: Date): ProposalReview
       ...(proposal.expiresAt ? { proposalExpiresAt: proposal.expiresAt } : {}),
       evaluatedAt: now.toISOString(),
       status: "created_in_future",
-      reason: "The proposal createdAt timestamp is after the local review evaluation time."
+      reason: "The proposal says it was created after the time it was checked."
     };
   }
 
@@ -163,7 +163,7 @@ function freshnessSummary(proposal: ExternalProposal, now: Date): ProposalReview
       proposalCreatedAt: proposal.createdAt,
       evaluatedAt: now.toISOString(),
       status: "expiry_not_provided",
-      reason: "The proposal did not provide an expiry timestamp."
+      reason: "The proposal does not say when it expires."
     };
   }
 
@@ -173,7 +173,7 @@ function freshnessSummary(proposal: ExternalProposal, now: Date): ProposalReview
       proposalExpiresAt: proposal.expiresAt,
       evaluatedAt: now.toISOString(),
       status: "expired",
-      reason: "The proposal expiry timestamp is not after the local review evaluation time."
+      reason: "The proposal had already expired when it was checked."
     };
   }
 
@@ -182,7 +182,7 @@ function freshnessSummary(proposal: ExternalProposal, now: Date): ProposalReview
     proposalExpiresAt: proposal.expiresAt,
     evaluatedAt: now.toISOString(),
     status: "current",
-    reason: "The proposal createdAt and expiresAt timestamps are consistent with the local review evaluation time."
+    reason: "The stated creation and expiry times include the time this proposal was checked. Its other claims remain unverified."
   };
 }
 
@@ -275,7 +275,7 @@ function blockingChecksForProposal(
       id: "external_proposal_contract",
       label: "External proposal contract",
       status: "pass",
-      message: "The external proposal matched the read-only proposal schema.",
+      message: "The proposal contains the required information in the expected format. This does not verify its claims or permit a transaction.",
       source: "proposal"
     },
     {

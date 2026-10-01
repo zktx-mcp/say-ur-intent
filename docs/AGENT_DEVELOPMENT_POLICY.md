@@ -493,8 +493,10 @@ other boundaries, define the equivalent negative combinations before editing.
 - The review layer exists to explain execution before authorization, not to
   guarantee safety.
 - Review checks must use deterministic checks, not opaque AI risk scores.
-- Use `Ready for wallet review`, `Refresh required`, and `Blocked` for review
-  states. Avoid language that implies absolute safety.
+- Use `Ready for your review`, `Review needs updating`, and `Review blocked` for review
+  display states. These labels describe review information, not permission to
+  request wallet approval or a guarantee of execution. Keep public state enums
+  unchanged when editing display labels. Avoid language that implies absolute safety.
 - Keep unsupported actions clearly unsupported. Do not add unimplemented intent
   types in code.
 - Prefer read-only utilities before write actions when adding protocol coverage.
@@ -629,9 +631,10 @@ readable history. Do not use ambiguous global "latest result" semantics.
 
 Card permissions are short-lived, scoped to the card and target, and carried
 only in host UI metadata. Reads never create approval, pairing or a signature
-request. Frame recreation does not change DB state. Only the backend owns
-admission, request deadlines and chain observation. Settings page tokens remain
-in URL fragments and authenticated HTTP headers, never query strings or logs.
+request. Frame recreation is not an input transition. Its state read may
+reconcile existing deadlines and wallet records without starting a new
+operation. Only the backend owns admission, request deadlines and chain
+observation. Settings page tokens remain in URL fragments and authenticated HTTP headers, never query strings or logs.
 
 ## Utility Script Rule
 

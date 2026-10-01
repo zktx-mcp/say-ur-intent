@@ -654,9 +654,9 @@ It is not part of CI or `release:check`.
 
 For tools with an `account` input, provide an explicit Sui address in chat. DeepBook account inventory has no address input and needs a connected selected account. When connection or account selection is wanted:
 
-1. Open a Connect card with `session.create_wallet_connection`.
-2. Choose the connection operation in that internal card.
-3. Connect a Sui mainnet wallet.
+1. Open a Connect card with `session.create_wallet_connection` and `intent: connect`.
+2. The card prepares the QR after confirming current state.
+3. Scan it and approve the Sui mainnet connection in your wallet.
 4. Read or wait on that cardId; select an approved read account when required.
 5. Confirm connection availability with `session.get_interaction_status`. Stored read context alone is not a usable default for current asset reads.
 

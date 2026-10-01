@@ -1,33 +1,35 @@
 import QRCode from "qrcode";
+import { t } from "../../../review-app/src/i18n/i18n.js";
 import { workflowViewSchema, type WorkflowView } from "../../core/session/workflowView.js";
 import type { CardSnapshot, CardWalletDisplay } from "../contracts.js";
-import { card, element, row, monoShort, button, field, select, timeValue } from "../../../review-app/src/ui/ui.js";
-import type { CardRenderer } from "./lifecycle.js";
+import { section, accordion, element, row, monoShort, button, field, select, timeValue } from "../../../review-app/src/ui/ui.js";
+import type { CardDisplayRecovery, CardRenderer, CardViewContext } from "./lifecycle.js";
 import "./workflow.css";
 
 const connectionLabels: Record<NonNullable<WorkflowView["connection"]>["status"], string> = {
   awaiting_approval: "Approve the connection in your wallet", connected: "Wallet connected",
   rejected: "Connection declined", failed: "Connection could not be completed", expired: "Connection expired",
-  stopped: "Connection waiting stopped", disconnected: "Wallet disconnected"
+  stopped: "Connection request stopped", disconnected: "Wallet disconnected"
 };
 
-function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unknown>) => void, wallet?: CardWalletDisplay) {
+function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unknown>) => void, wallet?: CardWalletDisplay, context?: CardViewContext) {
   const data = workflowViewSchema.parse(snapshot.data);
-  const node = element("div", "workflow-card"), facts = card();
+  const node = element("div", "workflow-card"), facts = section();
   let disposed = false;
   const connected = data.connections.filter((connection) => connection.status === "connected");
   const available = connected.filter((connection) => connection.pendingAction === undefined);
   const pending = data.connections.some((connection) => connection.status === "awaiting_approval" || connection.pendingAction === "disconnect");
+  const waitingElsewhere = !data.connection && data.connections.some((connection) => connection.status === "awaiting_approval");
   const action = (label: string, input: Record<string, unknown>) => {
     const control = button(label, () => { if (!disposed) act?.(input); }, input.action === "disconnect" ? "danger" : input.action === "connect" ? "primary" : "secondary");
     control.dataset.cardAction = String(input.action); control.disabled = !act; return control;
   };
-  facts.append(row("Network", "Sui · Mainnet"));
+  facts.append(row("Network", t.common.mainnet));
   const status = row(data.walletAvailability.status === "unavailable" ? "Last recorded status" : "Status",
-    pending && connected.some((item) => item.pendingAction === "disconnect") ? "Disconnecting wallet…" : data.connection ? connectionLabels[data.connection.status] : connected.length ? "Wallet connected" : data.walletAvailability.status === "unavailable" ? "Connection not confirmed" : "No wallet connected");
+    pending && connected.some((item) => item.pendingAction === "disconnect") ? "Disconnecting wallet…" : data.connection ? connectionLabels[data.connection.status] : connected.length ? "Wallet connected" : waitingElsewhere ? "Connection approval is pending in another card" : data.walletAvailability.status === "unavailable" ? "Connection not confirmed" : "No wallet connected");
   status.setAttribute("role", "status"); facts.append(status);
   if (data.walletAvailability.status === "unavailable") {
-    facts.append(element("p", "ui-note", "The wallet connection cannot be checked right now. Restart the apps using Say Ur Intent, then try again."));
+    facts.append(element("p", "ui-note", "The wallet connection cannot be checked right now."));
     if (data.connection && !connected.some((connection) => connection.connectionId === data.connection!.connectionId)) {
       facts.append(row("Last updated", timeValue(data.connection.updatedAt)));
     }
@@ -37,10 +39,10 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
     facts.append(row("Selected account", monoShort(data.activeAccount)));
   }
   node.append(facts);
-  if (!connected.length && !pending && data.allowedActions.includes("connect")) facts.append(action("Connect wallet", { action: "connect" }));
+  const details = accordion("Details");
 
   const choices = available.flatMap((connection) => connection.accounts.map((account) => ({ connection, account })));
-  if (data.allowedActions.includes("use_account") && choices.some((choice) => choice.account !== data.activeAccount)) {
+  if (act && data.allowedActions.includes("use_account") && choices.some((choice) => choice.account !== data.activeAccount)) {
     const form = document.createElement("form"), choiceInput = select({ choices: [{ value: "", label: "Select an account" }, ...choices.map((choice) => ({ value: `${choice.connection.connectionId}:${choice.account}`, label: `${choice.connection.walletName ?? "Wallet"} · ${choice.account}` }))] });
     form.className = "ui-form";
     choiceInput.required = true; choiceInput.setAttribute("aria-label", "Account to use");
@@ -48,49 +50,87 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
     form.append(field("Account", choiceInput), use); form.addEventListener("submit", (event) => {
       event.preventDefault(); const choice = choices.find((item) => `${item.connection.connectionId}:${item.account}` === choiceInput.value);
       if (!disposed && choice) act?.({ action: "use_account", connectionId: choice.connection.connectionId, account: choice.account });
-    }); facts.append(form);
+    }); details.body.append(form);
   }
   for (const connection of connected) {
     const item = element("div");
     if (data.walletAvailability.status === "unavailable") item.append(row("Last updated", timeValue(connection.updatedAt)));
+    details.body.append(row("Connection expires", timeValue(connection.expiresAt)));
     for (const account of connection.accounts) item.append(row(connection.walletName ?? "Wallet", monoShort(account)));
-    if (!connection.pendingAction && data.allowedActions.includes("disconnect")) {
+    if (act && !connection.pendingAction && data.allowedActions.includes("disconnect")) {
       const controls = element("div", "card-actions");
       const open = button("Disconnect", () => undefined, "secondary"); open.dataset.cardAction = "disconnect"; open.disabled = !act;
       open.addEventListener("click", () => {
         if (disposed) return;
         const original = [...node.children];
-        const confirmation = card("Disconnect wallet?");
-        confirmation.append(row("Wallet", connection.walletName ?? "Wallet"), row("Network", "Sui · Mainnet"));
+        const confirmation = section("Disconnect wallet?");
+        confirmation.append(row("Wallet", connection.walletName ?? "Wallet"), row("Network", t.common.mainnet));
         for (const account of connection.accounts) confirmation.append(row("Account", monoShort(account)));
-        const cancel = button("Cancel", () => undefined, "secondary");
-        cancel.addEventListener("click", () => { if (!disposed) node.replaceChildren(...original); });
-        confirmation.append(action("Confirm disconnect", { action: "disconnect", connectionId: connection.connectionId }), cancel);
+        const back = button("Back", () => undefined, "secondary");
+        back.addEventListener("click", () => { if (!disposed) node.replaceChildren(...original); });
+        confirmation.append(action("Confirm disconnect", { action: "disconnect", connectionId: connection.connectionId }), back);
         node.replaceChildren(confirmation);
       });
       controls.append(open); item.append(controls);
+      if (snapshot.input.intent === "disconnect" && available.length === 1) queueMicrotask(() => { if (!disposed) open.click(); });
     }
     facts.append(item);
   }
-  let canvas: HTMLCanvasElement | undefined;
+  let canvas: HTMLCanvasElement | undefined, scanInstruction: HTMLElement | undefined;
   if (data.connection?.status === "awaiting_approval" && data.walletAvailability.status === "available") {
     if (wallet && wallet.connectionId === data.connection.connectionId) {
       canvas = document.createElement("canvas"); canvas.className = "workflow-qr";
+      canvas.hidden = true;
       canvas.setAttribute("role", "img"); canvas.setAttribute("aria-label", "Wallet connection QR code");
-      facts.append(element("p", "ui-note", "Scan with your Sui wallet."), canvas);
-    } else facts.append(element("p", "ui-note", "The QR code is unavailable. Reopen this same card to check the connection."));
+      scanInstruction = element("p", "ui-note workflow-qr-instruction", "Scan to connect your Sui wallet.");
+      scanInstruction.hidden = true;
+      facts.append(scanInstruction, canvas);
+    } else facts.append(element("p", "ui-note", "The QR code is not available in this view."));
   }
-  if (data.allowedActions.includes("stop_connection")) facts.append(action("Stop waiting", { action: "stop_connection" }));
-  if (!connected.length && data.allowedActions.includes("cancel")) facts.append(action("Close", { action: "cancel" }));
-  return { node, mount: () => {
-    if (canvas && wallet) void QRCode.toCanvas(canvas, wallet.pairingUri).catch(() => {
-      if (!disposed) facts.append(element("p", "ui-error", "The QR code could not be displayed. Reopen this same card."));
+  if (act && data.allowedActions.includes("stop_connection")) facts.append(action("Stop connecting", { action: "stop_connection" }));
+  if (details.body.children.length) facts.append(details.details);
+  let drawing = false, displayFailure: CardDisplayRecovery | undefined;
+  const draw = () => {
+    if (disposed || drawing || !canvas || !wallet) return;
+    drawing = true; displayFailure = undefined;
+    canvas.hidden = true;
+    if (scanInstruction) scanInstruction.hidden = true;
+    // Report the asynchronous result to the frame. A state read does not by
+    // itself mean this canvas was painted successfully.
+    void QRCode.toCanvas(canvas, wallet.pairingUri).then(() => {
+      if (disposed) return;
+      drawing = false; canvas!.hidden = false;
+      if (scanInstruction) scanInstruction.hidden = false;
+      context?.onDisplayChange?.();
+    }, () => {
+      if (disposed) return;
+      drawing = false;
+      displayFailure = { message: "The QR code could not be displayed.", retry: draw };
+      context?.onDisplayChange?.();
     });
-  }, dispose: () => { disposed = true; } };
+  };
+  return { node, mount: draw, displayRecovery: () => displayFailure, dispose: () => { disposed = true; } };
 }
 
 export const connectRenderer = {
   title: "Wallet connection",
-  controls: (snapshot, act, _display, wallet) => connectionView(snapshot, act, wallet),
-  result: (snapshot, _receipt, act, wallet) => connectionView(snapshot, act, wallet)
+  guidance(snapshot, context) {
+    const parsed = workflowViewSchema.safeParse(snapshot?.data);
+    if (!context.confirmed || !parsed.success) return context.recoveryNeeded ? "Ask in chat to check your wallet connection." : undefined;
+    const data = parsed.data;
+    if (data.walletAvailability.status === "unavailable") return t.common.walletStatusRecovery;
+    if (!data.connection && data.connections.some((connection) => connection.status === "awaiting_approval")) {
+      return "Continue in the wallet connection card you opened first.";
+    }
+    if (data.connection?.status === "awaiting_approval") {
+      return context.readOnly ? "You can ask in chat to check this connection request." : undefined;
+    }
+    if (data.connections.some((connection) => connection.status === "connected" || connection.pendingAction)) {
+      return context.recoveryNeeded && context.readOnly ? "Ask in chat to check your wallet connection." : undefined;
+    }
+    if (data.automaticAction && !context.automaticPaused) return undefined;
+    return "Ask in chat to connect your wallet.";
+  },
+  controls: (snapshot, act, _display, wallet = undefined, context = undefined) => connectionView(snapshot, act, wallet, context),
+  result: (snapshot, _receipt, act, wallet = undefined, context = undefined) => connectionView(snapshot, act, wallet, context)
 } satisfies CardRenderer;

@@ -93,7 +93,7 @@ describe("wallet cards, ordinary MCP and stored review activity", () => {
   });
   it("keeps UI permission and the same pairing out of ordinary get/wait/saved results", async () => {
     const { f, client, call } = await harness();
-    const created = await call(TOOL_NAMES.sessionCreateWalletConnection), ready = cardSnapshotSchema.parse(data(created));
+    const created = await call(TOOL_NAMES.sessionCreateWalletConnection, { intent: "connect" }), ready = cardSnapshotSchema.parse(data(created));
     const ref = cardReferenceSchema.parse(created._meta?.[CARD_METADATA_KEY]);
     expect(f.connect).not.toHaveBeenCalled();
     expect((ready.data as { boundary: string }).boundary).toContain("not a transaction approval");
@@ -309,7 +309,7 @@ it.each([TOOL_NAMES.sessionGetReviewStatus, TOOL_NAMES.sessionGetExecutionResult
   expect(result.isError).toBe(true);
   const content = (result.content as { type: string; text?: string }[]).find(item => item.type === "text")!;
   expect(JSON.parse(content.text!)).toMatchObject({ ok: false, error: { kind: "invalid_session_transition",
-    details: { reason: "review_changed_during_verification", message: expect.stringContaining("Read the current state again") } } });
+    details: { reason: "review_changed_during_verification", message: "The review changed while it was being checked." } } });
   expect(reads).toHaveBeenCalledOnce();
   expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
 });
@@ -353,13 +353,13 @@ it("rejects changed read-account selections before preparation without changing 
   expect(view.review).toMatchObject({ account: f.account, status: "ready_for_wallet_review", preparing: false });
   expect(view.allowedActions).not.toContain("prepare_review");
   expect(view.allowedActions).toContain("request_signature"); // Read context does not revoke reviewed A signing.
-  expect(view.review.error).toContain(`Current account selection: This review is bound to ${f.account}`);
-  expect(view.review.error).toContain(`new review for ${other}`);
+  expect(view.review.error).toContain(`Current account selection: This review uses ${f.account}`);
+  expect(view.review.error).toContain(`the currently selected account is ${other}`);
   const history = data(await call(TOOL_NAMES.readGetReviewSessionDetail, { reviewSessionId: review.id, account: f.account }));
   const preparations = vi.mocked(f.sessions.recordWalletConnected).mock.calls.length;
   for (let i = 0; i < 2; i++) {
     const rejected = await review.act({ action: "prepare_review", connectionId: connection.connectionId, account: other, reviewRevision: before.reviewRevision });
-    expect(rejected.isError).toBe(true); expect(JSON.stringify(rejected.content)).toContain("This review is bound to");
+    expect(rejected.isError).toBe(true); expect(JSON.stringify(rejected.content)).toContain("This review uses");
   }
   expect(f.run(() => f.sessions.readReviewSession(review.id))).toEqual(before);
   expect(data(await call(TOOL_NAMES.readGetReviewSessionDetail, { reviewSessionId: review.id, account: f.account }))).toEqual(history);
@@ -374,12 +374,12 @@ it("rejects changed read-account selections before preparation without changing 
   const changedSelection = await review.act({ action: "prepare_review", connectionId: connection.connectionId,
     account: f.account, reviewRevision: before.reviewRevision });
   expect(changedSelection.isError).toBe(true);
-  expect(JSON.stringify(changedSelection.content)).toContain("This review is bound to");
+  expect(JSON.stringify(changedSelection.content)).toContain("This review uses");
   expect(vi.mocked(f.sessions.recordWalletConnected)).toHaveBeenCalledTimes(preparations);
   expect(f.run(() => f.sessions.readReviewSession(review.id))).toEqual(before);
   // No active account is also a selection restriction, not a saved preparation failure.
   await f.run(() => f.activity.clearActiveAccount(f.now()));
-  expect((await review.read()).data).toMatchObject({ review: { error: expect.stringContaining("Select an approved wallet account") } });
+  expect((await review.read()).data).toMatchObject({ review: { error: expect.stringContaining("No account from a connected wallet is selected") } });
   await selectProductAccount(h, connection.connectionId, f.account);
   expect(((await review.read()).data as any).review.error).toBeUndefined();
   expect(vi.mocked(f.sessions.recordWalletConnected)).toHaveBeenCalledTimes(preparations);
@@ -398,7 +398,7 @@ it("distinguishes current account guidance from a saved preparation error and re
   vi.mocked(f.sessions.recordWalletConnected).mockImplementation(original);
   await selectProductAccount(h, connection.connectionId, other);
   const both = (await review.read()).data as any;
-  expect(both.review.error).toContain("Current account selection:"); expect(both.review.error).toContain("Previous review update:");
+  expect(both.review.error).toContain("Current account selection:"); expect(both.review.error).toContain("Earlier review message:");
   await selectProductAccount(h, connection.connectionId, f.account);
   data(await review.act({ action: "prepare_review", connectionId: connection.connectionId, account: f.account, reviewRevision: before.reviewRevision }));
   await vi.waitFor(() => expect(f.run(() => f.sessions.readReviewSession(review.id)?.reviewRevision)).toBe(before.reviewRevision + 1));

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { ReviewSession } from "../action/types.js";
+import { REVIEW_MATERIAL_DERIVED_FIELDS, type ReviewSession } from "../action/types.js";
 import type { EventLogRecord } from "../eventlog/sink.js";
 import type { PrivateReviewArtifacts } from "./privateReviewArtifacts.js";
 import { sameHandle, type LocalTransactionMaterialHandle, type LocalTransactionMaterialDigestCommitment,
@@ -24,16 +24,23 @@ export type ReviewEvaluation = { session: ReviewSession; events: EventLogRecord[
 
 export function needsReviewMaterial(session: ReviewSession, admitted: boolean): boolean {
   return !admitted && !session.preparationId && session.status !== "expired" &&
-    !!(session.reviewState?.humanReadableReview || session.reviewState?.simulation);
+    !!session.reviewState && REVIEW_MATERIAL_DERIVED_FIELDS.some((field) => session.reviewState![field] !== undefined);
 }
 
-export function refreshRequiredReview(session: ReviewSession, now: Date): ReviewSession {
+export function invalidateReviewEvidence(session: ReviewSession, now: Date): ReviewSession {
+  if (session.reviewState && session.reviewState.status !== "ready_for_wallet_review") {
+    const state = { ...session.reviewState, evidenceValidity: "invalidated" as const, updatedAt: now.toISOString() };
+    for (const field of REVIEW_MATERIAL_DERIVED_FIELDS) delete state[field];
+    // Keep the computation's failure reason, checks and stage provenance. Their
+    // presence describes that failed attempt, not currently usable material.
+    return { ...session, lastActivityAt: now.toISOString(), reviewState: state };
+  }
   return { ...session, status: "refresh_required", lastActivityAt: now.toISOString(),
     ...(session.reviewState ? { reviewState: {
       planId: session.reviewState.planId, reviewSessionId: session.id, account: session.reviewState.account,
-      status: "refresh_required", refreshReason: "quote_stale",
-      checks: [{ id: "private_review_artifacts_refresh_required", label: "Review evidence refresh", status: "fail",
-        message: "Private review evidence expired or no longer matches stored material; recompute the account-bound review before using human-readable review facts.", source: "adapter" }],
+      status: "refresh_required", refreshReason: "review_evidence_stale",
+      checks: [{ id: "private_review_artifacts_refresh_required", label: "Review details out of date", status: "fail",
+        message: "These review details are no longer current.", source: "adapter" }],
       updatedAt: now.toISOString()
     } } : {}) };
 }
@@ -59,9 +66,9 @@ export function decideReviewEvaluation(candidate: ReviewEvaluationCandidate, cur
   if (!needsReviewMaterial(current, admitted)) return current;
   if (candidate.rowRevision !== rowRevision || !isDeepStrictEqual(candidate.session, current) ||
       !isDeepStrictEqual(candidate.artifacts, artifacts)) {
-    throw new SessionStoreError("invalid_session_transition", "Review data changed during verification. Read the current state again.",
-      { reason: "review_changed_during_verification", message: "Review data changed during verification. Read the current state again." });
+    throw new SessionStoreError("invalid_session_transition", "The review changed while it was being checked.",
+      { reason: "review_changed_during_verification", message: "The review changed while it was being checked." });
   }
   return candidate.material && materialStillMatches(candidate.material, current, rowRevision, artifacts, material, now)
-    ? current : refreshRequiredReview(current, now);
+    ? current : invalidateReviewEvidence(current, now);
 }

@@ -84,8 +84,9 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
     disconnect: vi.fn(async () => { approved = undefined; }), stop: vi.fn(),
     onSessionChanged: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); } } };
   let sourceAccount = account;
-  const simulation = withGrpcSimulation({ core: { simulateTransaction: (input: Parameters<ReturnType<typeof createSuccessfulReviewTimeSimulationClient>["core"]["simulateTransaction"]>[0]) =>
-    createSuccessfulReviewTimeSimulationClient(sourceAccount).core.simulateTransaction(input) } });
+  const simulate = vi.fn((input: Parameters<ReturnType<typeof createSuccessfulReviewTimeSimulationClient>["core"]["simulateTransaction"]>[0]) =>
+    createSuccessfulReviewTimeSimulationClient(sourceAccount).core.simulateTransaction(input));
+  const simulation = withGrpcSimulation({ core: { simulateTransaction: simulate } });
   const digests = new Map<string, Awaited<ReturnType<typeof recordTestTransactionMaterial>>["digest"]>();
   let lastBytes: Uint8Array | undefined;
   const quote = vi.fn(async () => deepbookDisplayQuote({ fetchedAt: now().toISOString() }));
@@ -144,7 +145,7 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
     verifySuiGrpcUrl: async () => {}, verifySuiGraphqlUrl: async () => {} });
   access.ready();
   const run = <T>(operation: () => T): T => access.run(operation);
-  const createConnection = () => run(() => cards.create("connect", {}));
+  const createConnection = () => run(() => cards.create("connect", { intent: "connect" }));
   const act = (card: CardResponse & { permission: string }, input: Record<string, unknown>) => run(() => cards.act({
     cardId: card.snapshot.cardId, permission: card.permission, revision: card.snapshot.revision, input
   }));
@@ -177,7 +178,7 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
     const session = await run(() => sessions.getReviewSession(created.session.id, now));
     return { card, session: session! };
   };
-  return { directory, access, run, activity, localData, cards, cardRecords, records, sessions, workflow, transport, accountKey, account, sign, connect, submit, chainRead, quote,
+  return { directory, access, run, activity, localData, cards, cardRecords, records, sessions, workflow, transport, accountKey, account, sign, connect, submit, chainRead, quote, simulate,
     approval, createConnection, act, read, approve, prepare, now, plan, logger, verifyNetwork, computation, verifyReceipt,
     setChainOutcome(status: "success" | "failure") { chainFailure = status === "failure"; },
     // Explicit synthetic object/simulation ownership, independent of the selected

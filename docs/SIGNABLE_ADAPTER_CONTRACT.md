@@ -25,6 +25,12 @@ records it on the public review state as `transactionReviewData` on a
 missing or fails contract validation, no contract is emitted and the review
 stays blocked with `blockedReason: "wallet_review_contract_emit_missing"`.
 
+If that stored failure's private evidence later becomes invalid, current state
+retains the failure reason and stage provenance with `evidenceValidity:
+"invalidated"` and removes the material-derived public summaries. Fresh
+computation still validates every required summary; invalidation does not permit
+a ready contract or wallet admission. Earlier recorded snapshots remain history.
+
 `reviewedTransactionDigest` is a hash only. Private bytes travel directly from
 the backend to the wallet through WalletConnect after atomic admission; there
 is no browser handoff endpoint. The adapter contract itself never signs or
@@ -32,8 +38,11 @@ executes. The platform owns request authority and verified chain outcomes.
 
 ## Final Acceptance Gate
 
-This document defines a contract gate, not a current signing feature. Do not add
-new capability here ahead of a reviewed implementation.
+This contract defines the data checks required before wallet admission; it does
+not authorize a signature request. The current backend WalletConnect workflow
+requires an explicit permitted Review card action and approval in the wallet.
+The term signable adapter identifies this transaction-review contract, not a
+claim that every displayed proposal is eligible for signing.
 
 The gate binds three views of the action to one transaction commitment, so a
 user cannot sign something different from what they reviewed:

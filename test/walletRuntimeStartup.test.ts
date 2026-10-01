@@ -96,9 +96,9 @@ it.each([
   { label: "unset environment", failure: "none", project: undefined, initCalls: 1, reason: undefined, message: undefined },
   { label: "invalid environment", failure: "none", project: "not-a-project-id", initCalls: 1, reason: undefined, message: undefined },
   { label: "different environment", failure: "none", project: "1".repeat(32), initCalls: 1, reason: undefined, message: undefined },
-  { label: "metadata failure", failure: "metadata", project: undefined, initCalls: 0, reason: "initialization_failed", message: "could not be initialized" },
-  { label: "storage failure", failure: "storage", project: undefined, initCalls: 0, reason: "initialization_failed", message: "could not be initialized" },
-  { label: "SDK failure", failure: "init", project: undefined, initCalls: 1, reason: "initialization_failed", message: "could not be initialized" },
+  { label: "metadata failure", failure: "metadata", project: undefined, initCalls: 0, reason: "initialization_failed", message: "could not start" },
+  { label: "storage failure", failure: "storage", project: undefined, initCalls: 0, reason: "initialization_failed", message: "could not start" },
+  { label: "SDK failure", failure: "init", project: undefined, initCalls: 1, reason: "initialization_failed", message: "could not start" },
   { label: "restore failure", failure: "restore", project: undefined, initCalls: 1, reason: "restoration_failed", message: "could not be restored" }
 ])("handles $label through the real runtime and MCP cards", async ({ failure, project, initCalls, reason, message }) => {
   source.failure = failure; vi.stubEnv("SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID", project);

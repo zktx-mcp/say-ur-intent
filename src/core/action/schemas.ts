@@ -3,7 +3,7 @@ import { proposalReviewModelSchema } from "../proposal/schemas.js";
 import { suiAddressStringSchema } from "../suiAddress.js";
 import { makeRawU64StringSchema, makeSignedRawIntegerStringSchema } from "../numeric/rawU64.js";
 import { normalizeCoinType } from "../read/coinMetadata.js";
-import { BLOCKED_REASONS, REFRESH_REASONS, REVIEW_PREPARATION_STATUSES } from "./types.js";
+import { BLOCKED_REASONS, REFRESH_REASONS, REVIEW_PREPARATION_STATUSES, REVIEW_MATERIAL_DERIVED_FIELDS } from "./types.js";
 import { reviewSimulationProviderSchema, ptbVisualizationArtifactSchema, transactionReviewDataSchema } from "./signableAdapterContract.js";
 export { transactionExecutionSummarySchema } from "../session/transactionRequest.js";
 
@@ -309,20 +309,28 @@ const reviewStateBaseSchema = z.object({
 export const reviewStateStructuralInvariantSchema = z.discriminatedUnion("status", [
   reviewStateBaseSchema.extend({
     status: z.literal("ready_for_wallet_review"),
+    evidenceValidity: z.never().optional(),
     blockedReason: z.never().optional(),
     refreshReason: z.never().optional()
   }),
   reviewStateBaseSchema.extend({
     status: z.literal("refresh_required"),
+    evidenceValidity: z.literal("invalidated").optional(),
     refreshReason: refreshReasonSchema,
     blockedReason: z.never().optional()
   }),
   reviewStateBaseSchema.extend({
     status: z.literal("blocked"),
+    evidenceValidity: z.literal("invalidated").optional(),
     blockedReason: blockedReasonSchema,
     refreshReason: z.never().optional()
   })
 ]).superRefine((state, ctx) => {
+  if (state.evidenceValidity === "invalidated") {
+    for (const field of REVIEW_MATERIAL_DERIVED_FIELDS) if (state[field] !== undefined) {
+      ctx.addIssue({ code: "custom", path: [field], message: "Invalidated review evidence cannot carry current material-derived facts" });
+    }
+  }
   const lifecycle = state.adapterLifecycle;
   if (lifecycle !== undefined) {
     validatePublicEvidenceStageBinding(state, ctx);
@@ -457,6 +465,7 @@ export const reviewStateStructuralInvariantSchema = z.discriminatedUnion("status
   }
   if (
     state.blockedReason === "wallet_review_contract_emit_missing" &&
+    state.evidenceValidity !== "invalidated" &&
     state.humanReadableReview === undefined
   ) {
     ctx.addIssue({
@@ -467,6 +476,7 @@ export const reviewStateStructuralInvariantSchema = z.discriminatedUnion("status
   }
   if (
     state.blockedReason === "wallet_review_contract_emit_missing" &&
+    state.evidenceValidity !== "invalidated" &&
     state.simulation === undefined
   ) {
     ctx.addIssue({

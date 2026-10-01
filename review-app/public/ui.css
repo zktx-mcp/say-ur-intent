@@ -328,6 +328,9 @@ input.ui-input {
   margin: 0 0 14px;
 }
 
+.ui-section { min-width: 0; margin-block: 0 16px; }
+.ui-section-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; font-weight: 500; margin: 0 0 10px; }
+
 .ui-card-title {
   font-size: 14px;
   font-weight: 500;
@@ -392,7 +395,7 @@ input.ui-input {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 11px 14px;
+  padding: 11px 0;
   border-radius: var(--ui-r);
   border: 0.5px solid var(--ui-border-strong);
   background: var(--ui-surface-2);
@@ -640,16 +643,11 @@ input.ui-input {
   margin-bottom: 6px;
 }
 
-/* The PTB graph is the layout centerpiece; its nodes, edges, and labels are painted
-   from theme tokens (below), so the slot background follows the app theme too — light
-   in light mode, dark in dark mode — never a white box clashing with a dark page.
-   Full-bleed: pull up under the card header (cancel its 14px gap) and out to the
-   card's left/right/bottom edges (offset the card's 18px side / 16px bottom
-   padding), so the graph fills the card body edge-to-edge. */
+/* The graph occupies the document width. It has no enclosing card padding to
+   cancel; its contents and background use the same theme tokens as the text. */
 .ui-chain-receipt-ptb {
-  margin: -14px calc(-1 * var(--ui-card-padding-inline, 18px)) calc(-1 * var(--ui-card-padding-block, 16px));
   background: var(--ui-surface);
-  border-radius: 0 0 12px 12px;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -717,10 +715,8 @@ input.ui-input {
    (inputs, Move calls, object changes, events). Native <details>/<summary> with
    a custom chevron; no script. */
 .ui-accordion {
-  border: 0.5px solid var(--ui-border);
-  border-radius: var(--ui-r);
-  background: var(--ui-surface);
-  margin: 0 0 8px;
+  border-block-start: 1px solid var(--ui-border);
+  margin-block: 12px;
 }
 
 .ui-accordion-summary {
@@ -728,15 +724,13 @@ input.ui-input {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 11px 14px;
+  padding: 11px 0;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
   color: var(--ui-text);
   list-style: none;
-  /* Summary strip is surface-2 so it reads as distinct from the body (surface). */
-  background: var(--ui-surface-2);
-  border-radius: var(--ui-r);
+
 }
 
 .ui-accordion-summary::-webkit-details-marker {
@@ -769,26 +763,17 @@ input.ui-input {
 }
 
 .ui-accordion[open] .ui-accordion-summary {
-  border-bottom: 0.5px solid var(--ui-border);
-  border-radius: var(--ui-r) var(--ui-r) 0 0;
+  color: var(--ui-accent);
 }
 
 .ui-accordion-body {
-  padding: 4px 14px 12px;
+  padding: 4px 0 12px;
 }
 
-/* Card-in-card reads square so the nesting level is legible: a rounded outer card holding
-   square inner cards/accordions (the graph card, the audit record's record sections), not
-   rounded-inside-rounded. Top-level cards — and the receipt's own top-level accordions, which
-   are not inside a card — keep their radius. */
-.ui-card .ui-card,
-.ui-card .ui-card-head,
-.ui-card .ui-accordion,
-.ui-card .ui-accordion-summary,
-.ui-card .ui-accordion-summary:focus-visible,
-.ui-card .ui-accordion[open] .ui-accordion-summary {
-  border-radius: 0;
-}
+/* Secondary content slides into the same document; no nested panels. */
+.ui-accordion[open] > .ui-accordion-body { animation: ui-reveal .18s ease-out; }
+@keyframes ui-reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .ui-accordion[open] > .ui-accordion-body { animation: none; } }
 
 /* Respond to the embedded card's available width, not the desktop window.
    Below 28rem, the 140px label column plus a readable value column and card

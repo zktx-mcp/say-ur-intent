@@ -2,7 +2,7 @@ import type { EventLogRecord } from "../eventlog/sink.js";
 import { materialStillMatches, type ValidatedReviewMaterial } from "./reviewValidity.js";
 import type { LocalTransactionMaterialStore } from "./transactionMaterialStore.js";
 import { SqliteSessionRecordStore, SqlitePrivateReviewArtifactStore } from "./sqliteSessionStore.js";
-import { reviewPreparationAccount, workflowEligibility, type WorkflowEvaluationInput, type EvaluatedWorkflowState, type WorkflowAction } from "./workflowState.js";
+import { reviewPreparationAccount, workflowEligibility, type WorkflowEvaluationInput, type EvaluatedWorkflowState, type WorkflowAction, type ConnectionView } from "./workflowState.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { SqliteDatabase } from "../activity/sqliteActivityStoreTypes.js";
@@ -64,6 +64,12 @@ export class SqliteWalletWorkflowStore {
     return (this.db.prepare("SELECT id FROM live_wallet_connections ORDER BY id").all() as { id: string }[])
       .map(({ id }) => this.connection(id)!);
   }
+  connectionView(connection: WalletConnection): ConnectionView {
+    return { ...connection, ...(this.pendingDisconnect(connection.connectionId) ? { pendingAction: "disconnect" as const } : {}) };
+  }
+  connectionViews(): ConnectionView[] {
+    return this.connections().filter((item) => item.ownerId === this.ownerId).map((item) => this.connectionView(item.connection));
+  }
   settleConnection(id: string): void {
     this.db.prepare("UPDATE live_wallet_connections SET sdk_pending=0 WHERE id=? AND owner_id=?").run(id, this.ownerId);
   }
@@ -122,20 +128,20 @@ export class SqliteWalletWorkflowStore {
     // Wallet-dependent commands already passed the workflow availability guard.
     // This store checks DB eligibility; it does not measure SDK health.
     const facts = { evaluatedAt: now.toISOString(), ownerId: this.ownerId, record: card, session, request,
-      authority: request ? this.authority(request.attemptId) : undefined, connection,
+      authority: request ? this.authority(request.attemptId) : undefined, connection, connections: this.connectionViews(),
       walletAvailability: { status: "available" as const }, activeAccount: this.readActiveAccount(),
       busyForAccount: !!session?.account && this.busyForAccount(session.account, now) };
-    if (!workflowEligibility(facts).allowedActions.includes(action)) throw new WorkflowConflict("This operation is not available for the current card state.");
+    if (!workflowEligibility(facts).allowedActions.includes(action)) throw new WorkflowConflict("That action is not available right now.");
   }
   manage(expected: CardRecord, action: "stop_connection" | "stop_waiting" | "read_result"): string {
     return this.db.transaction(() => {
       const now = this.clock(), card = this.cards.get(expected.state.cardId);
       if (!card || card.ownerId !== this.ownerId || card.tokenHash !== expected.tokenHash ||
-          card.state.revision !== expected.state.revision || card.scope !== expected.scope) throw new WorkflowConflict("Card state changed. Read the current state before acting.");
+          card.state.revision !== expected.state.revision || card.scope !== expected.scope) throw new WorkflowConflict("This request does not match the card's current state.");
       this.advanceRequestDeadlines(now);
       this.requireAction(card, action, now);
       const id = card.scope === "review_manage" ? String(card.state.input.attemptId) : card.operationId!;
-      if (action === "stop_connection") this.updateConnection(id, { status: "stopped", reason: "User stopped waiting. Remote wallet approval may still be open." }, now);
+      if (action === "stop_connection") this.updateConnection(id, { status: "stopped", reason: "The connection request was stopped here. The approval screen may still be open in your wallet." }, now);
       else if (action === "stop_waiting") this.stopWaiting(id, now, "user_stop");
       else this.resumeObservation(id);
       return id;
@@ -144,7 +150,7 @@ export class SqliteWalletWorkflowStore {
   expireConnections(now: Date): void {
     for (const record of this.connections()) if (record.ownerId === this.ownerId && record.connection.status === "awaiting_approval" &&
       Date.parse(record.connection.expiresAt) <= now.getTime()) this.updateConnection(record.connection.connectionId,
-        { status: "expired", reason: "Wallet approval expired." }, now);
+        { status: "expired", reason: "The time to approve this connection has ended." }, now);
   }
   beginObservation(id: string, explicit: boolean): TransactionRequest | undefined {
     return this.db.transaction(() => {
@@ -165,7 +171,7 @@ export class SqliteWalletWorkflowStore {
     const next: CardRecord = { ...card, acceptedInput: input, ...(operationId ? { operationId } : {}), state: {
       ...card.state, state: terminal ? "closed" : "running", revision: card.state.revision + 1,
       ...(terminal ? { reason: "completed" as const } : {}) } };
-    if (!this.cards.replace(card, next)) throw new WorkflowConflict("Card changed before the operation was admitted.");
+    if (!this.cards.replace(card, next)) throw new WorkflowConflict("The card changed before this action was accepted.");
   }
   private publish(operationId: string, terminal: boolean): void {
     this.db.prepare(`UPDATE live_read_cards SET revision=revision+1,
@@ -198,6 +204,7 @@ export class SqliteWalletWorkflowStore {
   admitConnection(expected: CardRecord, input: Record<string, unknown>): WalletConnectionRecord {
     return this.db.transaction(() => {
       const now = this.clock();
+      this.expireConnections(now);
       const card = this.requireInput(expected, now);
       this.requireAction(card, "connect", now);
       const connection = walletConnectionSchema.parse({ connectionId: randomUUID(), status: "awaiting_approval", revision: 0,
@@ -305,7 +312,7 @@ export class SqliteWalletWorkflowStore {
     const card = this.requireInput(expected, now), authority = this.authority(request.attemptId);
     if (card.scope !== "review" || card.state.input.reviewSessionId !== binding.reviewSessionId ||
         request.account !== binding.account || !authority || authority.owner_id !== this.ownerId || authority.connection_id !== binding.connectionId) {
-      throw new WorkflowConflict("This review revision already admitted another selection.");
+      throw new WorkflowConflict("This review already has a request for a different selection.");
     }
     this.consume(card, input, request.attemptId, !["awaiting_signature", "submitting", "awaiting_chain_result"].includes(request.requestStatus));
     return { request, created: false };
@@ -334,7 +341,7 @@ export class SqliteWalletWorkflowStore {
         // A changed candidate is a conflict and must not invalidate newer data.
         const evaluated = this.evaluateState({ expectedCard: card, candidate: { session: material.review, rowRevision: material.rowRevision,
           artifacts: material.artifacts, material }, walletAvailability: { status: "available" } }, now);
-        return new WorkflowConflict("Reviewed material expired or changed. Read and update the review before signing.", evaluated.events);
+        return new WorkflowConflict("The transaction details used by this review are no longer current.", evaluated.events);
       }
       const review = this.db.prepare("SELECT * FROM live_review_sessions WHERE id=?").get(binding.reviewSessionId) as ReviewRow | undefined;
       const state = review?.review_state_json ? JSON.parse(review.review_state_json) as Record<string, unknown> : undefined;
@@ -346,10 +353,10 @@ export class SqliteWalletWorkflowStore {
           !isOwnedConnectedWallet(connection, this.ownerId, !!this.pendingDisconnect(binding.connectionId)) ||
           connection.connection.revision !== binding.connectionRevision || Date.parse(connection.connection.expiresAt) <= now.getTime() ||
           !connection.connection.accounts.includes(binding.account) || !connection.connection.methods.includes(SUI_SIGN_TRANSACTION_METHOD)) {
-        throw new WorkflowConflict("The account, wallet session or reviewed transaction changed. Review again before requesting a signature.");
+        throw new WorkflowConflict("The account, wallet connection or transaction changed since this review was prepared.");
       }
       this.requireAction(card, "request_signature", now);
-      if (this.busyForAccount(binding.account, now)) throw new WorkflowConflict("A wallet request for this account is still being settled.");
+      if (this.busyForAccount(binding.account, now)) throw new WorkflowConflict("Another wallet request or transaction result for this account is still pending.");
       const account = this.db.prepare("SELECT id FROM accounts WHERE sui_address=?").get(binding.account) as { id: number } | undefined;
       if (!account) throw new WorkflowConflict("The reviewed account is unavailable.");
       const id = randomUUID();
@@ -518,7 +525,7 @@ export class SqliteWalletWorkflowStore {
         const status = state ? "refresh_required" : row.status;
         this.db.prepare(`UPDATE live_review_sessions SET status=?,preparation_id=NULL,preparation_error=?,review_state_json=?,
           revision=revision+1,write_contract_version=? WHERE id=?`).run(status,
-          "The selected wallet connection changed. Update the review using a current connection.",
+          "The selected wallet connection changed.",
           state ? JSON.stringify(state) : null, LIVE_REVIEW_SESSION_WRITE_CONTRACT_VERSION, row.id);
         this.db.prepare("UPDATE review_sessions SET current_status=?,updated_at=? WHERE id=?").run(status, now.toISOString(), row.id);
         this.db.prepare(`INSERT INTO review_status_transitions(review_session_id,event,from_status,to_status,reason,transitioned_at)
@@ -543,7 +550,7 @@ export class SqliteWalletWorkflowStore {
     return this.db.transaction(() => {
       const now = this.clock();
       const card = this.requireInput(expected, now);
-      if (card.scope !== "review" || typeof card.state.input.reviewSessionId !== "string") throw new WorkflowConflict("Review permission is unavailable.");
+      if (card.scope !== "review" || typeof card.state.input.reviewSessionId !== "string") throw new WorkflowConflict("This card cannot update the review.");
       const id = card.state.input.reviewSessionId;
       const review = this.db.prepare("SELECT * FROM live_review_sessions WHERE id=?").get(id) as ReviewRow | undefined;
       const currentConnection = this.connection(connection.connectionId);
@@ -551,11 +558,11 @@ export class SqliteWalletWorkflowStore {
           review.status === "expired" || Date.parse(review.expires_at) <= now.getTime() ||
           !isOwnedConnectedWallet(currentConnection, this.ownerId, !!this.pendingDisconnect(connection.connectionId)) ||
           currentConnection.connection.revision !== connection.revision || Date.parse(currentConnection.connection.expiresAt) <= now.getTime() ||
-          (review.account && this.busyForAccount(review.account, now))) throw new WorkflowConflict("This review cannot be updated at the requested revision.");
+          (review.account && this.busyForAccount(review.account, now))) throw new WorkflowConflict("The review could not be updated with the current wallet and account.");
       const selection = reviewPreparationAccount(review.account ?? undefined, this.readActiveAccount(), account);
       if (!selection.allowed) throw new WorkflowConflict(selection.message);
       this.requireAction(card, "prepare_review", now);
-      if (this.busyForAccount(selection.account, now) || !currentConnection.connection.accounts.includes(selection.account)) throw new WorkflowConflict("Use an available wallet connection approved for the selected read account before reviewing.");
+      if (this.busyForAccount(selection.account, now) || !currentConnection.connection.accounts.includes(selection.account)) throw new WorkflowConflict("The review could not be updated with the selected wallet account.");
       const preparation = randomUUID();
       this.db.prepare(`UPDATE live_review_sessions SET preparation_id=?,preparation_error=NULL,wallet_connection_id=?,wallet_connection_revision=?,revision=revision+1,write_contract_version=? WHERE id=?`)
         .run(preparation, connection.connectionId, connection.revision, LIVE_REVIEW_SESSION_WRITE_CONTRACT_VERSION, id);
@@ -579,7 +586,7 @@ export class SqliteWalletWorkflowStore {
       }
       const status = prior && row.status !== "expired" ? "refresh_required" : row.status;
       this.db.prepare(`UPDATE live_review_sessions SET preparation_id=NULL,preparation_error=?,status=?,review_state_json=?,revision=revision+1,write_contract_version=? WHERE id=?`)
-        .run(row.status === "expired" ? "The review expired while updating. Request a new review." : "Review update could not be completed. Update this review to try again.",
+        .run(row.status === "expired" ? "The review expired while it was being updated." : "The review update could not be completed.",
           status, prior ? JSON.stringify(prior) : null, LIVE_REVIEW_SESSION_WRITE_CONTRACT_VERSION, id);
       this.db.prepare("UPDATE review_sessions SET current_status=?,updated_at=? WHERE id=?").run(status, now.toISOString(), id);
       this.db.prepare(`INSERT INTO review_status_transitions(review_session_id,event,from_status,to_status,reason,transitioned_at)

@@ -15,10 +15,10 @@ export const walletAvailabilitySchema = z.discriminatedUnion("status", [
 export type WalletAvailability = z.infer<typeof walletAvailabilitySchema>;
 export function walletUnavailable(reason: WalletUnavailableReason): Extract<WalletAvailability, { status: "unavailable" }> {
   const message = reason === "restoration_failed"
-    ? "Wallet connections could not be restored. Restart the local backend before using wallet operations."
+    ? "Wallet connections could not be restored."
     : reason === "wallet_state_unavailable"
-      ? "Wallet state could not be confirmed. Restart the local backend before using wallet operations. Saved transaction facts remain available."
-      : "WalletConnect could not be initialized. Check the local backend initialization problem, restart it, and request a new connection card.";
+      ? "The wallet connection status could not be checked. Saved transaction results remain available."
+      : "The wallet connection service could not start.";
   return { status: "unavailable", reason, message };
 }
 export class WalletUnavailableError extends Error {

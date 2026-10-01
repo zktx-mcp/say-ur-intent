@@ -31,13 +31,13 @@ export class CardStore {
   }
   private now(): Date { return this.options.now?.() ?? new Date(); }
   private assertCurrent(): void {
-    if (this.stopped) throw new CardError("Card server is unavailable.");
+    if (this.stopped) throw new CardError("This card cannot be checked right now.");
     this.options.assertCurrent?.();
   }
   async create(kind: CardKind, input: Record<string, unknown>, execute = false): Promise<CardResponse & { permission: string }> {
     this.assertCurrent();
     const business = kind === "connect" || kind === "review";
-    if (business && (!this.options.workflow || execute)) throw new CardError("The requested card workflow is unavailable.");
+    if (business && (!this.options.workflow || execute)) throw new CardError("This type of card is unavailable.");
     const parsed = execute ? parseCardInput(kind, input) : undefined;
     let preparation: CardPreparation = { status: "ready" };
     if (business) {
@@ -45,7 +45,7 @@ export class CardStore {
       this.assertCurrent();
     } else if (!execute && this.options.prepare) {
       try { preparation = await this.options.prepare(kind); }
-      catch { preparation = { status: "failed", error: "Card input choices could not be prepared. Request a new card to try again." }; }
+      catch { preparation = { status: "failed", error: "The choices for this card could not be loaded." }; }
       // Preparation may finish after reset/import or shutdown. Never create a
       // card in replacement data from that stale continuation.
       this.assertCurrent();
@@ -70,7 +70,7 @@ export class CardStore {
   async readSaved(cardId: string): Promise<CardSnapshot> { return (await this.describe(this.current(cardId), false)).snapshot; }
   private async describe(record: CardRecord, uiObservation: boolean): Promise<CardResponse> {
     if (record.state.kind !== "connect" && record.state.kind !== "review") return this.response(record);
-    if (!this.options.workflow) throw new CardError("Wallet workflow is unavailable.");
+    if (!this.options.workflow) throw new CardError("Wallet actions are unavailable.");
     const view = await this.options.workflow.describe(record, uiObservation);
     const current = view.evaluated.record;
     if (!current) throw new CardError("Saved card data is unavailable.");
@@ -88,10 +88,10 @@ export class CardStore {
     }
     let parsed: ReturnType<typeof parseWorkflowAction>;
     try { parsed = parseWorkflowAction(input.input); }
-    catch { return { ...await this.describe(record, false), error: { code: "invalid_card_input", message: "Invalid workflow input." } }; }
+    catch { return { ...await this.describe(record, false), error: { code: "invalid_card_input", message: "The requested wallet action is not supported by this card." } }; }
     if (record.acceptedInput !== undefined && isDeepStrictEqual(record.acceptedInput, parsed)) return this.describe(record, false);
     if (record.state.revision !== input.revision) return { ...await this.describe(record, false),
-      error: { code: "card_conflict", message: "Card state changed. Read the current state before acting." } };
+      error: { code: "card_conflict", message: "This request does not match the card's current state." } };
     try { await this.options.workflow.act(record, parsed); }
     catch (error) {
       if (!(error instanceof WorkflowConflict) && !(error instanceof WalletUnavailableError)) throw error;
@@ -102,22 +102,22 @@ export class CardStore {
   }
   async submit(input: CardSubmission): Promise<CardResponse> {
     const record = this.require(input);
-    if (record.state.kind === "connect" || record.state.kind === "review") throw new CardError("Use the card's typed workflow action.");
+    if (record.state.kind === "connect" || record.state.kind === "review") throw new CardError("This card does not accept data selections.");
     let parsed: Record<string, unknown>;
     try { parsed = parseCardInput(record.state.kind, input.input); }
-    catch { return { ...this.response(record), error: { code: "invalid_card_input", message: "Invalid card input." } }; }
+    catch { return { ...this.response(record), error: { code: "invalid_card_input", message: "The selected information is not valid for this card." } }; }
     if (record.acceptedInput !== undefined) {
       if (isDeepStrictEqual(record.acceptedInput, parsed)) return this.response(record);
       return this.conflict(record, "This card already accepted a different selection.");
     }
     if (record.state.state !== "ready" || record.ownerId !== this.options.ownerId || record.state.revision !== input.revision) {
-      return this.conflict(record, "This selection is no longer available at the requested revision.");
+      return this.conflict(record, "This selection does not match the current card.");
     }
     const admitted = this.options.records.admit(record, parsed, this.options.ownerId, () => this.now());
     if (!admitted) return this.conflict(this.require(input), "The card changed or expired before this selection was accepted.");
     let source: unknown;
     try { source = await this.options.execute(record.state.kind, parsed); }
-    catch { return this.fail(admitted, "read_service", "The requested data could not be read. Request a new card to try again."); }
+    catch { return this.fail(admitted, "read_service", "The requested data could not be read."); }
     this.assertCurrent();
     let projected: ReturnType<typeof projectReadCardResult>;
     try { projected = projectReadCardResult(record.state.kind, parsed, source); }

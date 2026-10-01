@@ -281,8 +281,11 @@ describe("disconnect request routing", () => {
   it("routes disconnect requests to the existing user-confirmed card, never to clearing read context", () => {
     const behavior = read("docs/AGENT_BEHAVIOR.md");
     const flow = requiredBlock(behavior, 'For "disconnect my wallet",', '3. `session.get_wallet_connection`');
-    expect(flow).toContain("open `session.create_wallet_connection` even though no new connection is needed");
-    expect(flow).toContain("Confirm disconnect or Cancel");
+    expect(flow).toContain("open `session.create_wallet_connection` with `intent: disconnect`");
+    expect(flow).toContain("Confirm disconnect or Back");
+    expect(flow).toContain("Back only returns to the connection view");
+    expect(flow).toContain("does not submit Cancel review or disconnect");
+    expect(flow).toContain("The card starts no pairing");
     expect(flow).toContain("Do not substitute `account.clear_active_account`");
     expect(flow).toContain("If disconnection is already pending");
     expect(behavior).toContain("For a connect request, if the requested wallet is already connected");

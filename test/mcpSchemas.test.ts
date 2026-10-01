@@ -649,3 +649,20 @@ describe("MCP schemas", () => {
     ).toBe("read_and_local_review");
   });
 });
+
+
+it("distinguishes invalidated failed evidence from an incomplete fresh computation", () => {
+  const failure = { planId: "plan_1", reviewSessionId: "session_1", account, status: "blocked",
+    blockedReason: "wallet_review_contract_emit_missing", checks: [], adapterLifecycle: deepbookLifecycle(9), updatedAt: new Date(0).toISOString() };
+  expect(reviewStateStructuralInvariantSchema.safeParse(failure).success).toBe(false);
+  const invalidated = { ...failure, evidenceValidity: "invalidated" };
+  expect(reviewStateStructuralInvariantSchema.safeParse(invalidated).success).toBe(true);
+  expect(reviewStateStructuralInvariantSchema.safeParse({ ...invalidated, adapterLifecycle: undefined }).success).toBe(false);
+  expect(reviewStateStructuralInvariantSchema.safeParse({ ...invalidated, adapterLifecycle: deepbookLifecycle(8) }).success).toBe(false);
+  for (const facts of [{ humanReadableReview: humanReadableReviewSummary() }, { simulation: simulationSummary() },
+    { assetFlowActual: { outgoing: [], expectedIncoming: [] } }, { beforeAfterBalance: { before: [], after: [], delta: [] } }]) {
+    expect(reviewStateStructuralInvariantSchema.safeParse({ ...failure, humanReadableReview: humanReadableReviewSummary(), simulation: simulationSummary(), ...facts }).success).toBe(true);
+    expect(reviewStateStructuralInvariantSchema.safeParse({ ...invalidated, ...facts }).success).toBe(false);
+  }
+  expect(reviewStateStructuralInvariantSchema.safeParse({ ...invalidated, status: "ready_for_wallet_review", blockedReason: undefined }).success).toBe(false);
+});

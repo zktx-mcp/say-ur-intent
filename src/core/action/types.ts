@@ -34,6 +34,7 @@ export const BLOCKED_REASONS = [
 export type BlockedReason = (typeof BLOCKED_REASONS)[number];
 
 export const REFRESH_REASONS = [
+  "review_evidence_stale",
   "quote_stale",
   "quote_unavailable",
   "simulation_transient_failure",
@@ -246,6 +247,9 @@ export type ActionPlan<TAdapterData extends UnknownRecord = UnknownRecord> = {
   preliminaryChecks?: ReviewCheck[];
 };
 
+export const REVIEW_MATERIAL_DERIVED_FIELDS = ["humanReadableReview", "simulation", "transactionReviewData",
+  "ptbVisualization", "assetFlowActual", "beforeAfterBalance"] as const;
+
 type ReviewStateBase = {
   planId: string;
   reviewSessionId: string;
@@ -264,16 +268,19 @@ type ReviewStateBase = {
 export type ReviewState =
   | (ReviewStateBase & {
       status: "ready_for_wallet_review";
+      evidenceValidity?: never;
       blockedReason?: never;
       refreshReason?: never;
     })
   | (ReviewStateBase & {
       status: "refresh_required";
+      evidenceValidity?: "invalidated";
       refreshReason: RefreshReason;
       blockedReason?: never;
     })
   | (ReviewStateBase & {
       status: "blocked";
+      evidenceValidity?: "invalidated";
       blockedReason: BlockedReason;
       refreshReason?: never;
     });
@@ -281,7 +288,10 @@ export type ReviewState =
 export type ReviewSession = LocalSessionBase & {
   ownerId: string;
   reviewRevision: number;
+  // Identifies an admitted preparation awaiting a stored outcome.
   preparationId?: string;
+  // A saved preparation failure or connection-change message. It does not
+  // prove that a computation ran, nor describe current action permission.
   preparationError?: string;
   walletConnectionId?: string;
   walletConnectionRevision?: number;
@@ -340,8 +350,9 @@ export type McpToolResponse<T extends UnknownRecord = UnknownRecord> =
   | McpToolPayload<T>
   | McpToolErrorPayload;
 
+// Display wording for the three computed review states, not wallet authority.
 export const REVIEW_UI_LABELS: Record<ReviewStatus, string> = {
-  ready_for_wallet_review: "Ready for wallet review",
-  refresh_required: "Refresh required",
-  blocked: "Blocked"
+  ready_for_wallet_review: "Ready for your review",
+  refresh_required: "Review needs updating",
+  blocked: "Review blocked"
 };

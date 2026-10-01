@@ -110,14 +110,7 @@ It also includes:
 
 ## Screens
 
-**Review and result.** The internal Review card shows verified facts before
-wallet approval and independently read chain facts afterward. One available
-wallet/account needs no dropdown; preparation and approval still require separate
-explicit actions. The completed card leads with the result, actual balance
-changes and net network fee. Reviewed conditions and transaction details are
-closed disclosures, including their independently sourced PTB graphs. Missing
-receipt or display details are explicitly marked unavailable. The standalone
-Receipt card uses the same result summary without graph or input controls.
+**Review and result.** The internal Review card automatically prepares and renews verified conditions for one selected wallet/account. Users inspect its transaction graph, amounts and costs, then choose Request wallet approval and approve in their wallet. Multiple candidates require a choice; failed preparation has an explicit retry. Receipt and completed Review show the executed transaction graph, actual asset changes and net network fee. Supplementary facts are in one Details slide; earlier estimates in Review remain distinct from actual chain results. Missing graph or receipt data is marked unavailable. Cards use a single document layout without nested card panels.
 
 **DeepBook USDC chart.** `ui.open_chart` opens an internal MCP Apps card with
 official DeepBookV3 Indexer candles and volume for one selected USDC pool.

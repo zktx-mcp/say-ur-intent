@@ -234,7 +234,7 @@ export function mapSwapQuotePolicyEvidenceToContractDraft(
       id: quoteSourceId,
       kind: "quote_evidence",
       network: "sui:mainnet",
-      source: `${evidence.protocol} quote policy for ${evidence.adapterId}`,
+      source: `${evidence.protocol} quote and slippage rules (adapter: ${evidence.adapterId})`,
       verifiedAt: evidence.derivedAt,
       fields: ["quoteEvidenceId", "rawAmount", "minOutRaw", "asset", "amountRole", "maxSlippageBps"]
     }) as AdapterSourceOfTruth,
@@ -358,14 +358,14 @@ function mapUnitSource(
     return {
       sourceReferencesKind: "pinned_sdk_registry",
       unitClaimSource: "pinned_sdk_metadata",
-      sourceDescription: "Pinned DeepBook mainnet coin metadata scalar used for quote raw units"
+      sourceDescription: "Token decimals from the pinned DeepBook mainnet metadata, used to interpret raw quote amounts"
     };
   }
   if (unitSource === "sui_core_getCoinMetadata") {
     return {
       sourceReferencesKind: "verified_mainnet_onchain_metadata",
       unitClaimSource: "verified_mainnet_onchain_metadata",
-      sourceDescription: "Sui mainnet getCoinMetadata result used for quote raw units"
+      sourceDescription: "Token decimals read from Sui mainnet, used to interpret raw quote amounts"
     };
   }
   return undefined;

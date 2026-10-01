@@ -27,6 +27,7 @@ const reviewAction = z.object({ action: z.enum(["prepare_review", "request_signa
   account: suiAddressStringSchema, reviewRevision: z.number().int().nonnegative() }).strict();
 const simpleAction = z.object({ action: z.enum(["cancel", "stop_connection", "stop_waiting", "read_result"]) }).strict();
 export const workflowActionSchema = z.union([connectAction, disconnectAction, accountAction, reviewAction, simpleAction]);
+export const automaticWorkflowActionSchema = z.union([connectAction, reviewAction.extend({ action: z.literal("prepare_review") })]);
 export function parseWorkflowAction(input: unknown) {
   const action = workflowActionSchema.parse(input);
   return "account" in action ? { ...action, account: parseSuiAddress(action.account)! } : action;
@@ -39,6 +40,7 @@ export const workflowViewSchema = z.object({
   allowedActions: z.array(z.enum(workflowActions)),
   actionRemainingMs: z.number().int().nonnegative(),
   nextStateReadAfterMs: z.number().int().nonnegative().optional(),
+  automaticAction: automaticWorkflowActionSchema.optional(),
   observe: z.boolean(),
   walletAvailability: walletAvailabilitySchema,
   progress: workflowProgressSchema,
@@ -59,6 +61,27 @@ export const workflowViewSchema = z.object({
 }).strict();
 export type WorkflowView = z.infer<typeof workflowViewSchema>;
 
+// Automatic preparation uses the same current selection and typed admission as
+// a deliberate retry. A failed computation is not a reason to compute in a loop.
+function automaticReviewAction(input: EvaluatedWorkflowState) {
+  const { record, session, request } = input;
+  if (!session || record?.scope !== "review" || request || session.preparationError ||
+      !input.allowedActions.includes("prepare_review")) return undefined;
+  const needsPreparation = !session.reviewState && session.reviewRevision === 0 ||
+    session.reviewState?.status === "refresh_required" && session.reviewState.refreshReason === "review_evidence_stale";
+  if (!needsPreparation || !input.activeAccount) return undefined;
+  const candidates = reviewWalletChoices(input.connections, input.activeAccount);
+  if (candidates.length !== 1) return undefined;
+  return { action: "prepare_review" as const, connectionId: candidates[0]!.connectionId,
+    account: input.activeAccount, reviewRevision: session.reviewRevision };
+}
+
+// Method support filters wallet choices; it does not authorize a signature.
+export function reviewWalletChoices(connections: WorkflowView["connections"], account: string, requireSigningMethod = false) {
+  return connections.filter((item) => item.status === "connected" && !item.pendingAction && item.accounts.includes(account) &&
+    (!requireSigningMethod || item.methods.includes("sui_signTransaction")));
+}
+
 // These projections do not read clocks, storage, or admission rules. The
 // evaluated facts and choices were collected together by the database owner.
 export function projectConnectionView(input: EvaluatedWorkflowState): WorkflowView {
@@ -66,6 +89,8 @@ export function projectConnectionView(input: EvaluatedWorkflowState): WorkflowVi
   const progress = workflowProgress(connection?.status === "awaiting_approval" || connection?.pendingAction === "disconnect", true, walletAvailability);
   return workflowViewSchema.parse({ kind: "connect", mode: "connect", allowedActions: input.allowedActions,
     actionRemainingMs: input.actionRemainingMs, observe: progress.status === "waiting", progress, walletAvailability,
+    ...(input.allowedActions.includes("connect")
+      ? { automaticAction: { action: "connect" } } : {}),
     connections: input.connections, activeAccount: input.activeAccount, connection, boundary: CONNECT_BOUNDARY });
 }
 
@@ -77,16 +102,18 @@ export function projectReviewView(input: EvaluatedWorkflowState): WorkflowView {
   });
   const displayedReview = boundReview ?? session.reviewState;
   const gas = displayedReview?.simulation?.gasCostSummary;
+  const automaticAction = automaticReviewAction(input);
   return workflowViewSchema.parse({ kind: "review", mode: record.scope === "review_manage" ? "review_manage" : "review",
     allowedActions: input.allowedActions, actionRemainingMs: input.actionRemainingMs, observe: progress.status === "waiting", progress, walletAvailability,
     connections: input.connections, activeAccount: input.activeAccount, boundary: REVIEW_BOUNDARY, receipt: input.receipt,
     ...(input.nextStateReadAfterMs === undefined ? {} : { nextStateReadAfterMs: input.nextStateReadAfterMs }),
+    ...(automaticAction ? { automaticAction } : {}),
     netGasMist: gas ? (BigInt(gas.computationCostRaw) + BigInt(gas.storageCostRaw) - BigInt(gas.storageRebateRaw)).toString() : undefined,
     review: { reviewSessionId: session.id, plan: session.plans[0], reviewRevision: boundReview && request ? request.reviewRevision : session.reviewRevision,
       status: boundReview?.status ?? session.status, account: boundReview?.account ?? session.account,
       preparing: !boundReview && !!session.preparationId,
       error: !boundReview ? [input.preparationIssue && `Current account selection: ${input.preparationIssue}`,
-        session.preparationError && `Previous review update: ${session.preparationError}`].filter(Boolean).join("\n\n") || undefined : undefined,
+        session.preparationError && `Earlier review message: “${session.preparationError}”`].filter(Boolean).join("\n\n") || undefined : undefined,
       state: displayedReview },
     request, observationStopped: authority ? authority.observation_stopped === 1 : undefined });
 }

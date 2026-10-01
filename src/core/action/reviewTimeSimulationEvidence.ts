@@ -346,7 +346,7 @@ export function createReviewTimeSimulationProducer(
             failReviewCheck(
               "review_time_simulation_transient_failure",
               "Review-time simulation",
-              "Review-time simulation could not reach the Sui simulation endpoint or timed out before returning a result. Refreshing the review may retry this transport-level simulation step.",
+              "Sui simulation did not return a result because the connection failed or timed out.",
               "simulation"
             )
           ]
@@ -359,7 +359,7 @@ export function createReviewTimeSimulationProducer(
           failReviewCheck(
             "review_time_simulation_exception_blocked",
             "Review-time simulation",
-            "Review-time simulation threw a non-transient error before returning a result. The review is blocked until the transaction material, simulation request shape, or adapter implementation is corrected.",
+            "Simulation could not be completed. This error was not classified as a temporary connection problem. The transaction, simulation request or adapter needs to be checked before wallet approval can be offered.",
             "simulation"
           )
         ]
@@ -459,7 +459,7 @@ export function createReviewTimeSimulationProducer(
         passReviewCheck(
           "review_time_simulation_evidence",
           "Review-time simulation",
-          "Simulated the stored local unsigned transaction material with validation checks enabled and bound the resulting effects, balance changes, object types, and transaction summary to the internal transaction digest. This is review evidence only, not wallet handoff, signing readiness, or execution readiness.",
+          "Simulated this exact stored transaction with validation checks enabled. The effects, balance changes and objects describe that simulation, not an actual transaction result. They do not authorize wallet approval or guarantee execution.",
           "simulation"
         )
       ]

@@ -137,6 +137,13 @@ export function card(title?: string): HTMLElement {
   return node;
 }
 
+// A group in one document, without another card boundary.
+export function section(title?: string): HTMLElement {
+  const node = element("section", "ui-section");
+  if (title) node.append(element("h2", "ui-section-title", title));
+  return node;
+}
+
 export function row(label: string, value: string | Node): HTMLElement {
   const node = element("div", "ui-row");
   node.append(element("span", "ui-row-label", label));

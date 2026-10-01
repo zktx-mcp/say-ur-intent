@@ -153,13 +153,87 @@ When Chart pool choices cannot be prepared, the backend creates a `closed`/`fail
 
 `ui.read_card` and `ui.submit_card` are app-only operations. Permission travels in UI metadata and is absent from model content and public saved resources. Input submission carries card ID, permission, expected revision and typed input. There is no first-view ownership or open/close operation. Recreated frames and chat returns read the same DB record. Identical duplicate input returns the stored request; conflicting input returns `card_conflict` and the authenticated current snapshot in error details. Invalid input returns `invalid_card_input` without consuming a valid selection. Invalid permission exposes neither current state nor private display data.
 
-Receipt model results retain input kinds/indices/object references and identify input values and PTB as UI-only details. This is a privacy-channel designation, not a promise that the standalone Receipt summary displays those details. Review can display them in its Transaction details disclosure. Do not tell users that the standalone Receipt card has input or graph controls. The typed `say-ur-intent/receipt-display` metadata binds display data to the same card ID, transaction digest and revision. It carries individual on-chain Pure input values and the graph derived from those inputs; never a serialized transaction, signature or wallet credential. Public saved resources contain only the model projection. A missing UI detail payload means unavailable display data, not that a transaction had no inputs.
+Receipt model results retain input kinds/indices/object references and identify input values and PTB as UI-only details. Receipt and completed Review show the executed transaction graph above their result summary when bound private metadata is available. Technical records are in one Details slide. Missing metadata leaves the saved result available without inventing a graph. The typed `say-ur-intent/receipt-display` metadata binds display data to the same card ID, transaction digest and revision. It carries individual on-chain Pure input values and the graph derived from those inputs; never a serialized transaction, signature or wallet credential. Public saved resources contain only the model projection. A missing UI detail payload means unavailable display data, not that a transaction had no inputs.
 
 Backend expiry ends unsubmitted input. A server restart invalidates unfinished cards; stored completed results remain readable. Reset/import removes cards and their permissions with the data change. Completed input does not reopen, while still-valid unsubmitted input is unaffected by chat navigation. A lost submit response is resolved by reading the same card, without another source request.
 
-A frame with valid UI permission confirms the current DB state even if its initial snapshot cannot be displayed. A display error does not change the stored state, repeat a submission, or start another source query. Required expiry and running-state observations still follow the backend hints. If a state read fails, automatic observation stops and the user can explicitly read the same saved state. A completed result that cannot be displayed remains stored; reopening the same card reads that stored result rather than requesting new data.
+When a Host replays a historical card without its private input permission, the
+View reads `sayurintent://cards/{cardId}` to restore the same card's current saved
+facts. The creating snapshot alone is not current state. This path creates no
+permission and offers no input, wallet or transaction actions. It does not
+recover private receipt details or pairing data that the Host did not supply.
+Malformed or conflicting metadata and rejected permissions remain errors.
 
-Review displays one current wallet candidate without a dropdown; an explicit card button selects that target. Multiple candidates still require selection. Normal display never starts preparation or signing. Completed Review cards lead with actual chain facts and keep earlier estimates in Reviewed conditions.
+Public saved reads use the existing backend evaluation: they can reconcile
+stored wallet sessions and reflect elapsed card, review, connection or request
+deadlines. They do not start a new pairing, preparation, signature, submission,
+source query or chain observation. Read-only restoration does not promise that
+database rows remain unchanged. A read failure can be retried explicitly for
+the same card, without polling or replaying the original business operation.
+
+A frame with valid UI permission confirms the current DB state even if its initial snapshot cannot be displayed. A display error does not change the stored state, repeat a submission, or start another source query. Required expiry and running-state observations still follow the backend hints. If a state read fails, automatic observation stops and the user can explicitly read the same saved state. Check status can also retry a failed display after confirming that same card; the completed result remains stored. A failed QR drawing can be retried for the same current connection without creating another pairing. Missing private QR metadata cannot be recovered from the public saved resource. Display recovery does not clear a failed command's explicit retry requirement or a user's pause.
+
+Review display labels describe the available information: Ready for your review,
+Review needs updating, and Review blocked. They do not rename API status enums
+or establish current permission to request wallet approval. Read-only restored
+cards may show prepared review details without allowing actions. Check status
+reads the same card, Retry review recomputes permitted review details, and
+Continue review explicitly resumes updates paused in that View. A recorded
+review message describes a saved update failure or connection change, not a
+current instruction or proof that a cancellation succeeded.
+
+A failed Request delivery never triggers a repeated signature request. Same-card
+reads still follow the existing expiry hints; a confirmed unadmitted stale review
+may prepare new conditions, which require a new Request click. Failed initial
+preparation can be retried for the displayed current wallet/account after another
+state check. A delayed action response does not clear an intervening read failure:
+the card retains explicit state-read recovery until a current read succeeds.
+
+Overlapping successful responses for the same card may arrive out of order.
+A lower revision does not replace displayed facts or create a read error, and
+required observations continue from the retained current state. Equal revisions
+are validated rather than discarded. Actual error responses remain failures.
+
+An unconfirmed Cancel review, wallet disconnection, account selection or stop
+request retains its error and pauses new automatic preparation/pairing in that
+View. State reads still report already admitted work. Existing permitted actions
+can be retried explicitly. An unconfirmed Cancel review followed by expired
+material offers Continue review for the existing preparation action; a new
+Request click is still required to request wallet approval. Retry/Continue
+requires a fresh, accepted state read and an unchanged target before one send.
+A completed cancellation cannot be undone through these controls. This local
+pause does not claim that the backend or other frames stopped; new frames use
+the actual saved state.
+
+Connect eligibility and its SQLite admission use the same current-owner
+connection set. A connected wallet, pending approval or pending disconnection
+removes `connect` from `allowedActions` and prevents a second pairing even when
+different cards race with current revisions. The losing card gets the existing
+conflict response and its own snapshot, without another card's private QR or
+permission. Later availability requires an explicit Retry for that failed
+attempt; a saved-state read does not repeat it.
+
+Failed attempts whose exact target or command authority has ended are shown as
+earlier attempts, without a command retry or a saved-read button solely for that
+old failure. The current stored result remains authoritative; natural completion
+is not proof that an earlier stop was accepted. This includes failed automatic
+connection/preparation and an unadmitted Request when its card or review expires.
+Card action expiry does not end an already admitted request or result lookup.
+For unadmitted disconnection or account selection, the exact target in
+`connections` can establish that the earlier attempt has ended even while the
+card input remains available. An account returning later does not revive that
+attempt or clear its local automatic pause; the user can make a new selection.
+If an unknown result needs another lookup after the card's action period, request
+`session.open_review_management` with the same `reviewSessionId` and `attemptId`.
+It adds no signing authority and does not repeat the transaction.
+
+A confirmation that joins an older in-flight read retains its obligation. After
+that read succeeds, one serial current read performs the needed confirmation;
+an actual read failure instead requires explicit recovery. A valid current read
+also clears an identified card's earlier opening-projection error. Neither path
+repairs malformed permissions or changes the card's target.
+
+Review displays one current wallet candidate without a dropdown. Its current authenticated View executes the backend-projected `automaticAction` to prepare or renew stale verified conditions. Multiple candidates require selection; a failed computation requires explicit retry. `review_evidence_stale` distinguishes invalidated verified material from a failed quote/computation. Only Request wallet approval authorizes a signature request for the displayed revision. Result cards show the correct PTB, actual chain facts and one Details slide; Review keeps earlier estimates in its Reviewed conditions section.
 
 Cards provide no clipboard actions or copy buttons. Their text remains readable and selectable. Chart values remain USDC-denominated source candles, not fiat USD, peg guarantees, route advice, portfolio valuation or P&L. Cards do not fetch chain/Indexer endpoints directly or poll completed results.
 
@@ -771,6 +845,17 @@ evidence. The backend verifies stored bytes against that digest before requestin
 a wallet signature, then checks returned bytes and signer before submission.
 The card never receives the bytes.
 
+For a failed computation whose private material is no longer valid,
+`reviewState.evidenceValidity: "invalidated"` preserves the original
+`blockedReason` or `refreshReason`, checks and adapter stage history, while
+omitting human-readable, simulation, transaction-review, PTB and derived balance
+facts. The stages and checks describe the last computation; they do not establish
+currently available material. A fresh `wallet_review_contract_emit_missing`
+computation still requires human-readable and simulation summaries. Its
+invalidated stored result does not. Failed computations require explicit Retry;
+only previously ready material can become `review_evidence_stale` for automatic
+renewal. An expired approval click never approves the renewed revision.
+
 Those checks and lifecycle stages are pre-signing review evidence only. They do
 not expose transaction bytes, signing data, signing readiness, route
 recommendations, funding readiness, or execution readiness. Only a
@@ -835,7 +920,7 @@ It is not a signing readiness signal. Review-state checks are pre-signing review
 
 | Tool | Input and result |
 | --- | --- |
-| `session.create_wallet_connection` | Opens an internal card for connection, disconnection and approved-account selection. Opening the card starts none of those operations; the user acts in the card. Disconnection requires target-specific confirmation and does not revoke onchain permissions. |
+| `session.create_wallet_connection` | Opens an internal card with `intent: connect`, `disconnect` or `manage` (default). A connect-intent View automatically starts pairing after authenticated state confirmation; manage never pairs. A disconnect-intent card opens confirmation for a unique connected target. Disconnection requires target-specific confirmation and does not revoke onchain permissions. |
 | `session.get_wallet_connection` | Reads one `cardId`; public response excludes pairing and permission. |
 | `session.wait_wallet_connection` | Waits on one `cardId`, with an optional timeout up to 55 seconds; stops when user input is needed or the admitted connection/disconnection operation ends. |
 | `session.open_review_management` | Opens management for exact `reviewSessionId` + `attemptId`; no refresh or signing authority. |
@@ -891,8 +976,8 @@ before its response fails remains recorded and is recovered by reading it.
 Unavailable wallet setup distinguishes missing configuration, invalid project
 ID format, and backend initialization failure. A failed Connect card preserves
 its safe reason on subsequent reads. Connection-restoration or event-subscription
-failure disables wallet operations and returns a restart explanation. Neither
-failure starts a pairing or signature request, and ordinary evidence reads
+failure disables wallet operations and returns a safe availability reason. The
+connection card provides restart guidance. Neither failure starts a pairing or signature request, and ordinary evidence reads
 remain available. SDK error bodies and configuration values are not returned.
 
 Review status is preparation state (`proposed`, `awaiting_wallet`,
@@ -900,8 +985,11 @@ Review status is preparation state (`proposed`, `awaiting_wallet`,
 `expired`). `requestStatus`, when present, is `awaiting_signature`, `submitting`,
 `awaiting_chain_result`, `stopped`, `request_failed`, `outcome_unknown`, or
 `completed`. `pollingStatus` uses the current request when there is one and
-otherwise the preparation state. Preparation needs user action; it is not an
-already pending wallet signature.
+otherwise the preparation state. The `user_action_required` category and
+`pollingHint.userActionRequiredStatuses` identify states where the model-facing
+wait returns; they do not require a manual preparation click. A permitted live
+card can prepare automatically, while an ambiguous selection or failed update
+can require user input. Preparation is not an already pending wallet signature.
 
 A review's bound account is fixed; changing the active read account does not
 rebind it. Preparation choices and final admission use the same account rule.
@@ -909,7 +997,7 @@ To update a review bound to A, select A again in a new Connect card. To review
 for B, request a new Review. An absent or incompatible read account removes the
 preparation choice without recording a preparation failure. The existing
 `review.error` card text distinguishes `Current account selection` guidance from
-a stored `Previous review update` error. It does not decide permissions. Changing
+a quoted saved review message. It does not decide permissions. Changing
 read context alone does not revoke an already valid A review's signing choice.
 Once a signing request consumes its card, retrying needs a new Review; a
 management card only refers to its existing exact attempt.

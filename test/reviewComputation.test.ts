@@ -208,8 +208,11 @@ describe("review computation", () => {
       "deepbook_quote_policy",
       "deepbook_transaction_material_build_or_verify_missing"
     ]);
-    expect(JSON.stringify(state)).toContain("minOutRaw 122839505");
-    expect(JSON.stringify(state)).toContain("deepAmountRaw 25000");
+    const quoteRules = state.checks.find((check) => check.id === "deepbook_quote_policy")!;
+    expect(quoteRules).toMatchObject({ status: "pass", source: "quote" });
+    // 50 bps: floor(123456789 * 9950 / 10000) = 122839505 raw units.
+    expect(quoteRules.message).toContain("minimum receive on success 122839505");
+    expect(quoteRules.message).toContain("DEEP fee 25000");
     expect(state.status).not.toBe("ready_for_wallet_review");
   });
 

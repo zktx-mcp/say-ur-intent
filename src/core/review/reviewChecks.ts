@@ -3,9 +3,9 @@ import type { ReviewCheck } from "../action/types.js";
 export function adapterNotImplementedCheck(): ReviewCheck {
   return {
     id: "adapter_not_implemented",
-    label: "Adapter review",
+    label: "Supported transaction type",
     status: "fail",
-    message: "No review adapter is registered for this action plan; the review fails closed and signing remains blocked for this session.",
+    message: "No installed protocol adapter can review this transaction type. Wallet approval is unavailable.",
     source: "adapter"
   };
 }
@@ -13,10 +13,10 @@ export function adapterNotImplementedCheck(): ReviewCheck {
 export function accountBoundReviewRequiredCheck(): ReviewCheck {
   return {
     id: "account_bound_review_required",
-    label: "Account-bound review",
+    label: "Review for your account",
     status: "warning",
     message:
-      "Connect a wallet account to compute DeepBook review evidence and adapter lifecycle stages. This does not provide signing data, signing readiness, wallet handoff, or execution.",
+      "This transaction has not been checked for a connected wallet account. Wallet approval and submission are unavailable.",
     source: "adapter"
   };
 }
@@ -38,7 +38,7 @@ export function unsupportedDeepbookSwapPlanIdentityCheck(): ReviewCheck {
     label: "DeepBook plan identity",
     status: "fail",
     message:
-      "This action plan is labelled for the DeepBook swap adapter but does not match the DeepBookV3 swap review identity.",
+      "The proposed transaction does not match the supported DeepBook swap format.",
     source: "adapter"
   };
 }
@@ -46,10 +46,10 @@ export function unsupportedDeepbookSwapPlanIdentityCheck(): ReviewCheck {
 export function externalProposalReviewOnlyCheck(): ReviewCheck {
   return {
     id: "external_proposal_review_only",
-    label: "Non-signable review",
+    label: "View-only proposal",
     status: "fail",
     message:
-      "External proposal ingestion is read-only; it does not build transactions, request signatures, or create wallet actions.",
+      "This external proposal is for viewing only. It does not prepare a transaction, request a signature or allow wallet actions.",
     source: "adapter"
   };
 }

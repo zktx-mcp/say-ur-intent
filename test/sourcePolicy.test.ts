@@ -1291,7 +1291,7 @@ describe("source policy", () => {
     expect(workflow).toContain("verifyTransactionSignature");
     expect(review).toContain("requiredUserChoices");
     expect(review).toContain("unsupportedClaims");
-    expect(review).toContain('External proposal — not signable');
+    expect(review).toContain('External proposal — view only');
     expect(review).not.toMatch(/signTransaction\(|executeTransaction\(|transactionBytes/);
   });
 

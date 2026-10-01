@@ -24,7 +24,7 @@ export function createReadCardStore(options: {
       if (kind !== "chart") return { status: "ready" };
       const choices = await options.chart.getPools();
       return choices.status === "ok" ? { status: "ready", data: choices } : {
-        status: "failed", error: "The chart's pool list could not be read. Request a new chart card to try again."
+        status: "failed", error: "The chart's available trading pairs could not be loaded."
       };
     },
     execute: async (kind, input) => {

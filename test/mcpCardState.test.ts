@@ -190,7 +190,7 @@ it.each(["reset", "stop"] as const)("refuses a late preparation result after %s 
   access.ready();
   try {
     const creating = access.run(() => cards.create("chart", {}));
-    const rejected = expect(creating).rejects.toThrow(operation === "reset" ? "stale access" : "unavailable");
+    const rejected = expect(creating).rejects.toThrow(operation === "reset" ? "stale access" : "This card cannot be checked right now.");
     if (operation === "reset") await access.run(() => data.resetLocalData());
     else cards.stop();
     preparation.resolve({ status: "failed", error: "Fixture source unavailable" }); await rejected;
@@ -207,7 +207,7 @@ it("persists a safe preparation exception but refuses success when the initial D
   try {
     const failed = await cards.create("chart", {});
     expect(failed.snapshot).toMatchObject({ state: "closed", reason: "failed", revision: 0 });
-    expect(failed.snapshot.error).toContain("input choices could not be prepared");
+    expect(failed.snapshot.error).toContain("The choices for this card could not be loaded.");
     expect(JSON.stringify(failed)).not.toContain("private-source-fixture");
     expect(db.records.get(failed.snapshot.cardId)?.acceptedInput).toBeUndefined();
     raw.exec("CREATE TRIGGER fail_initial_card BEFORE INSERT ON live_read_cards BEGIN SELECT RAISE(ABORT, 'fixture initial write failure'); END");

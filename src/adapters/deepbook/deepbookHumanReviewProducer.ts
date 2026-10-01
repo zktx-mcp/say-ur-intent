@@ -79,8 +79,8 @@ export function createDeepbookSwapHumanReadableReviewProducer(): DeepbookSwapHum
         checks: [
           passReviewCheck(
             "deepbook_human_readable_review_evidence",
-            "Human-readable review",
-            "Prepared a human-readable account-bound swap review from material-bound quote policy and object ownership evidence. This is not wallet handoff, signing data, signing readiness, or execution readiness.",
+            "Readable transaction details",
+            "Prepared the amounts and transaction details for this account from the verified quote, transaction and object owners. These details do not authorize wallet approval or guarantee execution.",
             "adapter"
           )
         ]
@@ -92,8 +92,8 @@ export function createDeepbookSwapHumanReadableReviewProducer(): DeepbookSwapHum
         checks: [
           failReviewCheck(
             "deepbook_human_readable_review_failed",
-            "Human-readable review",
-            error instanceof Error ? error.message : "DeepBook human-readable review evidence could not be produced.",
+            "Readable transaction details",
+            error instanceof Error ? error.message : "The transaction details could not be prepared for this account.",
             "adapter"
           )
         ]
@@ -147,47 +147,47 @@ function buildDeepbookHumanReadableReview(
         summary: transactionFundingSummary(input.transactionObjectOwnership.funding) },
       {
         id: "deepbook_quote_policy",
-        label: "Quote policy",
+        label: "Quote and slippage rules",
         source: "quote",
-        summary: "Quote policy evidence supplies the input, expected output, minimum output, protocol fee, and slippage policy shown in asset flow; it is not route choice or signing readiness."
+        summary: "The quote and its rules supply the send amount, expected and minimum receive amounts, trading fee, and slippage limit shown here. They do not choose a route or establish permission to sign."
       },
       {
         id: "transaction_material_digest",
-        label: "Transaction material digest",
+        label: "Transaction identity (digest)",
         source: "digest_commitment",
-        summary: "The review is bound internally to the stored local unsigned transaction material digest; the digest and transaction bytes are not public review output."
+        summary: "This review is tied to the exact unsigned transaction stored by Say Ur Intent through its verification digest. The private transaction bytes are not included in the card."
       },
       {
         id: "transaction_object_ownership",
         label: "Object ownership",
         source: "wallet",
-        summary: "Object ownership evidence is derived from stored transaction data and Sui mainnet object reads."
+        summary: "The transaction objects and their owners were checked using the stored transaction and Sui mainnet data."
       }
     ],
     missingEvidence: [
       {
         id: "review_time_simulation",
         label: "Review-time simulation",
-        reason: "The review has not simulated the stored transaction material with required effects, balance changes, object types, and transaction fields."
+        reason: "At this step, the stored transaction has not yet been simulated to check its effects, balance changes, object types, and transaction details."
       }
     ],
     requiredUserChoices: [
       {
         id: "wallet_authorization_later",
-        label: "Wallet authorization",
+        label: "Wallet approval required",
         reason: "The backend requests a signature only after your explicit Review card action; nothing is signed without your approval in the wallet."
       }
     ],
     unsupportedClaims: [
       {
         id: "no_signing_readiness",
-        label: "No signing readiness",
-        reason: "Human-readable review evidence does not prove the action is ready to sign."
+        label: "Wallet approval not established",
+        reason: "These review details alone do not establish permission to request a wallet signature."
       },
       {
         id: "no_execution_readiness",
-        label: "No execution readiness",
-        reason: "Review-time simulation, wallet handoff, signing, and execution receipt evidence are not complete."
+        label: "Execution not confirmed",
+        reason: "At this step, simulation, wallet approval, signing, and confirmation of the transaction result are not complete."
       },
       {
         id: "no_route_recommendation",
@@ -199,7 +199,7 @@ function buildDeepbookHumanReadableReview(
       status: "current",
       evaluatedAt: input.now.toISOString(),
       expiresAt: input.transactionMaterial.expiresAt,
-      reason: "Human-readable review evidence expires with the stored local transaction material and quote policy."
+      reason: "These details expire with the transaction and quote used to prepare them."
     },
     blockingChecks: [
       failReviewCheck(

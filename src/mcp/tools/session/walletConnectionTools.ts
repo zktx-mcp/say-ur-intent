@@ -5,7 +5,7 @@ import { cardSnapshotSchema } from "../../../mcp-ui/contracts.js";
 import { waitForWalletConnection, WAIT_OUTCOMES } from "../../../core/session/wait.js";
 import type { McpServerDeps } from "../../server.js";
 import { okToolResult } from "../../result.js";
-import { noParamsInputSchema, successOutputSchema } from "../../schemas.js";
+import { successOutputSchema } from "../../schemas.js";
 import { TOOL_NAMES } from "../../toolNames.js";
 import { timeoutInputSchema } from "./shared.js";
 import { CardError } from "../../../core/session/cardSessionStore.js";
@@ -15,9 +15,9 @@ export function registerWalletConnectionTools(server: McpServer, deps: McpServer
   const failure = (error: unknown) => sessionStoreToolError(error, deps.logger);
   server.registerTool(TOOL_NAMES.sessionCreateWalletConnection, {
     title: "Open wallet connection controls", description: "Open a card for Sui wallet connection, disconnection and account selection.",
-    inputSchema: noParamsInputSchema, outputSchema: successOutputSchema(cardSnapshotSchema.shape),
+    inputSchema: { intent: z.enum(["manage", "connect", "disconnect"]).default("manage") }, outputSchema: successOutputSchema(cardSnapshotSchema.shape),
     _meta: cardMetadata("connect"), annotations: { readOnlyHint: false, openWorldHint: false }
-  }, async () => { try { return await createWorkflowCard(server, deps, "connect", {}); } catch (error) { return failure(error); } });
+  }, async ({ intent }) => { try { return await createWorkflowCard(server, deps, "connect", { intent }); } catch (error) { return failure(error); } });
   server.registerTool(TOOL_NAMES.sessionGetWalletConnection, {
     title: "Get wallet connection", description: "Read the saved state of one wallet connection card.",
     inputSchema: { cardId: z.string().min(1) }, outputSchema: successOutputSchema(cardSnapshotSchema.shape),

@@ -207,6 +207,11 @@ assembly declined and use the failed adapter-prefixed emit-missing check message
 for the concrete reason: `deepbook_wallet_review_contract_emit_missing` for a
 DeepBook review.
 
+If `reviewState.evidenceValidity` is `invalidated`, explain the preserved failure
+using its reason and checks. Material-derived facts have been removed, and the
+adapter stages describe the last computation, not current usable evidence.
+Do not describe material as available or infer automatic retry from that history.
+
 If a response includes a `PtbVisualizationArtifact`, answer from its Mermaid
 text, diagnostics, `generatedAt`, `source`, and `unsupportedUse` fields only
 when the response-local guide lists them as answer fields. Do not treat a PTB
@@ -304,9 +309,8 @@ For a connected-account-only read, use `session.get_interaction_status` to disti
 
 1. `account.get_active_account` reports the stored selection, with `source` and `setAt`. For current assets without a user-provided address, use `session.get_interaction_status.assetReadAccount` to check whether that selection is a usable default. If not, request an address only for tools that accept `account`; connected-account-only tools require the connection/account-selection flow. Do not infer current connection from the stored selection.
 2. An explicit connect/reconnect/disconnect/account replacement request opens an internal
-   Connect card with `session.create_wallet_connection`. The user selects the
-   operation there; the model must not call app-only actions on their behalf.
-For "disconnect my wallet", when the wallet service is available and the target is connected, open `session.create_wallet_connection` even though no new connection is needed. The user chooses Disconnect and then Confirm disconnect or Cancel in that card. Do not substitute `account.clear_active_account`, claim disconnection is unsupported merely because there is no direct model-facing disconnect tool, or equate disconnection with revoking onchain permissions. If disconnection is already pending, read or wait on that exact card instead of opening another operation.
+   Connect card with `session.create_wallet_connection`: use `intent: connect` for requested pairing, `intent: disconnect` for requested disconnection, and `intent: manage` for inspection or account selection. The model must not call app-only actions on the user's behalf.
+For "disconnect my wallet", when the wallet service is available and the target is connected, open `session.create_wallet_connection` with `intent: disconnect`. For one connected target the card shows Confirm disconnect or Back directly; Back only returns to the connection view; it does not submit Cancel review or disconnect. The card starts no pairing. Do not substitute `account.clear_active_account`, claim disconnection is unsupported merely because there is no direct model-facing disconnect tool, or equate disconnection with revoking onchain permissions. If disconnection is already pending, read or wait on that exact card instead of opening another operation.
 
 3. `session.get_wallet_connection` and `session.wait_wallet_connection` use the
    returned cardId. An unsubmitted card needs input; waiting does not create a
@@ -318,16 +322,17 @@ For "disconnect my wallet", when the wallet service is available and the target 
    cancellation. Report the actual stored outcome and pending user action.
 
 Use `session.get_interaction_status` for bounded pending interactions. A Review
-status of ready_for_wallet_review means evidence is ready for user inspection;
-it does not mean the wallet has a pending signing request. Request status is
+status of `ready_for_wallet_review` is displayed as Ready for your review: the
+review details are available to inspect. It does not mean that approval can be
+requested now or that the wallet has a pending signing request. Request status is
 reported separately. A completed request has independently observed chain
 success/failure. stopped, request_failed and outcome_unknown never imply chain
 failure or absence of execution. Use `session.get_execution_result` to read the
 known digest without resubmitting. `session.open_review_management` requires the
 exact reviewSessionId and attemptId and grants no new signing/refresh action.
-With one available wallet/account, the Review card shows the target and uses its explicit action button for selection; no dropdown is needed. Multiple candidates require a selection. Preparation and approval remain separate user actions. The standalone Receipt card is a result summary, without input/PTB controls. Private display metadata does not prove those controls are visible; detailed reviewed/chain facts are available in Review disclosures.
+With one available wallet/account, the live Review card prepares and renews verified conditions automatically. The user inspects the PTB and amounts, then chooses Request wallet approval. Multiple candidates need selection and failed preparation may need Retry review. Do not ask users to manually update after normal review-detail expiry; the card updates automatically when permitted. Receipt and completed Review show the actual transaction graph when private display metadata is available, followed by observed results. Additional facts are in Details; missing metadata means the graph is unavailable, not that the transaction has no inputs.
 
-Frame recreation and chat navigation only reread DB state. SDK restoration does
+Frame recreation and chat navigation first reread the same DB state. Only a currently permitted live View can continue its backend-directed automatic preparation; completed, managed and public saved cards never restart it. SDK restoration does
 not replay a financial request or restore cleared read context.
 
 Display shortened lowercase addresses by default and full addresses when exact

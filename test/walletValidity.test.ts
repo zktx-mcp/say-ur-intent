@@ -25,7 +25,7 @@ it.each([0, 1])("evaluates a read at material expiry plus %i ms after real async
     return candidate;
   });
   const result = await f.read(review.card);
-  expect(result.snapshot.data).toMatchObject({ review: { status: "refresh_required", state: { refreshReason: "quote_stale" } },
+  expect(result.snapshot.data).toMatchObject({ review: { status: "refresh_required", state: { refreshReason: "review_evidence_stale" } },
     allowedActions: ["cancel", "prepare_review"], observe: false });
   expect(result.snapshot.data).not.toHaveProperty("nextStateReadAfterMs");
   expect(calls).toHaveBeenCalledOnce();
@@ -44,7 +44,7 @@ it.each([0, 1])("refuses new admission at material expiry plus %i ms without con
   const result = await f.act(review.card, input);
   expect(result.error?.code).toBe("card_conflict");
   expect(result.snapshot.state).toBe("ready");
-  expect(result.snapshot.data).toMatchObject({ review: { status: "refresh_required", state: { refreshReason: "quote_stale" } } });
+  expect(result.snapshot.data).toMatchObject({ review: { status: "refresh_required", state: { refreshReason: "review_evidence_stale" } } });
   const db = new Database(join(f.directory, "activity.sqlite"));
   try {
     expect(db.prepare("SELECT COUNT(*) AS n FROM review_requests").get()).toEqual({ n: 0 });

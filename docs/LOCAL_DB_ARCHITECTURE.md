@@ -200,6 +200,15 @@ reconciled from the available SDK session or closed as unconfirmed failures.
 These reads never repeat preparation, connection, signing or submission. Raw
 history/export readers do not perform this reconciliation.
 
+`ReviewSession.preparationId` identifies an admitted preparation awaiting a
+stored outcome; the field alone does not prove that computation is still
+running. `ReviewSession.preparationError`, stored in `live_review_sessions.preparation_error`,
+is a saved review message: it can record a failed preparation or invalidation
+caused by a wallet connection change. Its presence does not prove that a
+computation ran. The View labels it Earlier review message and keeps it distinct
+from current account-selection guidance and a command delivery failure. These
+fields describe different facts; none grants action or retry authority.
+
 Signature admission independently checks the current material handle, expiry,
 bytes, digest and review binding inside its transaction. Displayed actions are
 not admission authority. An admitted attempt keeps its fixed review facts and

@@ -99,7 +99,7 @@ export function registerReadCards(server: McpServer, deps: Pick<McpServerDeps, "
   registerAppTool(server, CARD_TOOLS.receipt, { title: "Transaction result", description: "Open a Sui transaction result card.",
     inputSchema: receiptInputSchema.partial(), annotations: { readOnlyHint: true, openWorldHint: true }, _meta: cardMetadata("receipt")
   }, (input) => create("receipt", input));
-  registerAppTool(server, CARD_TOOLS.chart, { title: "Market chart", description: "Open a DeepBook USDC candle chart card.",
+  registerAppTool(server, CARD_TOOLS.chart, { title: "DeepBook USDC chart", description: "Open a DeepBook USDC candle chart card.",
     inputSchema: chartOpenInputSchema, annotations: { readOnlyHint: true, openWorldHint: true }, _meta: cardMetadata("chart")
   }, (input) => create("chart", input));
 
@@ -122,7 +122,7 @@ export function registerReadCards(server: McpServer, deps: Pick<McpServerDeps, "
         if (domainError) return domainError;
         const invalid = error instanceof z.ZodError;
         return errorToolResult({ kind: invalid ? "input_invalid" : "internal_error", details: {
-          code: invalid ? "invalid_card_input" : "card_unavailable", reason: invalid ? "Invalid card input." : "Card operation unavailable." } });
+          code: invalid ? "invalid_card_input" : "card_unavailable", reason: invalid ? "This request is not valid for the card." : "This card request could not be completed." } });
       }
     });
   }

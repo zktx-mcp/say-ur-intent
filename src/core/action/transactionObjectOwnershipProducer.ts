@@ -226,7 +226,7 @@ export function createTransactionObjectOwnershipProducer(
           failReviewCheck(
             "transaction_object_ownership_unverified",
             "Object ownership",
-            "Object ownership evidence was not accepted because at least one gas or account-owned transaction object is not owned by the connected account, or an object owner could not be classified.",
+            "An object's ownership could not be confirmed, or an account-owned transaction or gas object belongs to a different account.",
             invalidFact.roles.includes("gas_object") ? "wallet" : "adapter"
           )
         ]
@@ -260,7 +260,7 @@ export function createTransactionObjectOwnershipProducer(
           failReviewCheck(
             "transaction_object_ownership_contract_mapping_unsupported",
             "Object ownership contract mapping",
-            `Object ownership evidence was read but cannot be used for contract objectOwnership evidence: ${contractMapping.reason}.`,
+            `The object ownership checks could not be used for this transaction review. Reported reason: “${contractMapping.reason}”.`,
             contractMapping.roles.includes("gas_object") ? "wallet" : "adapter"
           )
         ]
@@ -274,7 +274,7 @@ export function createTransactionObjectOwnershipProducer(
         passReviewCheck(
           "transaction_object_ownership_verified",
           "Object ownership",
-          "Verified contract-mappable transaction object ownership facts from the stored local transaction material and mainnet object reads. Gas and account-owned transaction coin objects are owned by the connected account; shared or immutable protocol objects are recorded as non-account-owned facts. This is not wallet handoff, signing readiness, or execution readiness.",
+          "Checked the transaction objects against Sui mainnet. The gas objects and account-owned coins belong to the connected account; shared or immutable protocol objects are recorded separately. These ownership checks do not authorize wallet approval or guarantee execution.",
           "wallet"
         )
       ]

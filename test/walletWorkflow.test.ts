@@ -134,7 +134,7 @@ describe("wallet startup and review expiry", () => {
     const refused = await f.act(before, { action: "request_signature", connectionId: connection.connectionId,
       account: f.account, reviewRevision: ready.session.reviewRevision });
     expect(refused.error?.code).toBe("card_conflict");
-    expect(refused.snapshot.data).toMatchObject({ review: { status: "refresh_required", state: { refreshReason: "quote_stale" } } });
+    expect(refused.snapshot.data).toMatchObject({ review: { status: "refresh_required", state: { refreshReason: "review_evidence_stale" } } });
     expect(refused.snapshot.data).not.toHaveProperty("nextStateReadAfterMs");
     expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
     const expired = await f.read(ready.card);
@@ -144,6 +144,27 @@ describe("wallet startup and review expiry", () => {
     await vi.waitFor(async () => expect((await f.read(ready.card)).snapshot.data).toMatchObject({
       review: { status: "ready_for_wallet_review", reviewRevision: 2 }, nextStateReadAfterMs: 30_000
     }));
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+  });
+
+  it("caps a later-created review card at the original session deadline", async () => {
+    const f = await fixture(), { connection } = await f.approve();
+    const created = await f.run(() => f.sessions.createReviewSession([f.plan], f.now()));
+    const originalExpiry = created.session.expiresAt;
+    f.advance(5000);
+    const card = await f.run(() => f.cards.create("review", { reviewSessionId: created.session.id }));
+    expect(Date.parse(card.snapshot.expiresAt)).toBeGreaterThan(Date.parse(originalExpiry));
+    expect(card.snapshot.data).toMatchObject({ actionRemainingMs: Date.parse(originalExpiry) - f.now().getTime() });
+    await f.act(card, { action: "prepare_review", connectionId: connection.connectionId, account: f.account, reviewRevision: 0 });
+    await vi.waitFor(async () => expect((await f.read(card)).snapshot.data).toMatchObject({ review: { status: "ready_for_wallet_review" } }));
+    f.advance(Date.parse(originalExpiry) - f.now().getTime());
+    const expired = await f.read(card);
+    expect(expired.snapshot.data).toMatchObject({ actionRemainingMs: 0, allowedActions: [], review: { status: "expired" } });
+    const revision = (expired.snapshot.data as any).review.reviewRevision;
+    for (const action of ["prepare_review", "request_signature"]) {
+      expect((await f.act(expired, { action, connectionId: connection.connectionId, account: f.account, reviewRevision: revision })).error?.code).toBe("card_conflict");
+    }
+    expect(f.run(() => f.sessions.readReviewSession(created.session.id))!.expiresAt).toBe(originalExpiry);
     expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
   });
 });
@@ -831,4 +852,130 @@ it("carries address-funded material through SQLite admission, real signature ver
   await vi.waitFor(() => expect(f.run(() => f.records.currentRequest(ready.session.id)?.requestStatus)).toBe("completed"));
   expect(f.sign).toHaveBeenCalledOnce(); expect(f.submit).toHaveBeenCalledOnce();
   expect(f.run(() => f.records.currentRequest(ready.session.id)?.execution?.status)).toBe("success");
+});
+
+it("separates automatic pairing intent from management and disconnection", async () => {
+  const f = await fixture();
+  for (const intent of ["manage", "disconnect"]) {
+    const card = await f.run(() => f.cards.create("connect", { intent }));
+    const view = (await f.read(card)).snapshot.data as { automaticAction?: unknown; allowedActions: string[] };
+    expect(view.automaticAction).toBeUndefined(); expect(view.allowedActions).not.toContain("connect");
+    expect((await f.act(card, { action: "connect" })).error).toBeDefined();
+    expect(f.connect).not.toHaveBeenCalled();
+  }
+  const connecting = await f.createConnection();
+  expect(connecting.snapshot.data).toMatchObject({ automaticAction: { action: "connect" } });
+  await f.act(connecting, { action: "connect" });
+  await f.act(connecting, { action: "connect" });
+  expect(f.connect).toHaveBeenCalledOnce();
+  expect((await f.read(connecting)).snapshot.data).not.toHaveProperty("automaticAction");
+  expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+});
+
+it("admits one preparation across competing cards and never renews a managed attempt", async () => {
+  const f = await fixture(), { connection } = await f.approve();
+  const session = await f.run(() => f.sessions.createReviewSession([f.plan], f.now()));
+  const first = await f.run(() => f.cards.create("review", { reviewSessionId: session.session.id }));
+  const second = await f.run(() => f.cards.create("review", { reviewSessionId: session.session.id }));
+  const action = { action: "prepare_review", connectionId: connection.connectionId, account: f.account, reviewRevision: 0 };
+  expect(first.snapshot.data).toMatchObject({ automaticAction: action });
+  expect(second.snapshot.data).toMatchObject({ automaticAction: action });
+  const pending = deferred<void>(), source = f.quote.getMockImplementation()!;
+  f.quote.mockImplementationOnce(async () => { await pending.promise; return source(); });
+  await Promise.all([f.act(first, action), f.act(second, action)]);
+  await vi.waitFor(() => expect(f.quote).toHaveBeenCalledOnce());
+  pending.resolve();
+  await vi.waitFor(async () => expect((await f.read(first)).snapshot.data).toMatchObject({ review: { status: "ready_for_wallet_review" } }));
+  const current = await f.read(first);
+  await f.act({ ...first, ...current }, { action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
+  await vi.waitFor(() => expect(f.run(() => f.records.currentRequest(session.session.id)?.requestStatus)).toBe("completed"));
+  const attempt = f.run(() => f.records.currentRequest(session.session.id))!;
+  const managed = await f.run(() => f.cards.create("review", { reviewSessionId: session.session.id, attemptId: attempt.attemptId, mode: "manage" }));
+  expect(managed.snapshot.data).not.toHaveProperty("automaticAction");
+  f.advance(31_000);
+  expect((await f.read(managed)).snapshot.data).not.toHaveProperty("automaticAction");
+  expect(f.quote).toHaveBeenCalledOnce(); expect(f.sign).toHaveBeenCalledOnce(); expect(f.submit).toHaveBeenCalledOnce();
+});
+
+it("admits only one pairing across different cards with current revisions", async () => {
+  const f = await fixture(), pending = deferred<Awaited<ReturnType<typeof f.transport.connect>>>();
+  f.connect.mockImplementation(() => pending.promise);
+  const first = await f.createConnection(), second = await f.createConnection();
+  for (const card of [first, second]) expect(card.snapshot.data).toMatchObject({ automaticAction: { action: "connect" } });
+  const responses = await Promise.all([f.act(first, { action: "connect" }), f.act(second, { action: "connect" })]);
+  expect(responses.filter((response) => !response.error)).toHaveLength(1);
+  const refused = responses.find((response) => response.error)!;
+  const loser = [first, second].find((card) => card.snapshot.cardId === refused.snapshot.cardId)!;
+  const winner = [first, second].find((card) => card !== loser)!;
+  expect(refused.error?.code).toBe("card_conflict");
+  expect(refused.snapshot).toMatchObject({ state: "ready", revision: loser.snapshot.revision });
+  expect(refused.snapshot.data).not.toHaveProperty("automaticAction");
+  expect((refused.snapshot.data as { allowedActions: string[] }).allowedActions).not.toContain("connect");
+  expect(f.run(() => f.cardRecords.get(refused.snapshot.cardId))?.acceptedInput).toBeUndefined();
+  expect(f.run(() => f.records.connections()).map((row) => row.connection.status)).toEqual(["awaiting_approval"]);
+  expect(f.connect).toHaveBeenCalledOnce();
+  // A refreshed revision still cannot bypass the owner-wide connection rule.
+  expect((await f.act(await f.read(loser), { action: "connect" })).error?.code).toBe("card_conflict");
+  await f.act(winner, { action: "connect" });
+  expect(f.connect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+});
+
+it.each(["connected", "disconnect_pending"] as const)("keeps pairing eligibility and admission aligned while %s", async (status) => {
+  const f = await fixture(), { connection } = await f.approve();
+  if (status === "disconnect_pending") {
+    vi.mocked(f.transport.disconnect).mockImplementation(() => new Promise(() => {}));
+    const disconnect = await f.createConnection();
+    expect((await f.act(disconnect, { action: "disconnect", connectionId: connection.connectionId })).error).toBeUndefined();
+  }
+  const card = await f.createConnection();
+  expect((card.snapshot.data as { allowedActions: string[] }).allowedActions).not.toContain("connect");
+  expect(card.snapshot.data).not.toHaveProperty("automaticAction");
+  expect((await f.act(card, { action: "connect" })).error?.code).toBe("card_conflict");
+  expect(f.connect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+});
+
+it("rolls back both the connection and card before an unsuccessful pairing admission", async () => {
+  const f = await fixture(), card = await f.createConnection(), db = new Database(join(f.directory, "activity.sqlite"));
+  try {
+    db.exec("CREATE TRIGGER reject_pairing_card BEFORE UPDATE ON live_read_cards BEGIN SELECT RAISE(ABORT,'fixture card write failed'); END");
+    await expect(f.act(card, { action: "connect" })).rejects.toThrow("fixture card write failed");
+    expect(f.run(() => f.records.connections())).toEqual([]);
+    expect(f.run(() => f.cardRecords.get(card.snapshot.cardId))).toMatchObject({ state: { state: "ready", revision: card.snapshot.revision } });
+    expect(f.run(() => f.cardRecords.get(card.snapshot.cardId))?.acceptedInput).toBeUndefined();
+    expect(f.connect).not.toHaveBeenCalled();
+  } finally { db.exec("DROP TRIGGER reject_pairing_card"); db.close(); }
+});
+
+it.each(["disconnected", "failed", "rejected", "stopped", "expired", "previous_owner"] as const)("does not turn %s history into a permanent pairing lock", async (status) => {
+  const f = await fixture();
+  // An independently stored historical session is not a new pairing admission.
+  const saved = f.run(() => f.records.restoreConnection({ topic: "historical-fixture", accounts: [f.account], methods: ["sui_signTransaction"],
+    chain: "sui:mainnet", expiresAt: new Date(f.now().getTime() + 60_000).toISOString() }, f.now()));
+  if (status === "previous_owner") {
+    const db = new Database(join(f.directory, "activity.sqlite"));
+    try { db.prepare("UPDATE live_wallet_connections SET owner_id=? WHERE id=?").run("previous-owner", saved.connection.connectionId); } finally { db.close(); }
+  } else f.run(() => f.records.updateConnection(saved.connection.connectionId, { status }, f.now()));
+  const card = await f.createConnection();
+  expect(card.snapshot.data).toMatchObject({ automaticAction: { action: "connect" } });
+  expect((await f.act(card, { action: "connect" })).error).toBeUndefined();
+  expect(f.connect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+});
+
+it("preserves account selection and disconnection for multiple stored connections", async () => {
+  const f = await fixture();
+  // Existing approved sessions can be restored together. They do not bypass
+  // the product's new-pairing admission rule during fixture preparation.
+  const sessions = ["stored-a", "stored-b"].map((topic, index) => ({ topic, accounts: [index ? `0x${"b".repeat(64)}` : f.account],
+    methods: ["sui_signTransaction"], chain: "sui:mainnet" as const, expiresAt: new Date(f.now().getTime() + 60_000).toISOString() }));
+  const records = sessions.map((session) => f.run(() => f.records.restoreConnection(session, f.now())));
+  vi.spyOn(f.transport, "session").mockImplementation((topic) => sessions.find((session) => session.topic === topic));
+  const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+  expect(card.snapshot.data).toMatchObject({ connections: expect.arrayContaining(records.map((record) => expect.objectContaining({ connectionId: record.connection.connectionId }))) });
+  expect((await f.act(card, { action: "use_account", connectionId: records[1]!.connection.connectionId, account: sessions[1]!.accounts[0] })).error).toBeUndefined();
+  expect(f.run(() => f.records.connectionViews())).toHaveLength(2);
+  const disconnect = await f.run(() => f.cards.create("connect", { intent: "disconnect" }));
+  expect((await f.act(disconnect, { action: "disconnect", connectionId: records[0]!.connection.connectionId })).error).toBeUndefined();
+  await vi.waitFor(() => expect(f.run(() => f.records.connection(records[0]!.connection.connectionId)?.connection.status)).toBe("disconnected"));
+  expect(f.run(() => f.records.connection(records[1]!.connection.connectionId)?.connection.status)).toBe("connected");
+  expect(f.connect).not.toHaveBeenCalled(); expect(f.transport.disconnect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled();
 });

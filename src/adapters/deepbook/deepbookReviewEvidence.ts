@@ -545,17 +545,17 @@ async function quoteEvidenceStage(
 
     let feeMode: "deep" | "input_coin" = "deep";
     let feeModeMessage =
-      "Fee mode is deep: no DEEP balance source is wired, so the review quotes DeepBook fees in DEEP.";
+      "The trading fee is quoted in DEEP. A DEEP balance was not checked for this quote.";
     let quote = await fetchQuote("deep");
     if (input.deepBalanceSource) {
       const deepBalanceRaw = BigInt(await input.deepBalanceSource(input.account));
       const deepRequiredRaw = BigInt(quote.rawQuote.deepRequired.raw);
       if (deepBalanceRaw >= deepRequiredRaw) {
-        feeModeMessage = `Fee mode is deep: account DEEP balance ${deepBalanceRaw} raw covers the required ${deepRequiredRaw} raw fee.`;
+        feeModeMessage = `The trading fee is quoted in DEEP: the checked DEEP balance (${deepBalanceRaw} raw units) covers the quoted fee (${deepRequiredRaw} raw units).`;
       } else {
         feeMode = "input_coin";
         quote = await fetchQuote("input_coin");
-        feeModeMessage = `Fee mode is input_coin: account DEEP balance ${deepBalanceRaw} raw is below the required ${deepRequiredRaw} raw fee, so the swap pays the taker fee in the source coin at the protocol fee penalty. The quoted output already reflects that fee.`;
+        feeModeMessage = `The trading fee is quoted in the token being sent because the checked DEEP balance (${deepBalanceRaw} raw units) is below the required fee (${deepRequiredRaw} raw units). The quote includes the protocol fee penalty for this option; the receive amount already reflects it.`;
       }
     }
     return {
@@ -564,11 +564,11 @@ async function quoteEvidenceStage(
       checks: [
         passReviewCheck(
           "deepbook_raw_quote_evidence",
-          "Raw quote evidence",
-          `Fetched raw DeepBook quote evidence at ${quote.fetchedAt} from ${quote.rawQuote.sourceMoveFunction}; expected output before slippage is ${quote.rawQuote.directionalOutput.raw} ${quote.rawQuote.directionalOutput.symbol} raw units and DEEP fee evidence is ${quote.rawQuote.deepRequired.raw} raw units.`,
+          "Quote amounts (raw units)",
+          `DeepBook quote retrieved at ${quote.fetchedAt} from ${quote.rawQuote.sourceMoveFunction}: expected receive amount before slippage ${quote.rawQuote.directionalOutput.raw} ${quote.rawQuote.directionalOutput.symbol} raw units; quoted DEEP fee ${quote.rawQuote.deepRequired.raw} raw units.`,
           "quote"
         ),
-        passReviewCheck("deepbook_fee_mode", "Fee mode", feeModeMessage, "quote")
+        passReviewCheck("deepbook_fee_mode", "Trading fee token", feeModeMessage, "quote")
       ]
     };
   } catch (error) {
@@ -599,7 +599,7 @@ function quotePolicyStage(
       checks: [
         failReviewCheck(
           "deepbook_quote_policy_invalid",
-          "Quote policy",
+          "Quote and slippage rules",
           error instanceof Error ? error.message : "DeepBook quote policy could not be derived.",
           "quote"
         )
@@ -614,8 +614,8 @@ function quotePolicyStage(
       checks: [
         failReviewCheck(
           "deepbook_quote_policy_refresh_required",
-          "Quote policy",
-          `Quote policy requires refresh: ${policy.reason}. Quote age is ${policy.quoteAgeMs}ms with stale threshold ${policy.staleAfterMs}ms.`,
+          "Quote and slippage rules",
+          `The quote needs updating. Reported reason: “${policy.reason}”. Quote age: ${policy.quoteAgeMs} ms; validity limit: ${policy.staleAfterMs} ms.`,
           "quote"
         )
       ]
@@ -628,8 +628,8 @@ function quotePolicyStage(
     checks: [
       passReviewCheck(
         "deepbook_quote_policy",
-        "Quote policy",
-        `Derived review policy from raw quote evidence: feeMode ${policy.feeMode}, sourceAmountRaw ${policy.sourceAmountRaw}, expectedOutRaw ${policy.expectedOutRaw}, minOutRaw ${policy.minOutRaw}, deepAmountRaw ${policy.deepAmountRaw}, quoteAgeMs ${policy.quoteAgeMs}. These values are review evidence only and are not transaction bytes, signing data, or signing readiness.`,
+        "Quote and slippage rules",
+        `Quote fee option: ${policy.feeMode}. Amounts from the quote and slippage rules (raw units): send ${policy.sourceAmountRaw}, expected receive ${policy.expectedOutRaw}, minimum receive on success ${policy.minOutRaw}, DEEP fee ${policy.deepAmountRaw}; quote age: ${policy.quoteAgeMs} ms. These amounts are for review, not signing input or permission to sign.`,
         "quote"
       )
     ]
@@ -694,9 +694,9 @@ function missingProducerStageCheck(adapterLifecycle: DeepbookSwapReviewLifecycle
   const nextMissingLabel = nextMissing ? deepbookSwapReviewLifecycleStageLabel(nextMissing) : undefined;
   return {
     id: `deepbook_${nextMissing}_missing`,
-    label: nextMissingLabel ?? "Producer stage",
+    label: nextMissingLabel ?? "Review check",
     status: "fail",
-    message: `DeepBook account-bound review has not completed ${nextMissingLabel}. This is required before wallet handoff, signing, or execution, and no transaction bytes or signing readiness are available.`,
+    message: `This account review has not completed the required check: ${nextMissingLabel}. Wallet approval and transaction submission are unavailable.`,
     source: "adapter"
   };
 }
@@ -732,7 +732,7 @@ function ptbVisualizationRenderedCheck(): ReviewCheck {
     id: "deepbook_ptb_visualization",
     label: "PTB visualization",
     status: "pass",
-    message: "Rendered a Mermaid PTB visualization artifact from the stored local transaction material. Visualization only; it is not wallet authorization, not signing data, not signing readiness, and not execution readiness.",
+    message: "The transaction diagram (PTB) was created from the transaction prepared for this review. It is for inspection, not wallet approval, signing input or proof that execution will succeed.",
     source: "adapter"
   };
 }
@@ -742,7 +742,7 @@ function ptbVisualizationUnavailableCheck(reason: string): ReviewCheck {
     id: "deepbook_ptb_visualization_unavailable",
     label: "PTB visualization",
     status: "warning",
-    message: `PTB visualization is unavailable for this review: ${reason}. The emitted wallet review contract remains valid; visualization is optional review evidence.`,
+    message: `The transaction diagram (PTB) is unavailable. Reported reason: “${reason}”. The other verified review details are still available; this diagram is optional.`,
     source: "adapter"
   };
 }
@@ -750,9 +750,9 @@ function ptbVisualizationUnavailableCheck(reason: string): ReviewCheck {
 function contractEmittedCheck(): ReviewCheck {
   return {
     id: "deepbook_wallet_review_contract_emitted",
-    label: "Wallet review contract emit",
+    label: "Transaction approval details",
     status: "pass",
-    message: "DeepBook account-bound review assembled and schema-validated a wallet review contract from verified review evidence. An explicit Review card action can request backend-mediated wallet approval of this exact transaction; ordinary MCP output stays free of signing authority.",
+    message: "The approval details for this exact transaction were prepared from the verified review and checked for the required format. Only your request in a Review card that allows actions can start wallet approval. Submission also requires approval in your wallet; an ordinary AI tool response cannot authorize it.",
     source: "adapter"
   };
 }
@@ -760,9 +760,9 @@ function contractEmittedCheck(): ReviewCheck {
 function contractEmitDeclinedCheck(reason: string): ReviewCheck {
   return {
     id: "deepbook_wallet_review_contract_emit_missing",
-    label: "Wallet review contract emit",
+    label: "Transaction approval details",
     status: "fail",
-    message: `DeepBook account-bound review could not assemble the wallet review contract from the current review evidence: ${reason}. Signing stays blocked.`,
+    message: `The approval details could not be prepared from this review. Reported reason: “${reason}”. Wallet approval is unavailable.`,
     source: "adapter"
   };
 }
@@ -770,9 +770,9 @@ function contractEmitDeclinedCheck(reason: string): ReviewCheck {
 function contractEmitMissingCheck(): ReviewCheck {
   return {
     id: "deepbook_wallet_review_contract_emit_missing",
-    label: "Wallet review contract emit",
+    label: "Transaction approval details",
     status: "fail",
-    message: "DeepBook account-bound review completed review-time simulation, but this review did not assemble a wallet review contract, so signing stays blocked for this session.",
+    message: "Simulation completed, but the required transaction approval details could not be prepared. Wallet approval is unavailable for this review.",
     source: "adapter"
   };
 }

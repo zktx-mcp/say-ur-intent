@@ -1000,15 +1000,13 @@ export class SqliteActivityStore implements ActivityStore {
       if (request && request.reviewSessionId !== reviewId) throw new SessionStoreError("session_mismatch", "The request identity does not match this review.");
       const authority = request && records.authority(request.attemptId);
       const details = request?.execution && records.executionDetails(request.attemptId);
-      const connectionView = (connection: import("../session/walletConnection.js").WalletConnection) => ({ ...connection,
-        ...(records.pendingDisconnect(connection.connectionId) ? { pendingAction: "disconnect" as const } : {}) });
       const connection = record?.state.kind === "connect" && record.operationId ? records.connection(record.operationId) : undefined;
       const facts = { evaluatedAt: now.toISOString(), ownerId, record, session, request, authority,
         hasReviewInput: !!session && session.status !== "expired" && Date.parse(session.expiresAt) > now.getTime() &&
           cards.hasReviewInput(session.id, ownerId, now),
         walletAvailability: input.walletAvailability, activeAccount: this.getActiveAccountSync()?.address,
-        connections: records.connections().filter(item => item.ownerId === ownerId).map(item => connectionView(item.connection)),
-        connection: connection ? connectionView(connection.connection) : undefined,
+        connections: records.connectionViews(),
+        connection: connection ? records.connectionView(connection.connection) : undefined,
         boundReview: request && (record?.operationId || record?.scope === "review_manage") ? records.requestReview(request.attemptId) : undefined,
         busyForAccount: !!session?.account && records.busyForAccount(session.account, now),
         receipt: details ? details.data : undefined, receiptDisplay: details ? details.receiptDisplay : undefined };

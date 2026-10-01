@@ -16,23 +16,24 @@ export type ConnectionView = WalletConnection & { pendingAction?: "disconnect" }
 // Both evaluated choices and admission consume this relation with current facts.
 export function reviewPreparationAccount(boundAccount: string | undefined, activeAccount: string | undefined, selectedAccount = activeAccount):
   { allowed: true; account: string } | { allowed: false; message: string } {
-  if (!activeAccount) return { allowed: false, message: "Select an approved wallet account as the read account before preparing this review." };
+  if (!activeAccount) return { allowed: false, message: "No account from a connected wallet is selected for this review." };
   if (boundAccount && boundAccount !== activeAccount) return { allowed: false,
-    message: `This review is bound to ${boundAccount}. Select that account as the read account again, or request a new review for ${activeAccount}.` };
+    message: `This review uses ${boundAccount}, but the currently selected account is ${activeAccount}.` };
   if (selectedAccount !== activeAccount) return { allowed: false,
-    message: "The selected account is no longer the read account. Read the current card before preparing this review." };
+    message: "The selected account has changed since this request was made." };
   return { allowed: true, account: activeAccount };
 }
 export type WorkflowEligibilityFacts = {
   evaluatedAt: string; ownerId: string; record?: CardRecord | undefined;
   walletAvailability: WalletAvailability; activeAccount?: string | undefined;
   connection?: ConnectionView | undefined;
+  connections: ConnectionView[];
   session?: ReviewSession | undefined; request?: TransactionRequest | undefined;
   authority?: RequestAuthority | undefined; busyForAccount: boolean;
 };
 export type WorkflowFacts = WorkflowEligibilityFacts & {
   hasReviewInput: boolean;
-  connections: ConnectionView[]; boundReview?: z.infer<typeof reviewStateOutputSchema> | undefined;
+  boundReview?: z.infer<typeof reviewStateOutputSchema> | undefined;
   receipt?: unknown; receiptDisplay?: ReceiptDisplay | undefined;
 };
 export type EvaluatedWorkflowState = WorkflowFacts & {
@@ -51,14 +52,22 @@ export type WorkflowEvaluationInput = {
 export function workflowEligibility(facts: WorkflowEligibilityFacts) {
   const { record, session, request, authority, walletAvailability } = facts;
   const at = Date.parse(facts.evaluatedAt);
-  const remaining = record?.ownerId === facts.ownerId ? Math.max(0, Date.parse(record.state.expiresAt) - at) : 0;
+  const cardRemaining = record?.ownerId === facts.ownerId ? Math.max(0, Date.parse(record.state.expiresAt) - at) : 0;
+  // A later-created input card cannot extend its review session. Admitted
+  // requests and management cards retain their separate observation authority.
+  const remaining = record?.scope === "review" && session && !request
+    ? Math.min(cardRemaining, Math.max(0, Date.parse(session.expiresAt) - at)) : cardRemaining;
   const inputAvailable = remaining > 0 && record?.state.state === "ready" && record.acceptedInput === undefined;
   const allowedActions: WorkflowAction[] = [];
   let preparationIssue: string | undefined;
   if (record?.scope === "connect") {
     if (inputAvailable) {
       allowedActions.push("cancel");
-      if (walletAvailability.status === "available") allowedActions.push("connect", "disconnect", "use_account");
+      if (walletAvailability.status === "available") {
+        if (record.state.input.intent === "connect" && !facts.connections.some((item) =>
+          item.status === "connected" || item.status === "awaiting_approval" || item.pendingAction)) allowedActions.push("connect");
+        allowedActions.push("disconnect", "use_account");
+      }
     }
     if (remaining > 0 && facts.connection?.status === "awaiting_approval") allowedActions.push("stop_connection");
   }

@@ -6,11 +6,16 @@ individual wallet requests. It is not login, proof of address ownership, custody
 
 ## Connection and read account
 
-`session.create_wallet_connection` opens the internal card for connection, disconnection and approved-account selection. Opening or
-reading it does not pair a wallet. The user explicitly chooses connect, disconnect or an approved account. Disconnection shows the target account and network and requires confirmation. While a connection or wallet operation is present, the card does not offer another pairing; disconnect existing wallets before connecting a new one. Existing multiple connections remain individually manageable. The backend admits that choice
-in SQLite before SDK I/O. Pairing QR data stays in UI metadata bound to the exact
-card, connection and revision. Reopening a waiting card uses the same pairing
-while its backend owner retains it; it never creates another pairing.
+`session.create_wallet_connection` takes an intent: `connect`, `disconnect` or `manage` (the default). A connect-intent card automatically starts one pairing after the View confirms current state with its UI permission, unless a connection or operation already exists. Manage opens saved connection controls without starting pairing. Disconnect opens target-specific confirmation when one connection is available; the user chooses Confirm disconnect or returns with Back. No model-facing call can disconnect or request a signature. Public saved reads never start pairing. QR data stays in UI metadata bound to the exact card, connection and revision; reopening a waiting card preserves that pairing.
+
+The same current-owner connection rule controls displayed actions and atomic
+SQLite admission. A connected wallet, pending approval or pending disconnection
+prevents another pairing, including requests from different cards. A competing
+card retains its own permission and reports the existing connection; it does not
+inherit another card's QR or waiting controls. A failed connection attempt needs
+an explicit retry even if the other connection later ends. Existing multiple
+connections remain manageable, and terminal history alone does not block a new
+connection.
 
 The backend validates accounts, Sui mainnet namespace, methods and expiry before
 recording a connection. A single wallet-approved account can become read context
@@ -20,8 +25,8 @@ SDK restoration and status reads never undo a user clearing that context. The st
 
 | Connection state | Available behavior |
 | --- | --- |
-| Unsubmitted card | Explicit connect, use approved account, disconnect, or cancel |
-| awaiting_approval | Same private QR and approval observation; stop waiting |
+| Unsubmitted card | Automatic pairing for connect intent; explicit account selection and disconnect confirmation when needed |
+| awaiting_approval | Same private QR and approval observation; Stop connecting |
 | connected | View approved accounts and expiry; a new card may select another operation |
 | rejected / failed / expired / stopped / disconnected | View the recorded outcome; new operations need a new card |
 
@@ -71,18 +76,16 @@ financial request is replayed when reading or recovering results.
 ## Transaction approval
 
 A single available wallet/account is displayed without a selection dropdown.
-The explicit review or approval button selects that displayed target. Multiple
-candidates require a selection; the card never chooses the first one silently.
-Displaying the card does not start preparation or a wallet request. Backend
+A permitted live Review card automatically prepares and renews verified conditions for that target. Multiple candidates require a selection; the card never chooses the first one silently. A failed computation offers Retry review rather than repeating automatically. The explicit approval button selects the displayed transaction revision; automatic preparation never requests a signature. Backend
 account, connection, revision and material checks remain authoritative.
 
 An existing review keeps its original account binding. Preparing or updating it
 requires that account to be the selected read account as well as an approved
 account on the chosen connection. If read context changes from A to B, select A
 again to update the same review, or request a new review for B. The card explains
-the current selection restriction separately from any previous preparation
-failure. A refused incompatible selection starts no preparation and records no
-failed review. Read context alone does not revoke already verified A signing
+the current selection restriction separately from saved review messages, which
+can record a preparation failure or connection change. A refused incompatible
+selection starts no preparation and records no failed review. Read context alone does not revoke already verified A signing
 evidence or alter an admitted request.
 
 Preparation execution and its stored outcome are separate. If execution has
