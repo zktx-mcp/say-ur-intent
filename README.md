@@ -187,6 +187,12 @@ For quote responses alone, these conclusions are unsupported:
 
 ## Install
 
+This branch includes unpublished card and wallet-service recovery changes. Installing
+`@zktx.io/say-ur-intent@0.4.4` does not install those changes. To use this checkout,
+follow [Developer Checkout Setup](docs/MCP_SETUP.md#developer-checkout-setup).
+For a published installation, use the documentation bundled with that package.
+A local commit or successful package check does not publish a release.
+
 This release uses npm package `@zktx.io/say-ur-intent` and MCP Registry name
 `io.github.zktx-mcp/say-ur-intent`. Once the requested version is published,
 install through your client's registry support or run `npx -y @zktx.io/say-ur-intent`.

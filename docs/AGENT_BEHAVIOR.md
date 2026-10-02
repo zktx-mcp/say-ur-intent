@@ -335,6 +335,32 @@ With one available wallet/account, the live Review card prepares and renews veri
 Frame recreation and chat navigation first reread the same DB state. Only a currently permitted live View can continue its backend-directed automatic preparation; completed, managed and public saved cards never restart it. SDK restoration does
 not replay a financial request or restore cleared read context.
 
+Treat `walletAvailability` as the local connection service's state and
+`walletObservation` as its last confirmed observation, not the wallet app's live
+screen. `initializing` and `recovering` do not mean the user rejected anything.
+For an unresponsive wallet service, open `session.create_wallet_connection` with
+`intent: "manage"` when the user requests recovery. Explain that the user selects
+Wallet service help → Restart wallet service → Confirm restart. Do not call
+`ui.act_card` for the user. Opening or reading the card does not restart the SDK.
+
+When returned, `walletRecoveryGuidance` describes a conditional user recovery
+route. Its `openControls` identifies `session.create_wallet_connection` with
+`intent: "manage"`; offer it without declaring ordinary waiting a failure.
+Opening controls requires the user's request, and restarting requires their
+confirmation in the card. Never execute `ui.act_card` for them. A failed
+`connectionAction: "disconnect"` is unconfirmed disconnection: direct the user
+to inspect/remove the connection in their wallet app, not immediately to a new
+pairing. Service restart success is a separate local result.
+
+Observe `wallet_recovery_pending` through its own card ID; do not mistake it for
+a pending pairing or request another QR. A stopped unsubmitted approval needs
+updated review information and a new user Request choice. Already submitted
+transactions keep their original digest and can be read without reconnecting.
+An available recovery outcome confirms the local service restarted, not that
+the wallet revoked a connection or approved a new one. If the replacement stays
+unresponsive, a new manage card allows a new explicit restart. Relay availability
+and remote wallet state must not be inferred from process replacement.
+
 Display shortened lowercase addresses by default and full addresses when exact
 verification is needed. For user-requested local review history, use:
 

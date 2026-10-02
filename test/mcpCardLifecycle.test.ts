@@ -521,7 +521,7 @@ it.each(["success", "failure"] as const)("the actual Connect view observes a del
     expect(root.querySelectorAll("section").filter((section) => section.className === "ui-card")).toHaveLength(0);
     expect(factValues(root, "Network")).toEqual(["Sui mainnet"]);
     expect(factValues(root, "Status")).toEqual(["Wallet connected"]);
-    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect"]);
+    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect", "Restart wallet service"]);
     const walletRow = root.querySelectorAll("div").find((item) => item.className === "ui-row" && item.children[0]?.textContent === "Fixture Wallet")!;
     expect((walletRow.children[1]!.children[0] as unknown as HTMLElement).title).toBe(f.account);
     root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
@@ -538,7 +538,7 @@ it.each(["success", "failure"] as const)("the actual Connect view observes a del
     root.querySelectorAll("button").find((button) => button.textContent === "Back")!.click();
     expect(f.transport.disconnect).not.toHaveBeenCalled();
     expect(root.querySelectorAll("section").filter((section) => section.className === "ui-card")).toHaveLength(0);
-    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect"]);
+    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect", "Restart wallet service"]);
     root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
     root.querySelectorAll("button").find((button) => button.textContent === "Confirm disconnect")!.click();
     await vi.waitFor(() => expect(root.textContent).toContain("Disconnecting wallet…"));
@@ -605,7 +605,7 @@ it("renders verified review conditions before decisions and preserves the exact 
     expect(act).not.toHaveBeenCalled();
     const approve = primary.querySelectorAll("button").find((item) => item.dataset.cardAction === "request_signature")!;
     approve.click();
-    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
+    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "request_signature", walletRunId: f.runtime.runId, connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
     expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
     rendered.dispose(); approve.click(); expect(act).toHaveBeenCalledOnce();
     data.review!.preparing = true; data.allowedActions = [];
@@ -637,7 +637,7 @@ it.each([
   const account = `0x${"a".repeat(64)}`, at = "2030-01-01T00:00:00.000Z";
   const data: WorkflowView = {
     kind: "review", mode: "review_manage", allowedActions: ["read_result"], actionRemainingMs: 0, observe: false,
-    progress: { status: "idle" }, walletAvailability: { status: "available" }, connections: [], boundary: REVIEW_BOUNDARY,
+    progress: { status: "idle" }, walletAvailability: { status: "available", walletRunId: "00000000-0000-4000-8000-000000000001" }, connections: [], boundary: REVIEW_BOUNDARY,
     review: { reviewSessionId: "review", reviewRevision: 1, status: "ready_for_wallet_review", account, preparing: false,
       plan: { id: "plan", actionKind: "swap", adapterId: "deepbook-swap", adapterData: {}, protocol: "DeepBookV3", title: "Review swap", summary: "Stored proposal", createdAt: at,
         assetFlowPreview: { outgoing: [{ symbol: "SUI", amount: "1", amountKind: "display_intent" }], expectedIncoming: [] } } },
@@ -791,7 +791,7 @@ it("shows last-recorded connection freshness when the wallet cannot be checked",
   try {
     const { connection } = await f.approve();
     const card = await f.createConnection();
-    vi.spyOn(f.transport, "session").mockImplementation(() => { throw new Error("PRIVATE SDK ERROR"); });
+    vi.spyOn(f.transport, "inspectAll").mockImplementation(() => { throw new Error("PRIVATE SDK ERROR"); }); f.observe();
     const current = await f.read(card);
     const view = connectRenderer.controls(current.snapshot, vi.fn(), undefined, undefined);
     expect(view.node.textContent).toContain("Last recorded status");
@@ -820,14 +820,14 @@ it("takes a single displayed wallet from preparation through actual SQLite admis
     expect(f.quote).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled();
     expect(node.querySelectorAll("button").some((item) => item.textContent === "Review transaction")).toBe(false);
     const automatic = workflowViewSchema.parse(card.snapshot.data).automaticAction;
-    expect(automatic).toEqual({ action: "prepare_review", connectionId: connection.connectionId, account: f.account, reviewRevision: 0 });
+    expect(automatic).toEqual({ action: "prepare_review", walletRunId: f.runtime.runId, connectionId: connection.connectionId, account: f.account, reviewRevision: 0 });
     act(automatic!);
     await pending;
     await vi.waitFor(async () => {
       card = await f.read(card);
       expect(workflowViewSchema.parse(card.snapshot.data).review?.status).toBe("ready_for_wallet_review");
     });
-    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "prepare_review", connectionId: connection.connectionId, account: f.account, reviewRevision: 0 });
+    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "prepare_review", walletRunId: f.runtime.runId, connectionId: connection.connectionId, account: f.account, reviewRevision: 0 });
     expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
     rendered.dispose();
     rendered = reviewRenderer.result(card.snapshot, undefined, act); node = rendered.node as unknown as Element;
@@ -836,7 +836,7 @@ it("takes a single displayed wallet from preparation through actual SQLite admis
     expect(f.sign).not.toHaveBeenCalled(); approve.click(); await pending;
     await vi.waitFor(() => expect(f.run(() => f.records.currentRequest(created.session.id)?.requestStatus)).toBe("completed"));
     expect(f.sign).toHaveBeenCalledOnce(); expect(f.submit).toHaveBeenCalledOnce();
-    expect(act).toHaveBeenLastCalledWith({ action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
+    expect(act).toHaveBeenLastCalledWith({ action: "request_signature", walletRunId: f.runtime.runId, connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
     rendered.dispose(); approve.click(); expect(act).toHaveBeenCalledTimes(2);
   } finally { f.close(); }
 });
@@ -854,7 +854,7 @@ it("requires an explicit wallet for multiple candidates and offers no signature 
     form.dispatchEvent(new Event("submit", { cancelable: true })); expect(act).not.toHaveBeenCalled();
     form.querySelector("select")!.value = "second-connection";
     form.dispatchEvent(new Event("submit", { cancelable: true }));
-    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "request_signature", connectionId: "second-connection", account: f.account, reviewRevision: 1 });
+    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "request_signature", walletRunId: f.runtime.runId, connectionId: "second-connection", account: f.account, reviewRevision: 1 });
     rendered.dispose();
     for (const unavailable of [false, true]) {
       data.connections = unavailable ? [connection] : [];
@@ -893,7 +893,7 @@ function proposalCardFixture(input: unknown) {
   const plan = externalProposalToActionPlan(externalProposalSchema.parse(input), proposalEvaluationTime);
   const data: WorkflowView = {
     kind: "review", mode: "review", allowedActions: ["cancel"], actionRemainingMs: 1000, observe: false,
-    progress: { status: "idle" }, walletAvailability: { status: "available" }, connections: [], boundary: REVIEW_BOUNDARY,
+    progress: { status: "idle" }, walletAvailability: { status: "available", walletRunId: "00000000-0000-4000-8000-000000000001" }, connections: [], boundary: REVIEW_BOUNDARY,
     review: { reviewSessionId: "external-review", plan, reviewRevision: 0, status: "proposed", preparing: false }
   };
   return { plan, snapshot: state("review", { data }) };
@@ -1044,7 +1044,7 @@ it("owns missing wallet guidance per permitted action without blocking the other
       expect(act).not.toHaveBeenCalled();
       for (const control of controls) {
         control.click();
-        expect(act).toHaveBeenLastCalledWith({ action: control.dataset.cardAction, connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
+        expect(act).toHaveBeenLastCalledWith({ action: control.dataset.cardAction, walletRunId: f.runtime.runId, connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
       }
       const calls = act.mock.calls.length; rendered.dispose(); for (const control of controls) control.click(); expect(act).toHaveBeenCalledTimes(calls);
     }
@@ -1185,12 +1185,12 @@ it.each(["success", "failure"] as const)("restores the original completed Review
     const ref = cardReferenceSchema.parse(creating._meta?.[CARD_METADATA_KEY]);
     const initial = (creating.structuredContent as { data: { card: CardSnapshot } }).data.card;
     expect(initial.state).toBe("ready");
-    const prepare = await f.run(() => f.cards.act({ ...ref, revision: initial.revision, input: { action: "prepare_review", connectionId: connection.connectionId, account: f.account, reviewRevision: 0 } }));
+    const prepare = await f.run(() => f.cards.act({ ...ref, revision: initial.revision, input: { action: "prepare_review", walletRunId: f.runtime.runId, connectionId: connection.connectionId, account: f.account, reviewRevision: 0 } }));
     expect(prepare.error).toBeUndefined();
     await vi.waitFor(() => expect(f.run(() => f.sessions.readReviewSession(session.id))?.status).toBe("ready_for_wallet_review"));
     const ready = await f.run(() => f.cards.read(ref));
     f.setChainOutcome(outcome);
-    const admitted = await f.run(() => f.cards.act({ ...ref, revision: ready.snapshot.revision, input: { action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 1 } }));
+    const admitted = await f.run(() => f.cards.act({ ...ref, revision: ready.snapshot.revision, input: { action: "request_signature", walletRunId: f.runtime.runId, connectionId: connection.connectionId, account: f.account, reviewRevision: 1 } }));
     expect(admitted.error).toBeUndefined();
     await vi.waitFor(() => expect(f.run(() => f.records.currentRequest(session.id))?.execution?.status).toBe(outcome));
     const stored = f.run(() => f.records.currentRequest(session.id))!;
@@ -1226,8 +1226,8 @@ it.each(["connected", "missing_sdk_session", "sdk_unavailable"] as const)("resto
     const { connection } = await f.approve(); const creating = await mcp.create("connect", {});
     const ref = cardReferenceSchema.parse(creating._meta?.[CARD_METADATA_KEY]);
     const before = [f.connect.mock.calls.length, f.sign.mock.calls.length, f.submit.mock.calls.length, vi.mocked(f.transport.disconnect).mock.calls.length];
-    if (mode === "missing_sdk_session") vi.spyOn(f.transport, "session").mockReturnValue(undefined);
-    if (mode === "sdk_unavailable") vi.spyOn(f.transport, "session").mockImplementation(() => { throw new Error("SDK session unavailable"); });
+    if (mode === "missing_sdk_session") { vi.spyOn(f.transport, "session").mockReturnValue(undefined); f.observe(); }
+    if (mode === "sdk_unavailable") { vi.spyOn(f.transport, "inspectAll").mockImplementation(() => { throw new Error("SDK session unavailable"); }); f.observe(); }
     const { _meta, ...historical } = creating; const app = host(mcp.call);
     app.readServerResource.mockImplementation(mcp.readResource);
     startCard("connect", connectRenderer); app.ontoolresult!(historical);
@@ -1503,7 +1503,7 @@ it.each(["success", "failure", "dispose"] as const)("stages changed review diagr
       expect(node.querySelector(".review-material-facts")!.children[0]).not.toBe(oldFacts);
       if (outcome === "failure") expect(node.textContent).toContain("Fixture diagram failure");
       node.querySelector(".review-primary-action")!.click();
-      expect(act).toHaveBeenCalledExactlyOnceWith({ action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 2 });
+      expect(act).toHaveBeenCalledExactlyOnceWith({ action: "request_signature", walletRunId: f.runtime.runId, connectionId: connection.connectionId, account: f.account, reviewRevision: 2 });
       if (outcome === "failure") {
         const recovered = structuredClone(card.snapshot);
         recovered.revision += 2; (recovered.data as WorkflowView).review!.reviewRevision = 3;
@@ -1944,6 +1944,7 @@ it.each(["account", "connection", "bound_connection"] as const)("offers the curr
       const session = { topic: "fixture-reconnected", accounts: [f.account], methods: ["sui_signTransaction"], chain: "sui:mainnet" as const,
         expiresAt: new Date(f.now().getTime() + 1_800_000).toISOString(), walletName: "Reconnected fixture" };
       vi.spyOn(f.transport, "session").mockImplementation((topic) => topic === session.topic ? session : undefined);
+      vi.spyOn(f.transport, "inspectAll").mockImplementation(() => [{ topic: session.topic, status: "present", session: session }]);
       f.connect.mockResolvedValueOnce({ uri: "wc:synthetic", expiresAt: session.expiresAt, approval: Promise.resolve(session) });
       const connect = await f.createConnection(); await f.act(connect, { action: "connect" });
       await vi.waitFor(() => expect(f.run(() => f.records.connections()).some((item) => item.topic === session.topic && item.connection.status === "connected")).toBe(true));
@@ -1987,6 +1988,8 @@ it.each(["clear", "select", "multiple", "bound_change", "bound_clear"] as const)
         chain: "sui:mainnet" as const, expiresAt: connection.expiresAt, walletName: "Second fixture wallet" };
       const session = f.transport.session.bind(f.transport);
       vi.spyOn(f.transport, "session").mockImplementation((topic) => topic === restored.topic ? restored : session(topic));
+      vi.spyOn(f.transport, "inspectAll").mockImplementation(() => [session("fixture-topic"), restored].flatMap((value) => value ? [{ topic: value.topic, status: "present" as const, session: value }] : []));
+      f.observe();
       secondId = f.run(() => f.records.restoreConnection(restored, f.now())).connection.connectionId;
     }
     const bound = mode === "bound_change" || mode === "bound_clear";
@@ -2313,7 +2316,7 @@ it("does not restart pairing when failed disconnection is followed by session di
     await vi.waitFor(() => expect(button("Disconnect")?.disabled).toBe(false)); button("Disconnect")!.click();
     expect(button("Confirm disconnect")?.disabled).toBe(false); button("Confirm disconnect")!.click();
     await vi.waitFor(() => expect(root.textContent).toContain("Ask in chat to connect your wallet."));
-    expect(workflowViewSchema.parse((await f.read(card)).snapshot.data).automaticAction).toEqual({ action: "connect" });
+    expect(workflowViewSchema.parse((await f.read(card)).snapshot.data).automaticAction).toEqual({ action: "connect", walletRunId: f.runtime.runId });
     expect(root.textContent).toContain("Fixture disconnect delivery lost");
     for (const value of ["hidden", "visible"]) {
       Object.defineProperty(document, "visibilityState", { value, writable: true }); visibility.dispatchEvent(new Event("visibilitychange"));
@@ -2652,7 +2655,7 @@ it("keeps a losing connection card explicit through the other connection's compl
   try {
     const originalConnect = f.connect.getMockImplementation()!; f.connect.mockImplementationOnce(() => opening.promise);
     const cards = [await f.createConnection(), await f.createConnection()];
-    for (const card of cards) expect(workflowViewSchema.parse(card.snapshot.data).automaticAction).toEqual({ action: "connect" });
+    for (const card of cards) expect(workflowViewSchema.parse(card.snapshot.data).automaticAction).toEqual({ action: "connect", walletRunId: f.runtime.runId });
     const views = cards.map((card) => {
       root = new Element("main"); const node = root;
       const app = host(async ({ name, arguments: args }) => cardToolResult(await f.run(() => name === CARD_TOOLS.read
@@ -2687,6 +2690,7 @@ it("keeps a losing connection card explicit through the other connection's compl
       expiresAt: new Date(f.now().getTime() + 1_800_000).toISOString(), walletName: "Retried fixture wallet" };
     f.connect.mockResolvedValueOnce({ uri: "wc:retried-fixture", expiresAt: retriedSession.expiresAt, approval: Promise.resolve(retriedSession) });
     vi.spyOn(f.transport, "session").mockImplementation((topic) => topic === retriedSession.topic ? retriedSession : undefined);
+      vi.spyOn(f.transport, "inspectAll").mockImplementation(() => [{ topic: retriedSession.topic, status: "present", session: retriedSession }]);
     const retry = loser.node.querySelectorAll("button").find((node) => node.textContent === "Retry connection")!;
     expect(retry.disabled).toBe(false); retry.click();
     await vi.waitFor(() => expect(f.connect).toHaveBeenCalledTimes(2));
@@ -2768,7 +2772,7 @@ it.each(["other_connection", "wallet_unavailable"] as const)("does not end a fai
     const card = await f.createConnection();
     const app = host(async ({ name, arguments: args }) => {
       if (name === CARD_TOOLS.act) {
-        if (mode === "wallet_unavailable") vi.spyOn(f.transport, "session").mockImplementation(() => { throw new Error("Synthetic wallet status unavailable"); });
+        if (mode === "wallet_unavailable") { vi.spyOn(f.transport, "inspectAll").mockImplementation(() => { throw new Error("Synthetic wallet status unavailable"); }); f.observe(); }
         throw new Error("Fixture selection still unconfirmed");
       }
       return cardToolResult(await f.run(() => f.cards.read(cardReferenceSchema.parse(args))));
@@ -2991,7 +2995,7 @@ it.each(["ended", "unavailable"] as const)("uses confirmed connection facts for 
   try {
     const card = await f.createConnection();
     if (mode === "unavailable") {
-      vi.spyOn(f.transport, "session").mockImplementation(() => { throw new Error("Fixture SDK state failure"); });
+      vi.spyOn(f.transport, "inspectAll").mockImplementation(() => { throw new Error("Fixture SDK state failure"); }); f.observe();
       f.notify(undefined);
     }
     const app = host(async (request) => {
@@ -3008,7 +3012,7 @@ it.each(["ended", "unavailable"] as const)("uses confirmed connection facts for 
       expect(root.textContent).not.toContain("Ask in chat to check your wallet connection.");
       expect(recoveryButton("Retry connection")).toBeUndefined();
     } else {
-      await vi.waitFor(() => expect(visibleGuidance()).toBe("Restart the apps using Say Ur Intent to check the wallet connection again."));
+      await vi.waitFor(() => expect(visibleGuidance()).toBe("Ask in chat to open wallet connection controls. You can restart the wallet service there after confirming the effects."));
       expect(workflowViewSchema.parse((await f.read(card)).snapshot.data)).toMatchObject({ walletAvailability: { status: "unavailable" }, connections: [], allowedActions: ["cancel"] });
       expect(root.textContent).toContain("Connection not confirmed");
       expect(root.textContent).not.toContain("Ask in chat to connect");
@@ -3282,5 +3286,230 @@ it("describes an unestimated internal receive amount without presenting an unkno
     expect(view.node.textContent).not.toContain("unknown USDC");
     expect(f.quote).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
     view.dispose?.();
+  } finally { f.close(); }
+});
+
+it("observes an admitted service restart after a lost reply without replaying it on expiry or frame return", async () => {
+  const f = await walletWorkflowFixture(), held = deferred<[]>();
+  try {
+    await f.approve();
+    vi.spyOn(f.transport, "restore").mockImplementationOnce(() => held.promise);
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const replace = vi.spyOn(f.runtime, "replace");
+    const app = host(async ({ name, arguments: input }) => {
+      const response = await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any));
+      if (name === CARD_TOOLS.act) throw new Error("Fixture restart reply lost");
+      return cardToolResult(response);
+    });
+    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
+    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
+    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
+    control("Restart wallet service")!.click();
+    expect(root.textContent).toContain("Approval requests interrupted");
+    expect(replace).not.toHaveBeenCalled();
+    control("Confirm restart")!.click();
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(root.textContent).toContain("Starting wallet service"));
+    expect(control("Confirm restart")).toBeUndefined();
+    f.advance(card.snapshot.inputRemainingMs + 1);
+    await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs * 2);
+    expect((await f.read(card)).snapshot).toMatchObject({ state: "running", data: { observe: true, runtimeRecovery: { phase: "starting" } } });
+    held.resolve([]); await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
+    await vi.waitFor(() => expect(root.textContent).toContain("Wallet service restarted."));
+    expect(replace).toHaveBeenCalledOnce();
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(1);
+    await app.onteardown!();
+    root = new Element("main");
+    const returned = host(async ({ arguments: input }) => cardToolResult(await f.run(() => f.cards.read(cardReferenceSchema.parse(input)))));
+    startCard("connect", connectRenderer); returned.ontoolresult!(cardCreation(card, card.permission));
+    await vi.waitFor(() => expect(root.textContent).toContain("Wallet service restarted."));
+    expect(replace).toHaveBeenCalledOnce(); expect(f.connect).toHaveBeenCalledOnce();
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled(); await returned.onteardown!();
+  } finally { held.resolve([]); f.close(); }
+});
+
+it("requires a new confirmation when another card replaces the displayed wallet service run", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const app = host(async ({ name, arguments: input }) => cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any))));
+    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
+    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
+    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
+    control("Restart wallet service")!.click();
+    const other = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const priorRun = f.runtime.runId;
+    await f.act(other, { action: "restart_wallet_service" });
+    await vi.waitFor(() => { expect(f.runtime.runId).not.toBe(priorRun); expect(f.runtime.availability().status).toBe("available"); });
+    control("Confirm restart")!.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("Check the current selection"));
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(0);
+    expect(f.run(() => f.cardRecords.get(card.snapshot.cardId)?.state.state)).toBe("ready");
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled(); await app.onteardown!();
+  } finally { f.close(); }
+});
+
+it.each(["before_read", "after_read"] as const)("requires a new restart confirmation when another connection is admitted %s", async (timing) => {
+  const f = await walletWorkflowFixture(), opening = deferred<Awaited<ReturnType<typeof f.connect>>>();
+  let teardown: (() => unknown) | undefined;
+  try {
+    f.connect.mockImplementationOnce(() => opening.promise);
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" })), other = await f.createConnection();
+    const run = f.runtime.runId, replace = vi.spyOn(f.runtime, "replace");
+    const admitOther = async () => { expect((await f.act(other, { action: "connect" })).error).toBeUndefined(); };
+    let interleave = false;
+    const app = host(async ({ name, arguments: input }) => {
+      const response = await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any));
+      if (name === CARD_TOOLS.read && interleave) {
+        interleave = false;
+        // Capture the confirmed read first; the other Host commits before
+        // that response reaches the View and before its subsequent action.
+        await admitOther();
+      }
+      return cardToolResult(response);
+    });
+    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission)); teardown = app.onteardown;
+    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
+    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
+    control("Restart wallet service")!.click(); expect(factValues(root, "Affected wallet")).toEqual([]);
+    if (timing === "before_read") await admitOther(); else interleave = true;
+    control("Confirm restart")!.click();
+    await vi.waitFor(() => expect(root.textContent).toContain(timing === "before_read" ? "Check the current selection" : "This request does not match the card's current state."));
+    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
+    expect(replace).not.toHaveBeenCalled(); expect(f.runtime.runId).toBe(run); expect(f.connect).toHaveBeenCalledOnce();
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(timing === "before_read" ? 0 : 1);
+    expect(f.run(() => f.cardRecords.get(card.snapshot.cardId)?.acceptedInput)).toBeUndefined();
+    expect(f.run(() => f.records.connections()[0]?.connection.status)).toBe("awaiting_approval");
+    expect(control("Confirm restart")).toBeUndefined();
+    control("Restart wallet service")!.click(); expect(factValues(root, "Affected wallet")).toEqual(["Wallet connection"]);
+    control("Confirm restart")!.click();
+    await vi.waitFor(() => expect(f.runtime.availability().status).toBe("available"));
+    await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
+    await vi.waitFor(() => expect(root.textContent).toContain("Wallet service restarted."));
+    expect(replace).toHaveBeenCalledOnce(); expect(f.runtime.runId).not.toBe(run);
+    expect(f.run(() => f.records.connections()[0]?.connection.status)).toBe("stopped");
+    expect(f.connect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+  } finally { await teardown?.(); f.close(); }
+});
+
+it("shows failed recovery after explicit storage repair without replaying the restart", async () => {
+  const f = await walletWorkflowFixture(), held = deferred<[]>(), db = new Database(`${f.directory}/activity.sqlite`);
+  let teardown: (() => unknown) | undefined;
+  try {
+    vi.spyOn(f.transport, "restore").mockImplementationOnce(() => held.promise);
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const replace = vi.spyOn(f.runtime, "replace");
+    const app = host(async ({ name, arguments: input }) => {
+      try { return cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any))); }
+      catch { return errorToolResult({ kind: "internal_error", details: { message: "Fixture storage failure" } }); }
+    });
+    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission)); teardown = app.onteardown;
+    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
+    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
+    control("Restart wallet service")!.click(); control("Confirm restart")!.click();
+    await vi.waitFor(() => expect(f.runtime.availability().status).toBe("initializing"));
+    db.exec("CREATE TRIGGER reject_failure BEFORE UPDATE OF result_json ON live_read_cards WHEN json_extract(NEW.result_json,'$.outcome')='failed' BEGIN SELECT RAISE(ABORT,'fixture outcome refusal'); END");
+    f.runtime.fail("initialization_failed");
+    await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
+    await vi.waitFor(() => expect(control("Check status")?.disabled).toBe(false));
+    expect(replace).toHaveBeenCalledOnce(); expect(control("Confirm restart")).toBeUndefined();
+    db.exec("DROP TRIGGER reject_failure"); control("Check status")!.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("The wallet connection service could not start."));
+    expect(root.textContent).toContain("Ask in chat to open wallet connection controls");
+    expect(root.textContent).not.toContain("Wallet service restarted.");
+    expect(control("Confirm restart")).toBeUndefined(); expect(replace).toHaveBeenCalledOnce();
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(1);
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+  } finally { await teardown?.(); held.resolve([]); db.exec("DROP TRIGGER IF EXISTS reject_failure"); db.close(); f.close(); }
+});
+
+it.each(["success", "failure", "teardown"] as const)("shows neutral pre-admission guidance during a finite disconnect reply (%s)", async (ending) => {
+  const f = await walletWorkflowFixture(), reply = deferred<void>();
+  try {
+    await f.approve(); const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const app = host(async ({ name, arguments: input }) => {
+      if (name === CARD_TOOLS.act) { await reply.promise; if (ending === "failure") throw new Error("Fixture delivery refused"); }
+      return cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any)));
+    });
+    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
+    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
+    await vi.waitFor(() => expect(control("Disconnect")?.disabled).toBe(false)); control("Disconnect")!.click();
+    control("Confirm disconnect")!.click();
+    await vi.waitFor(() => expect(visibleGuidance()).toContain("Waiting for a response…"));
+    expect(visibleGuidance()).toContain("open wallet connection controls");
+    expect(control("Confirm disconnect")!.disabled).toBe(true);
+    expect(root.querySelectorAll("summary").some((item) => item.textContent === "Wallet service help")).toBe(false);
+    expect(f.run(() => f.cardRecords.get(card.snapshot.cardId)?.state.state)).toBe("ready");
+    expect(f.transport.disconnect).not.toHaveBeenCalled();
+    if (ending === "teardown") await app.onteardown!();
+    reply.resolve(); await vi.advanceTimersByTimeAsync(0);
+    if (ending === "success") await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
+    if (ending === "success") await vi.waitFor(() => expect(root.textContent).toContain("Wallet disconnected"));
+    if (ending === "failure") await vi.waitFor(() => expect(root.textContent).toContain("Fixture delivery refused"));
+    expect(visibleGuidance()).not.toContain("Waiting for a response…");
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(1);
+    await app.onteardown!();
+  } finally { reply.resolve(); f.close(); }
+});
+
+it("keeps confirmation reads distinct from a sent restart while preserving its confirmation screen", async () => {
+  const f = await walletWorkflowFixture(), check = deferred<void>(); let reads = 0;
+  try {
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const app = host(async ({ name, arguments: input }) => {
+      if (name === CARD_TOOLS.read && ++reads === 2) await check.promise;
+      return cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any)));
+    });
+    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
+    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
+    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false)); control("Restart wallet service")!.click(); control("Confirm restart")!.click();
+    await vi.waitFor(() => expect(visibleGuidance()).toBe("Checking the current selection…"));
+    expect(control("Confirm restart")!.disabled).toBe(true);
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(0);
+    check.resolve(); await vi.advanceTimersByTimeAsync(0); await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
+    await vi.waitFor(() => expect(root.textContent).toContain("Wallet service restarted."));
+    expect(visibleGuidance()).not.toContain("Checking the current selection"); await app.onteardown!();
+  } finally { check.resolve(); f.close(); }
+});
+
+it("distinguishes an unconfirmed disconnect from the earlier successful connection in visible result guidance", async () => {
+  const f = await walletWorkflowFixture(), held = deferred<void>();
+  try {
+    const { card: connected, connection } = await f.approve();
+    vi.mocked(f.transport.disconnect).mockImplementationOnce(() => held.promise);
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    await f.act(card, { action: "disconnect", connectionId: connection.connectionId });
+    const pending = await f.read(card);
+    const context = { confirmed: true, readOnly: false, recoveryNeeded: false, approvalUnresolved: false, automaticPaused: false };
+    expect(connectRenderer.guidance(pending.snapshot, context)).toContain("If this request is not responding");
+    const controls = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    await f.act(controls, { action: "restart_wallet_service" });
+    await vi.waitFor(() => expect(f.runtime.availability().status).toBe("available"));
+    const failed = await f.read(card), historical = await f.read(connected);
+    const view = connectRenderer.result(failed.snapshot, undefined, undefined);
+    expect(factValues(view.node as unknown as Element, "Status")).toEqual(["Disconnection could not be confirmed"]);
+    expect(view.node.textContent).toContain("could not be confirmed");
+    expect(connectRenderer.guidance(failed.snapshot, context)).toContain("wallet app and remove it there");
+    expect(connectRenderer.guidance(failed.snapshot, context)).not.toContain("connect your wallet");
+    const prior = connectRenderer.result(historical.snapshot, undefined, undefined);
+    expect(factValues(prior.node as unknown as Element, "Status")).toEqual(["Wallet connection unavailable"]);
+    expect(prior.node.textContent).not.toContain("Connection could not be completed");
+    held.resolve(); await vi.advanceTimersByTimeAsync(0);
+    expect((await f.read(card)).snapshot.data).toMatchObject({ connection: { status: "failed" }, connectionAction: "disconnect" });
+    expect(f.transport.disconnect).toHaveBeenCalledOnce(); view.dispose?.(); prior.dispose?.();
+  } finally { held.resolve(); f.close(); }
+});
+
+it("keeps an expired review's next step ahead of unrelated service recovery", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    const { session } = await f.run(() => f.sessions.createReviewSession([f.plan], f.now()));
+    const card = await f.run(() => f.cards.create("review", { reviewSessionId: session.id }));
+    f.advance(Date.parse(session.expiresAt) - f.now().getTime() + 1);
+    f.runtime.block("initialization_failed");
+    const ended = await f.read(card);
+    expect(reviewRenderer.guidance(ended.snapshot, { confirmed: true, readOnly: false, recoveryNeeded: true,
+      approvalUnresolved: false, automaticPaused: false })).toBe("Ask in chat for a new transaction review.");
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
   } finally { f.close(); }
 });

@@ -62,8 +62,10 @@ The command checks metadata, types, tests, builds, package contents and licenses
 then launches the installed package through stdio MCP with a new data directory
 and an independent port. It reads the registered tools and resources, creates a
 Settings session only in that temporary database, and checks the Settings HTML,
-assets and authenticated status. It waits for child termination before removing
-its installation. A termination failure preserves the temporary files for cleanup
+assets and authenticated status. A scoped test card then restarts the isolated
+wallet service, checks its saved outcome and new run ID while the parent remains
+running, and verifies SDK storage ownership is released after shutdown. It waits
+for process termination before removing its installation. A termination failure preserves the temporary files for cleanup
 after the process stops. It does not pair, sign, submit, publish, or mutate the
 user's data. Success verifies this automated package boundary; real Host and
 wallet integration checks remain separate release requirements.

@@ -6,7 +6,10 @@ import { createServer } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
-import { CARD_RESOURCE_URIS } from "../src/mcp-ui/contracts.js";
+import { CARD_RESOURCE_URIS, CARD_METADATA_KEY, CARD_TOOLS, cardReferenceSchema, cardSnapshotSchema } from "../src/mcp-ui/contracts.js";
+import { workflowViewSchema } from "../src/core/session/workflowView.js";
+import { WALLET_CONNECTION_POLL_SECONDS } from "../src/core/session/walletConnection.js";
+import { acquireDataDirectoryOwner } from "../src/runtime/shared/ownerLease.js";
 import { TOOL_NAMES } from "../src/mcp/toolNames.js";
 import { DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { spawnSync } from "node:child_process";
@@ -30,6 +33,10 @@ const requiredFiles = [
   "README.md",
   "LICENSE",
   "dist/runtime/start.js",
+  "dist/runtime/walletSdkChild.js",
+  "dist/runtime/walletSdkChildRuntime.js",
+  "dist/runtime/walletSdkProcess.js",
+  "dist/runtime/walletSdkIpc.js",
   ...["account", "receipt", "chart", "connect", "review"].flatMap((kind) => [`dist/mcp-app/${kind}.html`, `dist/mcp-app/${kind}.notices.txt`]),
   "LICENSES/@mysten-sui-2.17.0-Apache-2.0.txt",
   "dist/review-app/settings.js",
@@ -170,6 +177,7 @@ export async function smokeInstalledRuntime(installDir: string, binPath: string)
   let transport: StdioClientTransport | undefined;
   let client: Client | undefined;
   let childClosed: Promise<void> | undefined;
+  let walletChecked = false;
   let stage = "startup/mainnet prerequisites";
   try {
     const port = await unusedPort();
@@ -234,14 +242,50 @@ export async function smokeInstalledRuntime(installDir: string, binPath: string)
     }
     const status = await (await get(`/api${settings.pathname}`, { "x-say-ur-intent-token": settings.hash.slice(1) })).json() as { server?: { version?: string; network?: string } };
     if (status.server?.version !== manifest.version || status.server.network !== "mainnet") throw new Error("Installed Settings server metadata mismatch.");
-    process.stderr.write("Installed package MCP, card resources and Settings checks passed.\n");
+    stage = "packaged wallet child and scoped service recovery";
+    const parentPid = transport.pid;
+    const resultData = (value: Awaited<ReturnType<Client["callTool"]>>) => {
+      const payload = value.structuredContent as { ok?: boolean; data?: unknown } | undefined;
+      if (value.isError || payload?.ok !== true) throw new Error("Installed wallet service call failed.");
+      return payload.data;
+    };
+    const created = await client.callTool({ name: TOOL_NAMES.sessionCreateWalletConnection, arguments: { intent: "manage" } });
+    const reference = cardReferenceSchema.parse(created._meta?.[CARD_METADATA_KEY]);
+    let card = cardSnapshotSchema.parse(resultData(created));
+    const current = async () => cardSnapshotSchema.parse(resultData(await client!.callTool({ name: CARD_TOOLS.read, arguments: reference })));
+    const started = Date.now();
+    while (workflowViewSchema.parse(card.data).walletAvailability.status === "initializing" && Date.now() - started < DEFAULT_REQUEST_TIMEOUT_MSEC) {
+      await new Promise((resolve) => setTimeout(resolve, WALLET_CONNECTION_POLL_SECONDS * 1000)); card = await current();
+    }
+    const before = workflowViewSchema.parse(card.data);
+    if (before.walletAvailability.status !== "available") throw new Error("Installed wallet SDK did not become available.");
+    const storePath = join(installDir, "runtime-data/walletconnect/sessions.sqlite");
+    if (!existsSync(storePath) || process.platform !== "win32" && (statSync(storePath).mode & 0o077) !== 0) throw new Error("Installed SDK storage is missing or not private.");
+    const priorRun = before.walletAvailability.walletRunId;
+    card = cardSnapshotSchema.parse(resultData(await client.callTool({ name: CARD_TOOLS.act, arguments: {
+      ...reference, revision: card.revision, input: { action: "restart_wallet_service", walletRunId: priorRun }
+    } })));
+    const recovering = Date.now();
+    while (card.state !== "closed" && Date.now() - recovering < DEFAULT_REQUEST_TIMEOUT_MSEC) {
+      await new Promise((resolve) => setTimeout(resolve, WALLET_CONNECTION_POLL_SECONDS * 1000)); card = await current();
+    }
+    const after = workflowViewSchema.parse(card.data);
+    if (card.state !== "closed" || card.reason !== "completed" || !after.runtimeRecovery || !("outcome" in after.runtimeRecovery) || after.runtimeRecovery.outcome !== "available" ||
+        after.runtimeRecovery.priorRunId !== priorRun || after.walletAvailability.status !== "available" ||
+        after.runtimeRecovery.nextRunId !== after.walletAvailability.walletRunId || after.walletAvailability.walletRunId === priorRun ||
+        parentPid === undefined || transport.pid !== parentPid) throw new Error("Installed SDK recovery did not preserve the parent and replace its run.");
+    walletChecked = true;
+    process.stderr.write("Installed package MCP, card resources, Settings and wallet-child recovery checks passed.\n");
   } catch (error) {
-    throw new Error(`Installed package check failed at ${stage}. Startup requires reachable Sui mainnet endpoints.`, { cause: error });
+    throw new Error(`Installed package check failed at ${stage}.${stage === "startup/mainnet prerequisites" ? " Startup requires reachable Sui mainnet endpoints." : ""}`, { cause: error });
   } finally {
     await client?.close();
     // Undefined only if setup failed before attempting to start a child.
     // Also waits when the SDK already started closing or returned after SIGKILL.
     await childClosed;
+    if (walletChecked) {
+      const lease = acquireDataDirectoryOwner(join(installDir, "runtime-data/walletconnect/sessions.sqlite")); lease.close();
+    }
     rmSync(installDir, { recursive: true, force: true });
   }
 }

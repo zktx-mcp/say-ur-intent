@@ -1,3 +1,4 @@
+import { FixtureWalletRuntime } from "./walletRuntime.js";
 import { BUILD_CHAIN } from "./deepbookBuildClient.js";
 import { SUI_TYPE_ARG } from "@mysten/sui/utils";
 import type { EventLogSink } from "../../src/core/eventlog/sink.js";
@@ -19,6 +20,7 @@ import { SqliteActivityStore } from "../../src/core/activity/sqliteActivityStore
 import { LocalSessionStore } from "../../src/core/session/sessionStore.js";
 import { WalletWorkflow } from "../../src/core/session/walletWorkflow.js";
 import type { WalletTransport, WalletSession } from "../../src/core/session/walletConnection.js";
+import type { WalletRuntime } from "../../src/core/session/walletRuntime.js";
 import { createReadCardStore } from "../../src/mcp-ui/readCards.js";
 import { createDeepbookUsdcChartService } from "../../src/core/read/deepbookUsdcChartService.js";
 import { verifySuiChainReceipt, type SuiChainReceiptVerifierClient } from "../../src/core/action/suiChainReceiptVerifier.js";
@@ -37,7 +39,9 @@ export function deferred<T>() {
 // Synthetic quote/object/simulation/wallet/chain sources. Core preparation,
 // SQLite admission, signature verification, receipt verification and projection
 // are real. These fixtures do not establish adapter-build or mainnet success.
-export async function walletWorkflowFixture(options: { receiptDetails?: boolean; eventLog?: EventLogSink; addressBalance?: boolean; accountReader?: Parameters<typeof createReadCardStore>[0]["readService"]["summarizeAccountInventory"] } = {}) {
+export async function walletWorkflowFixture(options: { receiptDetails?: boolean; eventLog?: EventLogSink; addressBalance?: boolean;
+  createRuntime?: (directory: string, context: { account: string }) => WalletRuntime | Promise<WalletRuntime>;
+  accountReader?: Parameters<typeof createReadCardStore>[0]["readService"]["summarizeAccountInventory"] } = {}) {
   const chainIdentifier = options.addressBalance ? BUILD_CHAIN : "mainnet-chain";
   const directory = mkdtempSync(join(tmpdir(), "say-wallet-workflow-"));
   const access = new RuntimeDataAccess();
@@ -81,6 +85,8 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
   }));
   const transport: WalletTransport = { connect, sign, restore: async () => [],
     session: (topic) => approved?.topic === topic ? approved : undefined,
+    inspect: (topic) => { const session = transport.session(topic); return session ? { topic, status: "present", session } : { topic, status: "absent" }; },
+    inspectAll: () => approved ? [transport.inspect(approved.topic)] : [],
     disconnect: vi.fn(async () => { approved = undefined; }), stop: vi.fn(),
     onSessionChanged: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); } } };
   let sourceAccount = account;
@@ -125,7 +131,8 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
     getTransaction: chainRead, waitForTransaction: chainRead } };
   const verifyReceipt = (input: Parameters<typeof verifySuiChainReceipt>[1]) => verifySuiChainReceipt({ client: chain, network: "mainnet", expectedChainIdentifier: chainIdentifier }, input);
   const verifyNetwork = vi.fn(async () => {});
-  const workflow = new WalletWorkflow({ records, sessions, ownerId, transport, computation,
+  const runtime = options.createRuntime ? await options.createRuntime(directory, { account }) : new FixtureWalletRuntime(transport);
+  const workflow = new WalletWorkflow({ records, sessions, ownerId, runtime, computation,
     verifyReceipt,
     ...(options.receiptDetails ? { readReceipt: (input: { digest: string; now: Date }) => readPublicChainReceipt({
       client: { core: { getChainIdentifier: chain.core.getChainIdentifier, getTransaction: async () => {
@@ -135,19 +142,23 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
       } } }, network: "mainnet", expectedChainIdentifier: chainIdentifier
     }, input) } : {}),
     submitTransaction: submit, verifyNetwork, assertCurrent: access.assertCurrent,
-    runExternalEvent: (work) => access.run(work), logger, now });
+    bindExternalEvent: (work) => access.bind(work), logger, now });
   await workflow.start();
+  // Real child/SDK integration uses the same observation budget as the SDK tests.
+  await vi.waitFor(() => expectAvailable(), options.createRuntime ? { timeout: 10000 } : undefined);
+  function expectAvailable() { if (runtime.availability().status !== "available") throw new Error("Fixture wallet service did not become available"); }
   const cards = createReadCardStore({ records: cardRecords, ownerId, assertCurrent: access.assertCurrent, workflow, now,
     readService: { summarizeAccountInventory: options.accountReader ?? (async () => { throw new Error("Unexpected account source"); }) },
     publicChainReceiptReader: async () => { throw new Error("Unexpected receipt source"); }, chart: createDeepbookUsdcChartService() });
   const localData = activity.createLocalDataService({ now, advanceRequestDeadlines: (at) => records.advanceRequestDeadlines(at),
-    onDataReplaced: () => access.dataReplaced(), suiGrpcUrl: DEFAULT_SUI_GRPC_URL, suiGraphqlUrl: DEFAULT_SUI_GRAPHQL_URL,
+    onDataReplaced: () => { access.dataReplaced(); workflow.dataReplaced(); }, suiGrpcUrl: DEFAULT_SUI_GRPC_URL, suiGraphqlUrl: DEFAULT_SUI_GRAPHQL_URL,
     verifySuiGrpcUrl: async () => {}, verifySuiGraphqlUrl: async () => {} });
   access.ready();
   const run = <T>(operation: () => T): T => access.run(operation);
   const createConnection = () => run(() => cards.create("connect", { intent: "connect" }));
   const act = (card: CardResponse & { permission: string }, input: Record<string, unknown>) => run(() => cards.act({
-    cardId: card.snapshot.cardId, permission: card.permission, revision: card.snapshot.revision, input
+    cardId: card.snapshot.cardId, permission: card.permission, revision: card.snapshot.revision, input: ["connect", "disconnect", "use_account", "prepare_review", "request_signature", "restart_wallet_service"].includes(String(input.action))
+      ? { walletRunId: (card.snapshot.data as { walletAvailability: { walletRunId: string } }).walletAvailability.walletRunId, ...input } : input
   }));
   const read = (card: CardResponse & { permission: string }) => run(async () => ({ ...await cards.read({ cardId: card.snapshot.cardId, permission: card.permission }), permission: card.permission }));
   const plan: ActionPlan = { id: "fixture-plan", actionKind: "swap", adapterId: "deepbook-swap", protocol: "DeepBookV3", title: "Review swap", summary: "Review a swap",
@@ -178,7 +189,7 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
     const session = await run(() => sessions.getReviewSession(created.session.id, now));
     return { card, session: session! };
   };
-  return { directory, access, run, activity, localData, cards, cardRecords, records, sessions, workflow, transport, accountKey, account, sign, connect, submit, chainRead, quote, simulate,
+  return { directory, access, run, activity, localData, cards, cardRecords, records, sessions, workflow, runtime, transport, accountKey, account, sign, connect, submit, chainRead, quote, simulate,
     approval, createConnection, act, read, approve, prepare, now, plan, logger, verifyNetwork, computation, verifyReceipt,
     setChainOutcome(status: "success" | "failure") { chainFailure = status === "failure"; },
     // Explicit synthetic object/simulation ownership, independent of the selected
@@ -186,6 +197,11 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
     setSourceAccount(value: string) { sourceAccount = value; },
     advance(ms: number) { clock += ms; },
     notify(session?: WalletSession, selectionChanged = false) { approved = session; for (const listener of listeners) listener("fixture-topic", selectionChanged); },
-    close() { workflow.stop(); cards.stop(); access.close(); activity.close(); rmSync(directory, { recursive: true, force: true }); }
+    observe() { for (const listener of listeners) listener("fixture-topic"); },
+    holdWalletExit() {
+      if (!(runtime instanceof FixtureWalletRuntime)) throw new Error("Only the external runtime double supports holding its exit.");
+      return runtime.holdExit();
+    },
+    close() { workflow.stop(); void runtime.close(); cards.stop(); access.close(); activity.close(); rmSync(directory, { recursive: true, force: true }); }
   };
 }

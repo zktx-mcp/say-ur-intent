@@ -17,10 +17,10 @@ const request: TransactionRequest = { attemptId: "attempt", reviewSessionId: "re
 const connection: CardSnapshot = { cardId: "card", kind: "connect", state: "running", revision: 1,
   createdAt: new Date(0).toISOString(), expiresAt: new Date(1000).toISOString(), input: {}, pollAfterMs: 5000, inputRemainingMs: 0,
   data: { kind: "connect", mode: "connect", allowedActions: [], actionRemainingMs: 1000, observe: true,
-    walletAvailability: { status: "available" }, progress: { status: "waiting" }, boundary: CONNECT_BOUNDARY, connections: [] } };
+    walletAvailability: { status: "available", walletRunId: "00000000-0000-4000-8000-000000000001" }, progress: { status: "waiting" }, boundary: CONNECT_BOUNDARY, connections: [] } };
 const stateReader = (read: () => Promise<ReviewSession | undefined>, readRequest?: () => TransactionRequest) => async (): Promise<ReviewSnapshot | undefined> => {
   const session = await read();
-  return session ? { session, hasReviewInput: false, request: readRequest?.(), walletAvailability: { status: "available" }, progress: { status: readRequest ? "waiting" : "idle" } } : undefined;
+  return session ? { session, hasReviewInput: false, request: readRequest?.(), walletAvailability: { status: "available", walletRunId: "00000000-0000-4000-8000-000000000001" }, progress: { status: readRequest ? "waiting" : "idle" } } : undefined;
 };
 const cardStore = (read: () => Promise<CardSnapshot>) => ({ readSaved: read }) as unknown as CardStore;
 afterEach(() => vi.useRealTimers());

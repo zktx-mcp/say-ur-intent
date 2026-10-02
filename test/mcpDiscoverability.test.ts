@@ -3369,6 +3369,7 @@ it.each(["missing_selection", "disconnected", "expired", "pending_disconnect", "
     if (condition === "different_account") vi.spyOn(f.transport, "session").mockReturnValue({ ...approved!, accounts: [replacementWalletAccount] });
     if (condition === "expired") vi.spyOn(f.transport, "session").mockReturnValue({ ...approved!, expiresAt: new Date(f.now().getTime() - 1).toISOString() });
     if (condition === "unavailable") vi.spyOn(f.transport, "session").mockImplementation(() => { throw new Error("PRIVATE SDK FAILURE"); });
+    if (["sdk_missing", "different_account", "expired", "unavailable"].includes(condition)) f.observe();
     if (condition === "cleared") await f.activity.clearActiveAccount(f.now());
     if (condition === "database_error") vi.spyOn(f.activity, "getActiveAccount").mockRejectedValue(new Error("PRIVATE DB FAILURE"));
     if (condition === "pending_disconnect") {

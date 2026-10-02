@@ -1,9 +1,8 @@
-import type { EvaluatedWorkflowState } from "./workflowState.js";
+import type { EvaluatedWorkflowState, ReviewReadTarget } from "./workflowState.js";
 import { SessionStoreError } from "./sessionErrors.js";
 import { Transaction } from "@mysten/sui/transactions";
 import type { ClientWithCoreApi } from "@mysten/sui/client";
 import { verifyTransactionSignature } from "@mysten/sui/verify";
-import { isDeepStrictEqual } from "node:util";
 import type { ReviewComputationDeps } from "../review/reviewComputation.js";
 import { computeReviewStateWithPrivateArtifacts } from "../review/reviewComputation.js";
 import { assertNoForbiddenMcpFields } from "../action/forbiddenFields.js";
@@ -14,32 +13,40 @@ import type { SessionStore } from "./sessionStore.js";
 import type { CardRecord, CardPreparation, ReceiptDisplay, WalletDisplay } from "./cardSession.js";
 import { SqliteWalletWorkflowStore, WorkflowConflict } from "./sqliteWalletWorkflowStore.js";
 import { isOwnedConnectedWallet, SUI_SIGN_TRANSACTION_METHOD, WalletUserRejectedError, WalletUnavailableError, walletUnavailable,
-  type WalletTransport, type WalletSession, type WalletAvailability, type WalletUnavailableReason, type WorkflowProgress } from "./walletConnection.js";
+  type WalletAvailability, type WorkflowProgress } from "./walletConnection.js";
 import { isInitialChainObservation, type TransactionRequest } from "./transactionRequest.js";
 import { projectConnectionView, projectReviewView, parseWorkflowAction, type WorkflowView, type PendingConnectionStatus, type AssetReadAccount } from "./workflowView.js";
 
+import { WalletRunInterruptedError, WalletReplacementFailedError, type WalletRuntime, type WalletRun, type WalletRuntimeEvent,
+  type WalletSessionObservation, type WalletRecoveryTarget } from "./walletRuntime.js";
+
 import { reviewProgress, type ReviewSnapshot } from "./status.js";
+
+type CompletedCallback = { kind: "request"; id: string; field: "sdk_pending" | "submit_pending" | "lookup_pending" } |
+  { kind: "connection"; id: string; runId: string; cardId: string; action: "connect" | "disconnect";
+    unrecordedOutcome?: "failed" | "stopped" | "rejected" };
+type PendingWalletWrite = CompletedCallback | { kind: "runtime_failure"; runId: string; recovery?: WalletRecoveryTarget;
+  invalidateAuthority: boolean; observedAt: string; message: string };
 
 export class WalletWorkflow {
   private stopped = false;
   private started = false;
-  private walletReady = false;
-  private walletFailure: WalletUnavailableReason | undefined;
-  private transportStopped = false;
   private readonly pairings = new Map<string, WalletDisplay>();
   private readonly observing = new Map<string, Promise<void>>();
   private readonly preparing = new Set<string>();
-  private unsubscribe: (() => void) | undefined;
+  private readonly pendingWrites = new Map<string, PendingWalletWrite>();
+  private recovery: WalletRecoveryTarget | undefined;
+  private eventListener: ((event: WalletRuntimeEvent) => void) | undefined;
   constructor(private readonly options: {
     records: SqliteWalletWorkflowStore;
     sessions: SessionStore; ownerId: string;
-    transport?: WalletTransport | undefined;
+    runtime: WalletRuntime;
     computation: ReviewComputationDeps;
     verifyReceipt(input: VerifySuiChainReceiptInput): Promise<SuiChainReceiptVerificationResult>;
     readReceipt?: ((input: { digest: string; now: Date }) => Promise<PublicChainReceiptResult>) | undefined;
     submitTransaction(bytes: Uint8Array, signature: string): Promise<unknown>;
     assertCurrent(): void;
-    runExternalEvent?: ((work: () => void) => void) | undefined;
+    bindExternalEvent(work: (event: WalletRuntimeEvent) => void): (event: WalletRuntimeEvent) => void;
     verifyNetwork(): Promise<void>;
     signatureClient?: ClientWithCoreApi;
     logger: { error(message: string, meta?: Record<string, unknown>): void };
@@ -53,77 +60,88 @@ export class WalletWorkflow {
   }
   walletAvailability(): WalletAvailability {
     this.assertCurrent();
-    return this.walletReady && !this.walletFailure ? { status: "available" } :
-      walletUnavailable(this.walletFailure ?? "initialization_failed");
+    return this.options.runtime.availability();
   }
-  private assertWalletAvailable(): void {
+  private assertWalletAvailable(run?: WalletRun): void {
+    this.assertCurrent();
+    run?.assertCurrent();
     const availability = this.walletAvailability();
-    if (availability.status === "unavailable") throw new WalletUnavailableError(availability.reason);
+    if (availability.status !== "available") throw new WalletUnavailableError(
+      availability.status === "unavailable" ? availability.reason : "wallet_state_unavailable", availability.message);
   }
-  private disableWallet(reason: WalletUnavailableReason): void {
-    this.walletFailure ??= reason;
-    this.walletReady = false;
-    this.releaseWallet();
-  }
-  private releaseWallet(): void {
-    if (this.transportStopped) return;
-    this.transportStopped = true;
-    this.pairings.clear();
-    try { this.unsubscribe?.(); } catch { this.report("unsubscribe"); }
-    this.unsubscribe = undefined;
-    try { this.options.transport?.stop(); } catch { this.report("transport_stop"); }
-  }
-  private report(stage: string): void { try { this.options.logger.error("Wallet operation failed", { stage }); } catch { /* State is owned by SQLite. */ } }
+  private report(stage: string): void { try { this.options.logger.error("Wallet operation failed", { stage }); } catch { /* SQLite owns outcomes. */ } }
   async start(): Promise<void> {
     this.assertCurrent();
-    if (this.started) throw new WorkflowConflict("Wallet runtime already started. Restart the local backend to recover wallet operations.");
+    if (this.started) throw new WorkflowConflict("The wallet service has already started.");
     this.started = true;
     this.options.records.recover(this.now());
-    const transport = this.options.transport;
-    if (!transport) { this.walletFailure = "initialization_failed"; return; }
-    try {
-      const sessions = await transport.restore(); this.assertCurrent();
-      for (const session of sessions) {
-        const known = this.options.records.connections().find((record) => record.topic === session.topic && record.connection.status === "connected");
-        if (known) this.options.records.restoreConnection(session, this.now());
-      }
-      this.unsubscribe = transport.onSessionChanged((topic, selectionChanged) => {
-        if (this.stopped || this.walletFailure) return;
-        try { const work = () => this.reconcile(topic, selectionChanged); if (this.options.runExternalEvent) this.options.runExternalEvent(work); else work(); }
-        catch { this.disableWallet("wallet_state_unavailable"); this.report("wallet_session_event"); }
-      });
-      this.walletReady = true;
-    } catch { this.disableWallet("restoration_failed"); this.report("session_restore"); }
+    this.bindEvents();
+    this.options.runtime.start((event) => this.eventListener?.(event));
   }
-  private reconcile(topic: string, selectionChanged = false): WalletSession | undefined {
-    this.assertWalletAvailable();
-    try {
-      const current = this.options.transport?.session(topic);
-      for (const record of this.options.records.connections()) {
-        if (record.topic !== topic || record.ownerId !== this.options.ownerId || record.connection.status !== "connected") continue;
-        if (!current) {
-          this.options.records.applyConnectionChange(record.connection.connectionId, { status: "disconnected", reason: "Wallet session is unavailable." }, this.now());
-        } else if (selectionChanged || !this.sameSession(record.connection, current)) {
-          this.options.records.applyConnectionChange(record.connection.connectionId, { accounts: current.accounts, methods: current.methods,
-            expiresAt: current.expiresAt, status: "connected", walletName: current.walletName }, this.now());
-        }
-      }
-      return current;
-    } catch {
-      this.disableWallet("wallet_state_unavailable");
-      throw new WalletUnavailableError("wallet_state_unavailable");
+  private bindEvents(): void {
+    this.eventListener = this.options.bindExternalEvent((event) => this.runtimeEvent(event));
+  }
+  private runtimeEvent(event: WalletRuntimeEvent): void {
+    this.assertCurrent();
+    if (event.runId !== this.options.runtime.runId) return;
+    const runtime = this.options.runtime;
+    if (event.type === "snapshot") {
+      this.options.records.applyWalletObservation(event.snapshot, event.previous, event.ready);
+      if (event.ready) { runtime.publishReady(event.runId); this.recovery = undefined; }
+    } else if (event.type === "stage") {
+      this.options.records.publishWalletState();
+    } else if (event.type === "lost") {
+      this.pairings.clear();
+      this.retainWrite({ kind: "runtime_failure", runId: event.runId, ...(this.recovery ? { recovery: this.recovery } : {}),
+        invalidateAuthority: true, observedAt: this.now().toISOString(), message: walletUnavailable(event.reason).message });
     }
   }
-  private sameSession(stored: { accounts: string[]; methods: string[]; expiresAt: string }, current: WalletSession): boolean {
-    return stored.expiresAt === current.expiresAt && isDeepStrictEqual([...stored.accounts].sort(), [...current.accounts].sort()) &&
-      isDeepStrictEqual([...stored.methods].sort(), [...current.methods].sort());
+  dataReplaced(): void {
+    this.pairings.clear(); this.pendingWrites.clear(); this.recovery = undefined;
+    const status = this.options.runtime.availability().status;
+    if (status === "initializing" || status === "recovering") this.options.runtime.dataReplaced();
+    this.bindEvents();
+  }
+  private observed(topic: string): WalletSessionObservation | undefined {
+    return this.options.runtime.snapshot()?.sessions.find((item) => item.topic === topic);
+  }
+  private observation() {
+    const snapshot = this.options.runtime.snapshot();
+    return snapshot && { runId: snapshot.runId, sequence: snapshot.sequence, observedAt: snapshot.observedAt };
+  }
+  private completeCallback(completion: CompletedCallback): void {
+    this.retainWrite(completion);
+  }
+  private retainWrite(completion: PendingWalletWrite): void {
+    // An old data generation cannot add repair work to the replacement data.
+    try { this.assertCurrent(); } catch { return; }
+    const key = completion.kind === "runtime_failure" ? `runtime:${completion.runId}:${completion.recovery?.cardId ?? "service"}` :
+      completion.kind === "request" ? `request:${completion.id}:${completion.field}` : `connection:${completion.cardId}:${completion.runId}`;
+    if (!this.pendingWrites.has(key)) this.pendingWrites.set(key, completion);
+    try { this.settlePendingWrite(key, this.pendingWrites.get(key)!); } catch { this.report("callback_record"); }
+  }
+  private settlePendingWrite(key: string, completion: PendingWalletWrite): void {
+    if (completion.kind === "request") this.options.records.settle(completion.id, completion.field, false);
+    else if (completion.kind === "connection") this.options.records.settleConnection(completion.id, completion);
+    else if (completion.runId === this.options.runtime.runId) this.options.records.recordWalletFailure(completion);
+    this.pendingWrites.delete(key);
+  }
+  private synchronizeWalletState(target?: ReviewReadTarget): void {
+    this.assertCurrent();
+    const walletDependent = !target || target.walletDependent;
+    let failure: unknown;
+    for (const [key, completion] of this.pendingWrites) {
+      if (!walletDependent && (completion.kind !== "request" || completion.id !== target?.attemptId)) continue;
+      try { this.settlePendingWrite(key, completion); } catch (error) { failure = error; }
+    }
+    // A completed callback's pending flag is housekeeping, not authority to
+    // read recorded facts. Retain failed repairs for the next applicable read.
+    if (failure && walletDependent) throw failure;
+    if (walletDependent) this.options.runtime.synchronize();
   }
   async prepare(kind: "connect" | "review", input: Record<string, unknown>): Promise<CardPreparation> {
     this.assertCurrent();
-    const availability = this.walletAvailability();
-    if (kind === "connect") return availability.status === "available" ? { status: "ready" } : {
-      status: "failed", error: availability.message
-    };
+    if (kind === "connect") return { status: "ready" };
     if (typeof input.reviewSessionId !== "string") throw new WorkflowConflict("The requested review was not specified.");
     const session = await this.options.sessions.getReviewSession(input.reviewSessionId, () => this.now()); this.assertCurrent();
     if (!session) throw new WorkflowConflict("The review session is unavailable.");
@@ -135,27 +153,23 @@ export class WalletWorkflow {
     return { status: "ready" };
   }
 
-  readConnectionContext(): { connections: WorkflowView["connections"]; walletAvailability: WalletAvailability; assetReadAccount: AssetReadAccount } {
+  readConnectionContext(): { connections: WorkflowView["connections"]; walletAvailability: WalletAvailability; walletObservation: WorkflowView["walletObservation"]; assetReadAccount: AssetReadAccount } {
     this.assertCurrent();
+    this.synchronizeWalletState();
     const confirmed = new Set<string>();
     if (this.walletAvailability().status === "available") {
-      try {
-        for (const record of this.options.records.connections()) {
-          if (record.ownerId === this.options.ownerId && record.connection.status === "connected" && record.topic && this.reconcile(record.topic)) {
-            confirmed.add(record.connection.connectionId);
-          }
-        }
-      } catch (error) {
-        if (!(error instanceof WalletUnavailableError)) throw error;
+      for (const record of this.options.records.connections()) {
+        if (record.ownerId === this.options.ownerId && record.connection.status === "connected" && record.topic &&
+            this.observed(record.topic)?.status === "present") confirmed.add(record.connection.connectionId);
       }
     }
     this.recoverDisconnects();
-    const state = this.options.records.evaluate({ walletAvailability: this.walletAvailability() });
+    const state = this.options.records.evaluate({ walletAvailability: this.walletAvailability(), walletObservation: this.observation() });
     const account = state.activeAccount;
     const usable = state.walletAvailability.status === "available" && account !== undefined && state.connections.some((connection) =>
       confirmed.has(connection.connectionId) && connection.status === "connected" && connection.pendingAction === undefined &&
       Date.parse(connection.expiresAt) > Date.parse(state.evaluatedAt) && connection.accounts.includes(account));
-    return { connections: state.connections, walletAvailability: state.walletAvailability,
+    return { connections: state.connections, walletAvailability: state.walletAvailability, walletObservation: this.observation(),
       assetReadAccount: usable ? { status: "available", account: account! } : { status: "address_required" } };
   }
   private recoverDisconnects(): void {
@@ -165,18 +179,21 @@ export class WalletWorkflow {
       const pending = this.options.records.pendingDisconnect(record.connection.connectionId);
       if (!pending) continue;
       // Disabled transports also return undefined; that is not session absence.
-      const absent = available && !!record.topic && !this.options.transport!.session(record.topic);
+      const absent = available && !!record.topic && this.observed(record.topic)?.status === "absent";
       this.options.records.recoverDisconnect(pending.state.cardId, record.connection.connectionId, record.connection.revision, absent);
     }
   }
-  private async evaluateReview(id: string, expectedCard?: CardRecord, uiObservation = false): Promise<EvaluatedWorkflowState> {
+  private async evaluateReview(id: string, expectedCard?: CardRecord, uiObservation = false, expectedAttempt?: string): Promise<EvaluatedWorkflowState> {
     this.assertCurrent();
+    const readTarget = this.options.records.reviewReadTarget(id, expectedCard);
+    if (expectedAttempt && readTarget.attemptId !== expectedAttempt) throw new WorkflowConflict("The current transaction request changed. Check this review again.");
+    this.synchronizeWalletState(readTarget);
     const preparation = this.options.sessions.readReviewSession(id)?.preparationId;
     if (preparation && !this.preparing.has(preparation)) this.options.records.failPreparation(id, preparation, this.now());
     const candidate = await this.options.sessions.inspectReview(id, this.now());
     this.assertCurrent();
-    const evaluated = this.options.records.evaluate({ reviewSessionId: id, candidate, expectedCard,
-      walletAvailability: this.walletAvailability(), uiObservation });
+    const evaluated = this.options.records.evaluate({ reviewSessionId: id, candidate, expectedCard, readTarget,
+      walletAvailability: this.walletAvailability(), walletObservation: this.observation(), uiObservation });
     this.options.sessions.recordEvaluationEvents(evaluated.events);
     return evaluated;
   }
@@ -190,11 +207,11 @@ export class WalletWorkflow {
         this.assertCurrent();
         // An awaited receipt may have committed new facts. Return one freshly
         // evaluated snapshot; ordinary status reads do not await external I/O.
-        state = await this.evaluateReview(id);
+        state = await this.evaluateReview(id, undefined, false, state.request.attemptId);
       }
     }
     if (!state.session) return undefined;
-    return { session: state.session, request: state.request, hasReviewInput: state.hasReviewInput, walletAvailability: state.walletAvailability,
+    return { session: state.session, request: state.request, hasReviewInput: state.hasReviewInput, walletAvailability: state.walletAvailability, walletObservation: this.observation(),
       progress: reviewProgress(!!state.session.preparationId, state.request, state.walletAvailability,
         { stopped: state.authority?.observation_stopped === 1, pending: state.authority?.lookup_pending === 1 }) };
   }
@@ -206,7 +223,7 @@ export class WalletWorkflow {
     if (record.state.kind === "connect") this.readConnectionContext();
     const evaluated = record.state.kind === "review"
       ? await this.evaluateReview(String(record.state.input.reviewSessionId), record, uiObservation)
-      : this.options.records.evaluate({ expectedCard: record, walletAvailability: this.walletAvailability() });
+      : this.options.records.evaluate({ expectedCard: record, walletAvailability: this.walletAvailability(), walletObservation: this.observation() });
     this.assertCurrent();
     if (record.state.kind === "connect") {
       const data = projectConnectionView(evaluated);
@@ -221,36 +238,61 @@ export class WalletWorkflow {
 
   async act(record: CardRecord, action: ReturnType<typeof parseWorkflowAction>): Promise<void> {
     this.assertCurrent();
+    const runtime = this.options.runtime;
+    if ("walletRunId" in action && action.walletRunId !== runtime.runId) throw new WorkflowConflict("The wallet service changed. Confirm the current selection again.");
     if (action.action === "request_signature" && record.scope === "review") {
       const recovered = this.options.records.recoverRequest(record, action, { reviewSessionId: String(record.state.input.reviewSessionId),
         reviewRevision: action.reviewRevision, account: action.account, connectionId: action.connectionId });
       if (recovered) return;
     }
     if (["connect", "disconnect", "use_account", "prepare_review", "request_signature"].includes(action.action)) this.assertWalletAvailable();
-    const transport = this.options.transport;
     switch (action.action) {
+      case "restart_wallet_service": {
+        this.synchronizeWalletState();
+        if (runtime.availability().status === "recovering") throw new WorkflowConflict("The wallet service is already stopping.");
+        try { this.options.records.admitWalletRecovery(record, action, runtime.runId); }
+        catch (error) { if (!(error instanceof WorkflowConflict)) runtime.block("wallet_state_unavailable"); throw error; }
+        runtime.fence(action.walletRunId);
+        const recovery: WalletRecoveryTarget = { cardId: record.state.cardId, priorRunId: action.walletRunId };
+        this.recovery = recovery;
+        this.pairings.clear(); this.bindEvents();
+        void runtime.replace(action.walletRunId, (nextRunId) => {
+          this.assertCurrent();
+          this.options.records.advanceWalletRecovery(record.state.cardId, action.walletRunId, nextRunId);
+          this.recovery = { ...recovery, nextRunId };
+        }).catch((error: unknown) => {
+          if (!(error instanceof WalletReplacementFailedError)) return;
+          this.retainWrite({ kind: "runtime_failure", runId: action.walletRunId, recovery,
+            invalidateAuthority: false, observedAt: this.now().toISOString(), message: error.message });
+        });
+        return;
+      }
       case "cancel": this.options.records.cancelInput(record); return;
       case "connect": {
-        if (!transport) throw new WalletUnavailableError("initialization_failed");
+        const run = runtime.bind();
         const admitted = this.options.records.admitConnection(record, action);
-        void this.connect(admitted.connection.connectionId).catch(() => this.report("connection"));
+        void this.connect(admitted.connection.connectionId, run, record.state.cardId).catch(() => this.report("connection"));
         return;
       }
       case "use_account": {
         if (!action.account) throw new WorkflowConflict("No account from the connected wallet was selected.");
-        const target = this.options.records.connection(action.connectionId);
-        if (target?.topic) this.reconcile(target.topic);
+        const run = runtime.bind();
+        await this.checkWallet(run, action.connectionId, action.account, record.state.cardId);
+        this.assertWalletAvailable(run);
         this.options.records.useAccount(record, action, action.connectionId, action.account); return;
       }
       case "disconnect": {
-        if (!transport) throw new WalletUnavailableError("initialization_failed");
+        const run = runtime.bind();
+        const selected = this.options.records.connection(action.connectionId);
+        if (!selected?.topic) throw new WorkflowConflict("The selected wallet connection is unavailable.");
+        await run.checkSession(selected.topic, record.state.cardId); this.assertWalletAvailable(run);
         const target = this.options.records.admitDisconnect(record, action, action.connectionId);
         void (async () => {
           try {
-            if (target.topic) await transport.disconnect(target.topic); this.assertWalletAvailable();
+            if (target.topic) await run.disconnect(target.topic, record.state.cardId); this.assertWalletAvailable(run);
             this.options.records.finishDisconnect(record.state.cardId, action.connectionId, true, this.now());
           } catch { if (!this.stopped) this.options.records.finishDisconnect(record.state.cardId, action.connectionId, false, this.now()); }
-          finally { if (!this.stopped) this.options.records.settleConnection(action.connectionId); }
+          finally { this.completeCallback({ kind: "connection", id: action.connectionId, cardId: record.state.cardId, action: "disconnect", runId: run.runId }); }
         })().catch(() => this.report("disconnection")); return;
       }
       case "stop_connection": {
@@ -260,17 +302,20 @@ export class WalletWorkflow {
       }
       case "prepare_review": {
         const id = String(record.state.input.reviewSessionId);
-        const connection = this.requireWallet(action.connectionId, action.account);
+        const run = runtime.bind();
+        const { connection } = await this.checkWallet(run, action.connectionId, action.account, record.state.cardId);
+        this.assertWalletAvailable(run);
         const preparation = this.options.records.beginReviewPreparation(record, action.reviewRevision, connection, action.account);
         this.preparing.add(preparation);
-        void this.compute(id, preparation, action.account, connection.connectionId)
+        void this.compute(id, preparation, action.account, connection.connectionId, run)
           .finally(() => this.preparing.delete(preparation)).catch(() => this.report("review_computation"));
         return;
       }
       case "request_signature": {
-        if (!transport) throw new WalletUnavailableError("initialization_failed");
+        const run = runtime.bind();
         const id = String(record.state.input.reviewSessionId);
-        const connection = this.requireWallet(action.connectionId, action.account);
+        const { connection } = await this.checkWallet(run, action.connectionId, action.account, record.state.cardId);
+        this.assertWalletAvailable(run);
         const session = this.options.sessions.readReviewSession(id);
         if (!session || session.reviewRevision !== action.reviewRevision || !session.plans[0]) throw new WorkflowConflict("This request does not match the current review.");
         let material;
@@ -282,14 +327,14 @@ export class WalletWorkflow {
           await this.evaluateReview(id);
           throw new WorkflowConflict("The transaction details needed for this approval request are no longer available.");
         }
-        this.assertWalletAvailable();
+        this.assertWalletAvailable(run);
         let admitted;
-        try { admitted = this.options.records.admitRequest(record, action, material, connection); }
+        try { admitted = this.options.records.admitRequest(record, action, material, connection, run.runId); }
         catch (error) {
           if (error instanceof WorkflowConflict) this.options.sessions.recordEvaluationEvents(error.events);
           throw error;
         }
-        if (admitted.created) void this.sign(admitted.request, action.connectionId, material.transactionBytesBase64).catch(() => this.report("signature_request"));
+        if (admitted.created) void this.sign(admitted.request, action.connectionId, material.transactionBytesBase64, run).catch(() => this.report("signature_request"));
         return;
       }
       case "stop_waiting": this.options.records.manage(record, action.action); return;
@@ -301,8 +346,6 @@ export class WalletWorkflow {
   }
   private requireWallet(id: string, account: string) {
     this.assertWalletAvailable();
-    const record = this.options.records.connection(id);
-    if (record?.topic) this.reconcile(record.topic);
     const current = this.options.records.connection(id);
     if (!isOwnedConnectedWallet(current, this.options.ownerId, !!this.options.records.pendingDisconnect(id)) ||
         !current.connection.accounts.includes(account) || Date.parse(current.connection.expiresAt) <= this.now().getTime()) {
@@ -310,12 +353,22 @@ export class WalletWorkflow {
     }
     return current.connection;
   }
-  private async connect(id: string): Promise<void> {
+  private async checkWallet(run: WalletRun, id: string, account: string, operationId: string) {
+    this.assertWalletAvailable(run);
+    const stored = this.options.records.connection(id);
+    if (!stored?.topic) throw new WorkflowConflict("The selected wallet connection is unavailable.");
+    const observed = await run.checkSession(stored.topic, operationId);
+    this.assertWalletAvailable(run);
+    if (observed.status !== "present" || !observed.session.accounts.includes(account)) throw new WorkflowConflict("The selected Sui wallet account is unavailable.");
+    return { connection: this.requireWallet(id, account), observed };
+  }
+  private async connect(id: string, run: WalletRun, cardId: string): Promise<void> {
+    let unrecordedOutcome: "failed" | "stopped" | "rejected" = "failed";
     try {
-      const result = await this.options.transport!.connect();
+      const result = await run.connect(id);
       let displayFailure: unknown;
       try {
-        this.assertWalletAvailable();
+        this.assertWalletAvailable(run);
         const current = this.options.records.connection(id);
         if (current?.connection.status === "awaiting_approval") {
           this.pairings.set(id, { connectionId: id, pairingUri: result.uri, expiresAt: result.expiresAt });
@@ -326,51 +379,58 @@ export class WalletWorkflow {
       // wallet dependency is disabled. Settle only after that promise ends.
       const session = await result.approval;
       if (displayFailure) throw displayFailure;
-      this.assertWalletAvailable();
+      this.assertWalletAvailable(run);
       const awaiting = this.options.records.connection(id);
       if (!awaiting || awaiting.connection.status !== "awaiting_approval" || Date.parse(awaiting.connection.expiresAt) <= this.now().getTime()) {
-        await this.options.transport!.disconnect(session.topic);
+        await run.disconnect(session.topic, id);
         return;
       }
       this.options.records.updateConnection(id, { status: "connected", accounts: session.accounts, methods: session.methods,
         expiresAt: session.expiresAt, walletName: session.walletName }, this.now(), session.topic, false);
     } catch (error) {
+      unrecordedOutcome = error instanceof WalletRunInterruptedError ? "stopped" : error instanceof WalletUserRejectedError ? "rejected" : "failed";
       if (!this.stopped) {
         const current = this.options.records.connection(id);
         if (current?.connection.status === "awaiting_approval") this.options.records.updateConnection(id,
-          { status: error instanceof WalletUserRejectedError ? "rejected" : "failed",
-            reason: this.walletFailure ? "The wallet connection could not be confirmed because the wallet service is unavailable." :
+          { status: error instanceof WalletRunInterruptedError ? "stopped" : error instanceof WalletUserRejectedError ? "rejected" : "failed",
+            reason: this.walletAvailability().status !== "available" ? "The wallet connection could not be confirmed because the wallet service is unavailable." :
               error instanceof WalletUserRejectedError ? error.message : "Wallet connection could not be confirmed." }, this.now(), undefined, false);
       }
-    } finally { try { if (!this.stopped) this.options.records.settleConnection(id); } finally { this.pairings.delete(id); } }
+    } finally {
+      this.completeCallback({ kind: "connection", id, runId: run.runId, cardId, action: "connect", unrecordedOutcome });
+      this.pairings.delete(id);
+    }
   }
-  private async compute(id: string, preparation: string, account: string, connectionId: string): Promise<void> {
+  private async compute(id: string, preparation: string, account: string, connectionId: string, run: WalletRun): Promise<void> {
     try {
-      await this.options.sessions.recordWalletConnected(id, account, this.now()); this.assertWalletAvailable();
+      await this.options.sessions.recordWalletConnected(id, account, this.now()); this.assertWalletAvailable(run);
       const session = await this.options.sessions.getReviewSession(id, () => this.now());
       if (!session?.plans[0]) throw new WorkflowConflict("Review session is unavailable.");
       const computed = await computeReviewStateWithPrivateArtifacts({ reviewSessionId: id, plan: session.plans[0], account, now: this.now() }, this.options.computation);
-      this.assertWalletAvailable();
-      const currentConnection = this.requireWallet(connectionId, account);
+      const { connection: currentConnection } = await this.checkWallet(run, connectionId, account, preparation);
+      this.assertWalletAvailable(run);
       if (!this.options.records.isPreparing(id, preparation) || session.walletConnectionRevision !== currentConnection.revision) return;
       await this.options.sessions.recordReviewStateWithArtifacts(id, computed.state, computed.privateArtifacts, this.now(),
         { id: preparation, connectionId, connectionRevision: currentConnection.revision });
     } catch { if (!this.stopped) this.options.records.failPreparation(id, preparation, this.now()); }
   }
-  private async sign(request: TransactionRequest, connectionId: string, bytesBase64: string): Promise<void> {
-    try { await this.performSignature(request, connectionId, bytesBase64); }
-    finally { if (!this.stopped) this.options.records.settle(request.attemptId, "sdk_pending", false); }
+  private async sign(request: TransactionRequest, connectionId: string, bytesBase64: string, run: WalletRun): Promise<void> {
+    try { await this.performSignature(request, connectionId, bytesBase64, run); }
+    finally { this.completeCallback({ kind: "request", id: request.attemptId, field: "sdk_pending" }); }
   }
-  private async performSignature(request: TransactionRequest, connectionId: string, bytesBase64: string): Promise<void> {
-    let response: { transactionBytes: string; signature: string };
+  private async performSignature(request: TransactionRequest, connectionId: string, bytesBase64: string, run: WalletRun): Promise<void> {
+    let response: { transactionBytes: string; signature: string; sessionVersion: number };
     try {
-      this.assertWalletAvailable();
+      this.assertWalletAvailable(run);
       const connection = this.options.records.connection(connectionId);
       if (!connection?.topic || !connection.connection.methods.includes(SUI_SIGN_TRANSACTION_METHOD)) throw new WorkflowConflict("Wallet does not support Sui sign-only requests.");
-      response = await this.options.transport!.sign({ topic: connection.topic, account: request.account, transactionBytesBase64: bytesBase64 });
-      this.assertWalletAvailable();
+      const proof = await this.checkWallet(run, connectionId, request.account, request.attemptId);
+      this.assertWalletAvailable(run);
+      response = await run.sign({ topic: connection.topic, account: request.account, transactionBytesBase64: bytesBase64,
+        sessionVersion: proof.observed.version }, request.attemptId);
+      this.assertWalletAvailable(run);
     } catch {
-      if (!this.stopped) this.options.records.transitionRequest(request.attemptId, "request_failed", this.now(), { reason: this.walletFailure ? "Wallet operations became unavailable before submission. The returned signature will not be submitted." : "The wallet rejected the request or did not return a signature." });
+      if (!this.stopped) this.options.records.transitionRequest(request.attemptId, "request_failed", this.now(), { reason: this.walletAvailability().status !== "available" ? "Wallet operations became unavailable before submission. The returned signature will not be submitted." : "The wallet rejected the request or did not return a signature." });
       return;
     }
     const current = this.options.records.request(request.attemptId);
@@ -384,9 +444,11 @@ export class WalletWorkflow {
         throw new WorkflowConflict("The returned transaction does not match the reviewed transaction. Nothing was submitted.");
       }
       await verifyTransactionSignature(bytes, response.signature, { address: request.account,
-        ...(this.options.signatureClient ? { client: this.options.signatureClient } : {}) }); this.assertWalletAvailable();
-      await this.options.verifyNetwork(); this.assertWalletAvailable();
-      this.requireWallet(connectionId, request.account);
+        ...(this.options.signatureClient ? { client: this.options.signatureClient } : {}) }); this.assertWalletAvailable(run);
+      await this.options.verifyNetwork(); this.assertWalletAvailable(run);
+      const current = await this.checkWallet(run, connectionId, request.account, request.attemptId);
+      this.assertWalletAvailable(run);
+      if (current.observed.version !== response.sessionVersion) throw new WorkflowConflict("The wallet session changed before submission. Nothing was submitted.");
       this.options.records.advanceRequestDeadlines(this.now(), request.attemptId);
       if (this.options.records.request(request.attemptId)?.requestStatus !== "awaiting_signature") return;
       this.options.records.transitionRequest(request.attemptId, "awaiting_signature", this.now(), { signatureVerified: true });
@@ -395,14 +457,14 @@ export class WalletWorkflow {
       // SDK verification can itself depend on a remote source. An exception is
       // not proof of a mismatched transaction or signer.
       if (!this.stopped) this.options.records.transitionRequest(request.attemptId, "request_failed", this.now(), {
-        reason: this.walletFailure ? "Wallet operations became unavailable before submission. The returned signature will not be submitted."
+        reason: this.walletAvailability().status !== "available" ? "Wallet operations became unavailable before submission. The returned signature will not be submitted."
           : error instanceof WorkflowConflict ? error.message : "Submission checks could not be completed. Nothing was submitted."
       });
       return;
     }
     try { await this.options.submitTransaction(bytes, response.signature); }
     catch { /* A lost submit response is not proof of failure. Observe the same digest. */ }
-    finally { if (!this.stopped) this.options.records.settle(request.attemptId, "submit_pending", false); }
+    finally { this.completeCallback({ kind: "request", id: request.attemptId, field: "submit_pending" }); }
     this.assertCurrent();
     try { this.options.records.finishSubmission(request.attemptId); }
     catch { this.report("submission_record"); return; }
@@ -411,6 +473,13 @@ export class WalletWorkflow {
   observe(id: string, explicit = false): void {
     this.assertCurrent();
     if (this.observing.has(id)) return;
+    const current = this.options.records.request(id);
+    if (!current || !(isInitialChainObservation(current.requestStatus) || explicit && current.requestStatus === "outcome_unknown")) return;
+    // Starting another lookup needs its own previous callback to be settled.
+    // Stored terminal facts above never depend on this write succeeding.
+    for (const [key, write] of this.pendingWrites) if (write.kind === "request" && write.id === id && write.field === "lookup_pending") {
+      this.settlePendingWrite(key, write);
+    }
     const request = this.options.records.beginObservation(id, explicit);
     if (!request) return;
     const reading = (async () => {
@@ -437,20 +506,23 @@ export class WalletWorkflow {
           this.options.records.transitionRequest(id, "outcome_unknown", this.now(), { reason: "The chain result could not be verified for this request." });
         }
       } catch { if (!this.stopped) this.options.records.transitionRequest(id, "outcome_unknown", this.now(), { reason: "The chain result is unavailable. No transaction was sent again." }); }
-      finally { try { if (!this.stopped) this.options.records.settle(id, "lookup_pending", false); } finally { this.observing.delete(id); } }
+      finally { this.completeCallback({ kind: "request", id, field: "lookup_pending" }); this.observing.delete(id); }
     })();
     this.observing.set(id, reading);
     void reading.catch(() => this.report("chain_observation"));
   }
   pendingConnections() {
     this.assertCurrent();
+    this.synchronizeWalletState();
     this.recoverDisconnects();
     const rows: { cardId: string; connectionId?: string; status: PendingConnectionStatus; lastActivityAt: string; progress: WorkflowProgress }[] = [];
     for (const card of this.options.records.pendingConnectionCards(this.now())) {
-      const evaluated = this.options.records.evaluate({ expectedCard: card, walletAvailability: this.walletAvailability() });
+      const evaluated = this.options.records.evaluate({ expectedCard: card, walletAvailability: this.walletAvailability(), walletObservation: this.observation() });
       if (evaluated.record?.state.state === "closed") continue;
       const data = projectConnectionView(evaluated);
-      if (!data.connection) rows.push({ cardId: card.state.cardId, status: "input_required", lastActivityAt: card.state.createdAt, progress: data.progress });
+      if (data.runtimeRecovery && "phase" in data.runtimeRecovery) rows.push({ cardId: card.state.cardId,
+        status: "wallet_recovery_pending", lastActivityAt: data.runtimeRecovery.updatedAt, progress: data.progress });
+      else if (!data.connection) rows.push({ cardId: card.state.cardId, status: "input_required", lastActivityAt: card.state.createdAt, progress: data.progress });
       else if (data.connection.status === "awaiting_approval") rows.push({ cardId: card.state.cardId,
         connectionId: data.connection.connectionId, status: "awaiting_approval", lastActivityAt: data.connection.updatedAt, progress: data.progress });
       else if (data.connection.pendingAction === "disconnect") rows.push({ cardId: card.state.cardId,
@@ -460,6 +532,6 @@ export class WalletWorkflow {
   }
   stop(): void {
     if (this.stopped) return;
-    this.stopped = true; this.walletReady = false; this.releaseWallet();
+    this.stopped = true; this.pairings.clear(); this.pendingWrites.clear(); this.recovery = undefined;
   }
 }

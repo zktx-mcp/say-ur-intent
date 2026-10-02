@@ -979,36 +979,40 @@ export class SqliteActivityStore implements ActivityStore {
     return this.db.transaction(() => {
       const now = clock();
       const cards = this.createCardRecordStore();
-      let record = input.expectedCard && cards.get(input.expectedCard.state.cardId);
-      if (input.expectedCard && (!record || record.tokenHash !== input.expectedCard.tokenHash ||
-          record.scope !== input.expectedCard.scope || record.ownerId !== input.expectedCard.ownerId)) {
-        throw new SessionStoreError("input_invalid", "Card access is unavailable.");
-      }
+      let record = input.expectedCard && records.currentCard(input.expectedCard);
       const reviewId = record?.state.kind === "review" ? String(record.state.input.reviewSessionId) : input.reviewSessionId;
+      const target = reviewId ? records.reviewReadTarget(reviewId, record) : undefined;
+      if (input.readTarget && (!target || input.readTarget.reviewSessionId !== target.reviewSessionId ||
+          input.readTarget.attemptId !== target.attemptId || !input.readTarget.walletDependent && target.walletDependent)) {
+        throw new SessionStoreError("session_mismatch", "The review target changed while its state was being read. Check this review again.");
+      }
       let evaluated: ReviewEvaluation | undefined;
       if (reviewId) {
         if (!input.candidate || input.candidate.session.id !== reviewId) throw new SessionStoreError("session_not_found", "The saved review is unavailable.");
         evaluated = this.finalizeReviewEvaluationAt(input.candidate, now);
         if (input.uiObservation && record?.scope === "review") records.markReviewOpened(reviewId, now);
       }
-      records.advanceRequestDeadlines(now);
-      records.expireConnections(now);
+      if (!target || target.walletDependent) {
+        records.advanceRequestDeadlines(now);
+        records.expireConnections(now);
+      } else records.advanceRequestDeadlines(now, target.attemptId);
       if (record) record = cards.evaluate(record, () => now).record;
       const session = evaluated?.session;
-      const request = record?.scope === "review_manage" ? records.request(String(record.state.input.attemptId)) :
-        record?.state.kind === "review" && record.operationId ? records.request(record.operationId) : reviewId ? records.currentRequest(reviewId) : undefined;
-      if (request && request.reviewSessionId !== reviewId) throw new SessionStoreError("session_mismatch", "The request identity does not match this review.");
+      const request = target?.attemptId ? records.request(target.attemptId) : undefined;
       const authority = request && records.authority(request.attemptId);
       const details = request?.execution && records.executionDetails(request.attemptId);
       const connection = record?.state.kind === "connect" && record.operationId ? records.connection(record.operationId) : undefined;
+      const activeAccount = this.getActiveAccountSync()?.address, targetAccount = session?.account ?? activeAccount;
       const facts = { evaluatedAt: now.toISOString(), ownerId, record, session, request, authority,
         hasReviewInput: !!session && session.status !== "expired" && Date.parse(session.expiresAt) > now.getTime() &&
           cards.hasReviewInput(session.id, ownerId, now),
-        walletAvailability: input.walletAvailability, activeAccount: this.getActiveAccountSync()?.address,
+        walletAvailability: input.walletAvailability, walletObservation: input.walletObservation,
+        runtimeRecovery: record && records.walletRecovery(record), activeAccount,
+        recoveryImpact: record?.scope === "connect" && record.state.input.intent === "manage" ? records.walletRecoveryImpact() : undefined,
         connections: records.connectionViews(),
         connection: connection ? records.connectionView(connection.connection) : undefined,
         boundReview: request && (record?.operationId || record?.scope === "review_manage") ? records.requestReview(request.attemptId) : undefined,
-        busyForAccount: !!session?.account && records.busyForAccount(session.account, now),
+        busyForAccount: !!targetAccount && records.busyForAccount(targetAccount, now),
         receipt: details ? details.data : undefined, receiptDisplay: details ? details.receiptDisplay : undefined };
       return { ...facts, ...workflowEligibility(facts), events: evaluated?.events ?? [] };
     }).immediate();

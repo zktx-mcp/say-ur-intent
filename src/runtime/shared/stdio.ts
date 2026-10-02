@@ -12,7 +12,7 @@ import { INTERNAL_MCP_PATH, type ControlIdentity } from "./control.js";
 // This proxy has no domain services or writable stores. A new request may open a
 // new MCP session after ownership changes; an already dispatched call is never replayed.
 export async function startSharedStdio(input: {
-  stdio: Transport; port: number; control: ControlIdentity; onError(error: Error): void;
+  stdio: Transport; port: number; control: ControlIdentity | Promise<ControlIdentity>; ready?: Promise<void>; onError(error: Error): void;
 }) {
   const server = new Server({ name: SERVER_NAME, version: SERVER_VERSION }, {
     capabilities: { tools: {}, resources: {}, prompts: {}, completions: {} }, instructions: SERVER_INSTRUCTIONS
@@ -20,10 +20,21 @@ export async function startSharedStdio(input: {
   let connection: { instanceId: string; client: Client } | undefined;
   let connecting: Promise<Client> | undefined;
   let closed = false;
+  const lifetime = new AbortController();
+  function waiting<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => reject(new Error("MCP connection was closed or cancelled."));
+      signal.addEventListener("abort", abort, { once: true });
+      void work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    });
+  }
   async function owner(signal?: AbortSignal): Promise<Client> {
     if (closed) throw new Error("MCP connection is closed.");
+    signal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
+    const [control] = await waiting(Promise.all([input.control, input.ready]), signal);
     if (connecting) return connecting;
-    const identity = await probeAuthenticatedServer(input.port, input.control);
+    const identity = await probeAuthenticatedServer(input.port, control);
     signal?.throwIfAborted();
     if (connection?.instanceId === identity.instanceId) return connection.client;
     if (connecting) return connecting;
@@ -34,7 +45,7 @@ export async function startSharedStdio(input: {
       if (!clientInfo) throw new Error("MCP client initialization is required.");
       const client = new Client(clientInfo, { capabilities: server.getClientCapabilities() ?? {} });
       const http = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${input.port}${INTERNAL_MCP_PATH}`), {
-        fetch: createAuthenticatedFetch(input.port, input.control, identity.instanceId)
+        fetch: createAuthenticatedFetch(input.port, control, identity.instanceId)
       });
       const transport: Transport = {
         start: () => http.start(), send: (message, options) => http.send(message, options),
@@ -75,7 +86,7 @@ export async function startSharedStdio(input: {
   return {
     async close(): Promise<void> {
       if (closed) return;
-      closed = true;
+      closed = true; lifetime.abort();
       await server.close();
       try { await connecting; } catch { /* Initialization was cancelled with the stdio connection. */ }
       await connection?.client.close(); connection = undefined;

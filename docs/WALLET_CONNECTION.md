@@ -30,7 +30,7 @@ SDK restoration and status reads never undo a user clearing that context. The st
 | connected | View approved accounts and expiry; a new card may select another operation |
 | rejected / failed / expired / stopped / disconnected | View the recorded outcome; new operations need a new card |
 
-`session.get_interaction_status` can reconcile recorded connections with SDK sessions and apply the existing review/request invalidation rules before returning their state. It neither changes the selected read account nor starts a wallet operation. See the [interaction API](MCP_TOOLS.md) for the response contract.
+`session.get_interaction_status` reports the last confirmed wallet-service observation and stored connections. SDK events and command checks apply review/request invalidation through the same database owner. An ordinary status read does not wait for a fresh SDK request, change the selected account or start a wallet operation. `walletObservation` identifies the local service run, observation order and check time; it is not proof of the wallet app's current screen or online status. See the [interaction API](MCP_TOOLS.md) for the response contract.
 
 An admitted disconnect is a pending card operation, distinct from the last
 confirmed connection state. The same connection cannot be selected for another
@@ -57,7 +57,7 @@ The product supplies its public WalletConnect project identifier without user
 configuration or an override. Shared Relay service limits can affect connection
 availability across installations. An initialization failure does not establish
 that the user omitted a setting or that a transaction failed. A failure to
-restore saved connections or subscribe to wallet changes disables wallet operations until backend restart;
+restore saved connections or subscribe to wallet changes disables wallet operations until the wallet service is recovered;
 it cannot leave signing available without account/chain change observation.
 Stored review, request and verified execution facts remain readable through
 session tools and cards as well as ordinary evidence tools. `walletAvailability`
@@ -66,12 +66,50 @@ transaction authorization. An unavailable dependency does not erase a saved
 result or prove chain failure. Startup diagnostics contain safe failure stages,
 not the project ID, SDK error bodies or wallet credentials.
 
+The wallet SDK runs in a separate child process. The parent retains database
+authority, transaction verification, submission and chain-result observation.
+An unresponsive wallet service does not prevent ordinary reads or access to
+stored results. Normal startup is shown as initialization, not as a wallet
+rejection. No implicit asset account is offered until the current service run
+confirms a usable connection.
+
+To recover an unresponsive service, open wallet connection controls in chat,
+then choose **Wallet service help → Restart wallet service → Confirm restart**.
+This is an app-only user action. The parent first revokes pending submission
+permission, then ends its own SDK child and waits for its actual exit before
+starting another. It does not stop another application's backend. An interrupted
+pairing is stopped; an unconfirmed disconnect is failed, not remotely revoked.
+Late responses cannot revive either operation. Already dispatched transactions
+continue to be observed by their original digest. A new signature requires a
+fresh review and explicit Request action.
+
+Recovery remains in progress until the replacement SDK and its stored state are
+ready. If replacement startup remains unresponsive, a new management card can
+restart that new service run. A lost recovery reply is resolved by reading the
+same card; it never repeats the restart. Restarting the service cannot guarantee
+that a relay or wallet will become reachable, approve a new connection, or delete
+a connection in the wallet app.
+
 An interrupted wallet operation reports `progress.status: "unavailable"` and a
 bounded wait returns `waitOutcome: "unavailable"` with the recorded facts. It does
 not pretend that the operation completed or the wait timed out. A completed
 request returns its saved result immediately. The backend can still verify the
 known digest of an already submitted transaction without WalletConnect. No
 financial request is replayed when reading or recovering results.
+
+A failed disconnect means disconnection was not confirmed. Inspect the connection
+in your wallet app and remove it there if it remains listed. Local service
+recovery does not verify remote removal. A card for an earlier successful
+connection may show that the connection is now unavailable; that is not proof
+that its original pairing failed.
+
+Waiting and startup cards show conditional recovery guidance below the normal
+approval or QR instructions. A pending card command can also show that its
+response has not arrived yet. These notices do not diagnose a hung service,
+assert admission, or automatically send another command. The same-request check
+takes priority when a signing request's delivery is uncertain. Review messages
+preserve whether preparation was invalidated by wallet selection, a requested
+disconnect, service restart, or service loss.
 
 ## Transaction approval
 
@@ -112,7 +150,7 @@ or recovering an admitted attempt does not require a fresh quote or send it agai
 
 Wallet account/chain selection changes invalidate affected unadmitted review
 data and pending submission permission in the same connection-change transaction.
-If that write fails, wallet operations are disabled until backend restart; a late
+If that write fails, wallet operations are disabled until service recovery; a late
 signature cannot continue under an unrecorded old permission.
 Before submission, an explicit user stop, an SDK connection change and a
 requested disconnect record distinct reasons. A disconnect request does not

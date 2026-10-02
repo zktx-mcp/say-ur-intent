@@ -290,6 +290,30 @@ that read cannot reconnect, sign or resubmit. Existing DB expiry wake-ups remain
 independent of progress polling. Availability and allowed actions participate in
 display identity; remaining-time hints do not reset input selection.
 
+Wallet-service startup and recovery are separate from connection and transaction
+states. Show normal initialization neutrally; do not describe it as missing
+connection approval. A live Connect/manage card places **Restart wallet service**
+inside **Wallet service help**, followed by an impact summary and **Confirm
+restart**/**Back**. Confirmation binds the displayed run and affected operations;
+a changed run or impact requires a new confirmation. An already consumed card
+does not acquire a second input permission. Its recovery guidance points to new
+wallet connection controls in chat when another restart is possible.
+
+The common lifecycle classifies a failed restart using that same card's saved
+recovery identity. Admitted recovery is observed, an unadmitted current target
+requires explicit confirmation, and an ended target becomes historical. Restart
+is never an automatic action or automatic-command retry. Reading state, moving
+between chats, replacing the SDK run and repairing a display cannot clear the
+View's command pause or repeat a restart. Run identity also binds existing wallet
+actions, retained Review controls and retry confirmation.
+
+Running recovery keeps observation after input expiry. Terminal recovery shows
+its own outcome even if another run is now starting. Service restart success
+does not mean remote disconnection, new wallet approval or chain success. A
+state-publication failure offers **Check status** for the same card; it does not
+repeat SDK startup. Current service messages, last recorded connection facts and
+the last successful service-check time must remain distinct.
+
 Local-data counts describe the backend state at the time they are read. A later
 replacement warning must not use a stale count, especially zero, as an assurance
 that no unconfirmed transaction records will be deleted. Warn that replacement

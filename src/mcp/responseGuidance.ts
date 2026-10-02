@@ -2,13 +2,15 @@ import type { UserAnswerUse } from "../core/evidence/userAnswerUse.js";
 import { EXTERNAL_PROPOSAL_SETTLEMENT_TOKEN_SELECTION_UNSUPPORTED_CLAIM_ID } from "../core/proposal/types.js";
 import { TOOL_NAMES } from "./toolNames.js";
 
-export function interactionStatusUserAnswerUse(): UserAnswerUse {
+export function interactionStatusUserAnswerUse(hasWalletObservation = false, hasRecoveryGuidance = false): UserAnswerUse {
   return {
     canAnswer: [
       "stored_active_account_read_context",
       "wallet_connections_when_wallet_availability_is_available",
       "connection_qualified_default_asset_account",
       "pending_local_wallet_connection_interactions",
+      "local_wallet_service_recovery_progress",
+      ...(hasRecoveryGuidance ? ["wallet_recovery_guidance_for_user_confirmation_only_never_act_card_for_the_user"] : []),
       "pending_local_review_interactions",
       "wallet_operation_availability_separate_from_stored_transaction_facts"
     ],
@@ -17,6 +19,8 @@ export function interactionStatusUserAnswerUse(): UserAnswerUse {
       "implicit_default_unavailability_as_explicit_address_support_for_every_tool",
       "wallet_custody_or_authorization",
       "wallet_unavailability_as_chain_failure_or_lost_stored_result",
+      "last_service_observation_as_live_wallet_app_state",
+      "wallet_service_restart_as_remote_revocation_or_transaction_cancellation",
       "transaction_execution_result",
       "transaction_building",
       "signing_data_or_readiness",
@@ -24,7 +28,9 @@ export function interactionStatusUserAnswerUse(): UserAnswerUse {
       "profit_or_pnl"
     ],
     preconditionFields: ["walletAvailability", "assetReadAccount"],
-    answerFields: ["activeAccount", "connections", "assetReadAccount", "pendingWalletConnections", "pendingReviewSessions", "walletAvailability"],
+    answerFields: ["activeAccount", "connections", "assetReadAccount", "pendingWalletConnections", "pendingReviewSessions", "walletAvailability",
+      ...(hasRecoveryGuidance ? ["walletRecoveryGuidance"] : []),
+      ...(hasWalletObservation ? ["walletObservation"] : [])],
     diagnosticOnlyFields: [
       "pendingWalletConnections.truncated",
       "pendingReviewSessions.truncated"

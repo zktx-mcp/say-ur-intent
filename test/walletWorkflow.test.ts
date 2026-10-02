@@ -1,3 +1,4 @@
+import { FixtureWalletRuntime } from "./fixtures/walletRuntime.js";
 import { WalletWorkflow } from "../src/core/session/walletWorkflow.js";
 import Database from "better-sqlite3";
 import { join } from "node:path";
@@ -107,20 +108,23 @@ describe("wallet startup and review expiry", () => {
     const db = new Database(join(f.directory, "activity.sqlite"));
     if (stage === "record") db.exec("CREATE TRIGGER refuse_restore BEFORE UPDATE ON live_wallet_connections BEGIN SELECT RAISE(ABORT,'PRIVATE-STORAGE-DETAIL'); END");
     if (stage === "subscription") subscribe.mockImplementation(() => { throw new Error("PRIVATE-SUBSCRIPTION-DETAIL"); });
+    const runtime = new FixtureWalletRuntime({ ...f.transport, restore, onSessionChanged: subscribe });
     const next = new WalletWorkflow({ records, sessions: f.sessions,
-      ownerId: "next-owner", transport: { ...f.transport, restore, onSessionChanged: subscribe }, computation: f.computation,
+      ownerId: "next-owner", runtime, computation: f.computation,
       verifyReceipt: f.verifyReceipt, verifyNetwork: f.verifyNetwork, submitTransaction: f.submit,
-      assertCurrent: f.access.assertCurrent, runExternalEvent: f.run, logger: f.logger, now: f.now });
+      assertCurrent: f.access.assertCurrent, bindExternalEvent: (work) => f.access.bind(work), logger: f.logger, now: f.now });
     try {
       await f.run(() => next.start());
-      await expect(f.run(() => next.prepare("connect", {}))).resolves.toMatchObject({ status: "failed", error: expect.stringContaining("could not be restored") });
+      await expect(f.run(() => next.prepare("connect", { intent: "manage" }))).resolves.toEqual({ status: "ready" });
+      expect(f.run(() => next.walletAvailability())).toMatchObject(stage === "record"
+        ? { status: "initializing", stage: "state_sync" } : { status: "unavailable", reason: "restoration_failed" });
       await expect(f.run(() => next.start())).rejects.toThrow("already started");
       expect(await f.run(() => next.readReview("any-review"))).toBeUndefined();
       expect(f.connect).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
-      next.stop(); expect(f.transport.stop).toHaveBeenCalledOnce();
+      next.stop(); await runtime.close(); expect(f.transport.stop).toHaveBeenCalledOnce();
       expect(await f.run(() => f.activity.getActiveAccount())).toMatchObject({ address: connection.accounts[0] });
       expect(JSON.stringify(f.logger.error.mock.calls)).not.toContain("PRIVATE-");
-    } finally { next.stop(); db.exec("DROP TRIGGER IF EXISTS refuse_restore"); db.close(); }
+    } finally { next.stop(); await runtime.close(); db.exec("DROP TRIGGER IF EXISTS refuse_restore"); db.close(); }
   });
 
   it("projects material expiry independently of the card deadline and preserves explicit refresh", async () => {
@@ -373,14 +377,22 @@ it("disables the workflow if a wallet-change transaction cannot be committed and
   f.sign.mockImplementationOnce(async (input) => { const response = await f.accountKey.signTransaction(Buffer.from(input.transactionBytesBase64, "base64")); signed = { transactionBytes: response.bytes, signature: response.signature }; return pending.promise; });
   await f.act(ready.card, { action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: ready.session.reviewRevision });
   await vi.waitFor(() => expect(signed).toBeDefined());
+  const exit = f.holdWalletExit();
   const db = new Database(join(f.directory, "activity.sqlite"));
   try {
     db.exec("CREATE TRIGGER reject_wallet_change BEFORE UPDATE ON live_wallet_connections BEGIN SELECT RAISE(ABORT,'fixture write failure'); END");
     f.notify({ topic: "fixture-topic", accounts: [f.account], methods: ["sui_signTransaction"], chain: "sui:mainnet", expiresAt: connection.expiresAt }, true);
-    expect((await f.read(ready.card)).snapshot.data).toMatchObject({ walletAvailability: { status: "unavailable", reason: "wallet_state_unavailable" }, progress: { status: "unavailable" } });
+    // A failed business-state write is not a successful current observation.
+    await expect(f.read(ready.card)).rejects.toThrow("fixture write failure");
+    expect(f.run(() => f.workflow.walletAvailability())).toMatchObject({ status: "unavailable", reason: "wallet_state_unavailable" });
     expect(f.run(() => f.records.currentRequest(ready.session.id)?.requestStatus)).toBe("awaiting_signature");
-    pending.resolve(signed!); await new Promise((resolve) => setImmediate(resolve));
-    expect(f.submit).not.toHaveBeenCalled(); expect(f.transport.stop).toHaveBeenCalledOnce();
+    const request = f.run(() => f.records.currentRequest(ready.session.id))!;
+    expect(f.run(() => f.records.authority(request.attemptId))).toMatchObject({ can_submit: 1, sdk_pending: 1 });
+    db.exec("DROP TRIGGER reject_wallet_change");
+    expect((await f.read(ready.card)).snapshot.data).toMatchObject({ request: { requestStatus: "request_failed" } });
+    expect(f.run(() => f.records.authority(request.attemptId))).toMatchObject({ can_submit: 0, sdk_pending: 1 });
+    exit(); pending.resolve(signed!); await new Promise((resolve) => setImmediate(resolve));
+    expect(f.submit).not.toHaveBeenCalled(); expect(f.runtime.availability().status).toBe("unavailable");
   } finally { db.exec("DROP TRIGGER IF EXISTS reject_wallet_change"); db.close(); }
 });
 
@@ -416,9 +428,9 @@ it("recovers interrupted requests without replay, preserves completed facts, and
   const nextRecords = f.activity.createWalletWorkflowStore("replacement");
   const sign = vi.fn(), connect = vi.fn(), submit = vi.fn();
   const next = new WalletWorkflow({ records: nextRecords, sessions: f.sessions, ownerId: "replacement",
-    computation: f.computation, transport: { ...f.transport, sign, connect, restore: async () => [f.transport.session("fixture-topic")!] },
+    computation: f.computation, runtime: new FixtureWalletRuntime({ ...f.transport, sign, connect, restore: async () => [f.transport.session("fixture-topic")!] }),
     verifyReceipt: f.verifyReceipt, verifyNetwork: f.verifyNetwork, submitTransaction: submit,
-    assertCurrent: f.access.assertCurrent, runExternalEvent: f.run, logger: f.logger, now: f.now });
+    assertCurrent: f.access.assertCurrent, bindExternalEvent: (work) => f.access.bind(work), logger: f.logger, now: f.now });
   try {
     await f.run(() => next.start());
     expect(f.run(() => nextRecords.request(saved.attemptId))).toEqual(saved);
@@ -503,9 +515,9 @@ describe("disconnect admission and completion share the stored card operation", 
     await f.act(card, { action: "disconnect", connectionId: connection.connectionId }); f.workflow.stop();
     const nextRecords = f.activity.createWalletWorkflowStore("replacement"), disconnect = vi.fn();
     const next = new WalletWorkflow({ records: nextRecords, sessions: f.sessions,
-      ownerId: "replacement", transport: { ...f.transport, disconnect, restore: async () => [f.transport.session("fixture-topic")!] },
+      ownerId: "replacement", runtime: new FixtureWalletRuntime({ ...f.transport, disconnect, restore: async () => [f.transport.session("fixture-topic")!] }),
       computation: f.computation, verifyReceipt: f.verifyReceipt, verifyNetwork: f.verifyNetwork, submitTransaction: f.submit,
-      assertCurrent: f.access.assertCurrent, runExternalEvent: f.run, logger: f.logger, now: f.now });
+      assertCurrent: f.access.assertCurrent, bindExternalEvent: (work) => f.access.bind(work), logger: f.logger, now: f.now });
     try {
       await f.run(() => next.start());
       expect(f.run(() => nextRecords.connection(connection.connectionId))).toMatchObject({ ownerId: "replacement", sdkPending: false,
@@ -625,7 +637,7 @@ describe("current data decisions settle request deadlines without a View", () =>
 // The source is restored immediately, so subsequent failures cannot be blamed
 // on an injected source exception rather than the disabled wallet boundary.
 function failWalletEvents(f: Awaited<ReturnType<typeof walletWorkflowFixture>>) {
-  const source = vi.spyOn(f.transport, "session").mockImplementation(() => { throw new Error("PRIVATE-WALLET-STATE"); });
+  const source = vi.spyOn(f.transport, "inspectAll").mockImplementation(() => { throw new Error("PRIVATE-WALLET-STATE"); });
   try { f.notify(); } finally { source.mockRestore(); }
   expect(f.run(() => f.workflow.walletAvailability())).toMatchObject({ status: "unavailable", reason: "wallet_state_unavailable" });
 }
@@ -671,31 +683,34 @@ it("keeps snapshot readers pure while explicit current reads own request and rev
 it("settles a disabled wallet's disconnect without claiming that the remote connection closed", async () => {
   const f = await fixture(), { connection } = await f.approve(), card = await f.createConnection();
   const pending = deferred<void>(); vi.mocked(f.transport.disconnect).mockImplementationOnce(() => pending.promise);
+  const exit = f.holdWalletExit();
   await f.act(card, { action: "disconnect", connectionId: connection.connectionId }); failWalletEvents(f);
   const read = await f.read(card);
   expect(read.snapshot.data).toMatchObject({ progress: { status: "unavailable" }, observe: false, connection: { status: "connected", pendingAction: "disconnect" } });
   expect((await f.run(() => waitForWalletConnection(f.cards, card.snapshot.cardId))).waitOutcome).toBe("unavailable");
   expect(f.run(() => f.records.connection(connection.connectionId))?.sdkPending).toBe(true);
-  pending.resolve();
+  exit(); pending.resolve();
   await vi.waitFor(() => expect(f.run(() => f.records.connection(connection.connectionId))?.sdkPending).toBe(false));
   expect((await f.read(card)).snapshot).toMatchObject({ state: "closed", reason: "completed", data: { connection: { status: "failed" }, progress: { status: "idle" } } });
   expect(f.transport.disconnect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
 });
 
-it("does not release a pairing's pending guard before its approval promise settles", async () => {
+it("does not release a pairing's pending guard before the SDK child actually exits", async () => {
   const f = await fixture(), card = await f.createConnection();
   const opening = deferred<Awaited<ReturnType<typeof f.transport.connect>>>(), approval = deferred<Awaited<Awaited<ReturnType<typeof f.transport.connect>>["approval"]>>();
+  void approval.promise.catch(() => {}); // The SDK adapter also observes rejection immediately.
   f.connect.mockImplementationOnce(() => opening.promise);
   await f.act(card, { action: "connect" });
   const connectionId = f.run(() => f.cardRecords.get(card.snapshot.cardId))!.operationId!;
+  const exit = f.holdWalletExit();
   failWalletEvents(f);
   opening.resolve({ uri: "wc:fixture", expiresAt: new Date(f.now().getTime() + 300_000).toISOString(), approval: approval.promise });
   await new Promise((resolve) => setImmediate(resolve));
   expect(f.run(() => f.records.connection(connectionId))?.sdkPending).toBe(true);
   expect((await f.read(card)).walletDisplay).toBeUndefined();
-  approval.reject(new Error("Approval closed"));
+  exit(); approval.reject(new Error("Approval closed"));
   await vi.waitFor(() => expect(f.run(() => f.records.connection(connectionId))?.sdkPending).toBe(false));
-  expect((await f.read(card)).snapshot.data).toMatchObject({ connection: { status: "failed" }, progress: { status: "idle" } });
+  expect((await f.read(card)).snapshot.data).toMatchObject({ connection: { status: "stopped" }, progress: { status: "idle" } });
   expect(f.connect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
 });
 
@@ -709,7 +724,7 @@ it("refuses submission if wallet state becomes unavailable during mainnet verifi
   await vi.waitFor(() => expect(f.run(() => f.records.authority(request.attemptId))?.sdk_pending).toBe(0));
   expect(f.run(() => f.records.request(request.attemptId))?.requestStatus).toBe("request_failed");
   expect(f.run(() => f.records.request(request.attemptId))?.reason)
-    .toBe("Wallet operations became unavailable before submission. The returned signature will not be submitted.");
+    .toBe("The wallet service stopped before submission. Nothing was submitted.");
   expect(f.submit).not.toHaveBeenCalled(); expect(f.chainRead).not.toHaveBeenCalled();
 });
 
@@ -726,7 +741,7 @@ it.each(["owner", "disconnected"] as const)("refuses account selection when only
     card = await f.read(card);
     const before = f.run(() => f.cardRecords.get(card.snapshot.cardId));
     const refused = await f.act(card, { action: "use_account", connectionId: connection.connectionId, account: f.account });
-    expect(refused.error).toEqual({ code: "card_conflict", message: "The selected wallet account is no longer available." });
+    expect(refused.error).toEqual({ code: "card_conflict", message: "The selected Sui wallet connection is unavailable." });
     expect(f.run(() => f.cardRecords.get(card.snapshot.cardId))).toEqual(before);
     expect(await f.run(() => f.activity.getActiveAccount())).toEqual(active);
     expect(f.transport.disconnect).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
@@ -745,7 +760,7 @@ it("rejects expired connection use, preparation and signing while allowing expli
   expect((await f.read(ready.card)).snapshot.data).toMatchObject({ review: { status: "ready_for_wallet_review" } });
   expect(f.run(() => f.records.connection(connection.connectionId))?.connection.status).toBe("connected");
   expect((await f.act(card, { action: "use_account", connectionId: connection.connectionId, account: f.account })).error)
-    .toEqual({ code: "card_conflict", message: "The selected wallet account is no longer available." });
+    .toEqual({ code: "card_conflict", message: "The selected Sui wallet connection is unavailable." });
   for (const action of ["prepare_review", "request_signature"]) {
     expect((await f.act(await f.read(ready.card), { action, connectionId: connection.connectionId,
       account: f.account, reviewRevision: ready.session.reviewRevision })).error)
@@ -805,18 +820,19 @@ it("retains known request identity after a chain-result write fails and recovers
   } finally { db.exec("DROP TRIGGER IF EXISTS reject_result"); db.close(); }
 });
 
-it("keeps a failed callback-settlement write protected until owner recovery, without replay", async () => {
+it("keeps a failed callback-settlement write protected until its actual completion is saved, without replay", async () => {
   const f = await fixture(), { connection } = await f.approve(), ready = await f.prepare(connection.connectionId);
   const db = new Database(join(f.directory, "activity.sqlite"));
   try {
     db.exec("CREATE TRIGGER reject_settle BEFORE UPDATE OF submit_pending ON live_request_authority WHEN OLD.submit_pending=1 AND NEW.submit_pending=0 BEGIN SELECT RAISE(ABORT,'PRIVATE-SETTLE'); END");
     await f.act(ready.card, { action: "request_signature", connectionId: connection.connectionId, account: f.account, reviewRevision: 1 });
-    await vi.waitFor(() => expect(f.logger.error).toHaveBeenCalledWith("Wallet operation failed", { stage: "signature_request" }));
+    await vi.waitFor(() => expect(f.logger.error).toHaveBeenCalledWith("Wallet operation failed", { stage: "callback_record" }));
     const request = f.run(() => f.records.currentRequest(ready.session.id))!;
+    await expect(f.run(() => f.localData.resetLocalData())).rejects.toMatchObject({ details: { reason: "wallet_request_unsettled" } });
     db.exec("DROP TRIGGER reject_settle");
     expect((await f.run(() => f.workflow.readReview(ready.session.id, true)))?.request?.requestStatus).toBe("completed");
-    expect(f.run(() => f.records.authority(request.attemptId)?.submit_pending)).toBe(1);
-    await expect(f.run(() => f.localData.resetLocalData())).rejects.toMatchObject({ details: { reason: "wallet_request_unsettled" } });
+    expect(f.run(() => f.records.authority(request.attemptId))).toMatchObject({ submit_pending: 0, can_submit: 0 });
+    expect(() => f.run(() => f.records.assertDataReplacementAllowed(f.now()))).not.toThrow();
     f.workflow.stop(); const next = f.activity.createWalletWorkflowStore("replacement", f.now);
     f.run(() => next.recover(f.now()));
     expect(f.run(() => next.request(request.attemptId)?.requestStatus)).toBe("completed");
@@ -908,7 +924,9 @@ it("admits only one pairing across different cards with current revisions", asyn
   const loser = [first, second].find((card) => card.snapshot.cardId === refused.snapshot.cardId)!;
   const winner = [first, second].find((card) => card !== loser)!;
   expect(refused.error?.code).toBe("card_conflict");
-  expect(refused.snapshot).toMatchObject({ state: "ready", revision: loser.snapshot.revision });
+  expect(refused.snapshot.state).toBe("ready");
+  // Admission publishes the changed owner-wide choices before a QR response.
+  expect(refused.snapshot.revision).toBeGreaterThan(loser.snapshot.revision);
   expect(refused.snapshot.data).not.toHaveProperty("automaticAction");
   expect((refused.snapshot.data as { allowedActions: string[] }).allowedActions).not.toContain("connect");
   expect(f.run(() => f.cardRecords.get(refused.snapshot.cardId))?.acceptedInput).toBeUndefined();
@@ -969,6 +987,8 @@ it("preserves account selection and disconnection for multiple stored connection
     methods: ["sui_signTransaction"], chain: "sui:mainnet" as const, expiresAt: new Date(f.now().getTime() + 60_000).toISOString() }));
   const records = sessions.map((session) => f.run(() => f.records.restoreConnection(session, f.now())));
   vi.spyOn(f.transport, "session").mockImplementation((topic) => sessions.find((session) => session.topic === topic));
+  vi.spyOn(f.transport, "inspectAll").mockImplementation(() => sessions.map((session) => ({ topic: session.topic, status: "present", session })));
+  f.observe();
   const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
   expect(card.snapshot.data).toMatchObject({ connections: expect.arrayContaining(records.map((record) => expect.objectContaining({ connectionId: record.connection.connectionId }))) });
   expect((await f.act(card, { action: "use_account", connectionId: records[1]!.connection.connectionId, account: sessions[1]!.accounts[0] })).error).toBeUndefined();

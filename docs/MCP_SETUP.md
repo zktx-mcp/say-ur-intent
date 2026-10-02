@@ -8,6 +8,15 @@ The README keeps only the short entry path; client-specific setup, restart behav
 
 Say Ur Intent is tested from a local checkout in this repository state.
 
+The card and wallet-service recovery behavior described here includes unpublished checkout changes.
+Installing `@zktx.io/say-ur-intent@0.4.4` does not select this checkout. Use the
+local build configuration below to run these changes, or the documentation
+bundled with your installed package to follow its supported flow. A development
+build can retain the published version number; that number alone does not
+identify the running build. Changing client settings or rebuilding local files
+also does not replace an already running shared server. Restart the clients and
+check the server's executable path when switching builds.
+
 ## Key terms
 
 - Sui: the mainnet blockchain whose DeFi state this project reads.
@@ -424,24 +433,30 @@ The package includes Say Ur Intent's WalletConnect project identifier. Wallet
 connection requires no project ID setting and offers no project ID override.
 The identifier is public, not a wallet credential. Installations share that
 project's Relay service limits; service availability is not guaranteed by a
-local configuration value. Only the backend owner initializes the SDK, and
+local configuration value. Only the backend owner starts its isolated SDK child, and
 clients use the same product identifier when identifying that shared backend.
 Do not paste pairing URIs or UI permission values into chat.
 
-If the card reports an initialization or connection-restoration failure, check
-the backend's safe startup diagnostic and restart after resolving the problem.
-These are backend service failures, not requests for a user project ID setting.
-Opening another card does not retry SDK initialization. Ordinary reads remain
-available while wallet operations are
-unavailable. Saved review and execution results remain readable. An unavailable
-wait means progress cannot currently be observed; it is not a transaction
-failure or a completed operation. Transactions already submitted can still be
-checked by their recorded digest without reconnecting the wallet.
+If the wallet service stops responding, ask in chat to open wallet connection
+controls. Open **Wallet service help**, choose **Restart wallet service**, review
+the affected connections and approval requests, and choose **Confirm restart**.
+Keep the apps open during this recovery. Merely opening a card does not restart
+the service. Normal initialization is shown without a failure warning.
 
-The shared backend uses internal API version 3 for the stored-state and wallet
-availability contract. An older running owner is refused rather than silently
-reused. Stop the clients sharing that owner and restart with the same updated
-installation. This change does not require deleting or migrating schema 9 data.
+Service recovery interrupts unsubmitted approval requests. Update the review
+and make a new Request choice afterward. It does not cancel a transaction on Sui
+or remove a connection from the wallet app. An interrupted disconnect remains
+unconfirmed; check retained connections in the wallet app. If the replacement
+service remains unresponsive, ask for new wallet connection controls to restart
+that run. Relay or wallet availability cannot be guaranteed by restarting it.
+Ordinary reads and saved results remain available, and already submitted
+transactions can still be checked by their recorded digest.
+
+The shared backend uses internal API version 4. All clients sharing a data
+folder must use a compatible installation. When changing installations, stop the
+old clients and restart them with the same updated installation; an incompatible
+owner is refused. Wallet-service recovery within a running compatible backend
+uses the card instead. Product schema 9 and private SDK format 1 are retained.
 
 Review requires an explicit card action and individual wallet approval. The
 backend uses Sui sign-only requests, verifies returned bytes/digest/signer and
@@ -532,16 +547,19 @@ list in your wallet app. Removing local data cannot cancel a transaction on Sui.
 `SAY_UR_INTENT_REVIEW_PORT` selects the authenticated shared backend port
 (1–65535, default 8765). Clients for the same data folder must use the same port
 and configuration. A second runtime owner for that folder is refused even on a
-different port. No process forces another owner to stop. The SDK's lifetime ends
-with its owner process; the port is not a browser-wallet authorization origin.
+different port. No client forces a peer backend to stop. The parent can end only
+its own SDK child, whose separate storage lease prevents overlapping SDK writers.
+The port is not a browser-wallet authorization origin.
 
 ## Packed Package Testing
 
 `npm run release:check` checks synchronized release metadata, typechecks, tests,
 builds, and verifies the actual npm tarball and bundled licenses. It installs the
 tarball in a temporary directory and runs that installed binary to check MCP
-initialization, tools, document/card resources, and the local Settings page and
-assets. Runtime startup requires reachable Sui mainnet endpoints; a startup
+initialization, tools, document/card resources, the local Settings page and
+assets, and an explicit wallet-service restart in that isolated installation.
+It confirms that the parent remains running, the SDK run changes, and the SDK
+storage lease is released after shutdown. Runtime startup requires reachable Sui mainnet endpoints; a startup
 failure leaves dependent checks unverified. The check uses an isolated data
 directory and port, ends the child process before cleanup, and does not use your
 stored wallet sessions, pair a wallet, sign, submit, reset data, or publish to npm.
@@ -644,6 +662,17 @@ It is not part of CI or `release:check`.
 - For Claude Desktop, check the MCP logs under `~/Library/Logs/Claude` or `%APPDATA%\Claude\logs`.
 
 ### Runtime exits on startup
+
+A bootstrap failure exits with code 1 and a `fatal runtime error` diagnostic on
+stderr, including a safe stage and reason. An MCP initialization response alone
+does not mean backend startup succeeded. A foreign or incompatible port owner,
+private data ownership/permission failure, and mainnet endpoint failure are
+reported separately. Use the same installed runtime and configuration in all
+clients; the runtime does not replace an incompatible listener automatically.
+Normal client input closure exits with code 0 after cleanup. SIGINT/SIGTERM keep
+codes 130/143. Cleanup failure is reported and makes a normal closure fail; it
+cannot erase an earlier fatal or signal exit. SDK service unavailability is a
+separate condition and does not by itself shut down the parent read service.
 
 - Do not set `SUI_RPC_URL`; this runtime intentionally uses Sui gRPC and rejects Sui JSON-RPC config.
 - If a stored custom endpoint fails, temporarily start with `SUI_GRPC_URL`, open the local settings page, restore the default Sui gRPC URL or save a new endpoint, remove the override, and restart.

@@ -6,6 +6,7 @@ import { parseSuiAddress } from "../core/suiAddress.js";
 import { SUI_MAINNET_WALLET_CHAIN, SUI_SIGN_TRANSACTION_METHOD,
   WalletUserRejectedError, type WalletSession, type WalletTransport } from "../core/session/walletConnection.js";
 import { openWalletConnectStorage } from "./walletConnectStorage.js";
+import type { WalletSessionInspection } from "../core/session/walletRuntime.js";
 
 const signedResponse = z.object({ transactionBytes: z.string().min(1), signature: z.string().min(1) }).strict();
 function transportError(error: unknown): Error {
@@ -30,13 +31,14 @@ function sessionValue(session: SessionTypes.Struct): WalletSession {
 export async function createWalletConnectTransport(options: {
   projectId: string; dataDirectory: string; metadata: { name: string; description: string; url: string };
   onSdkStart?: () => void;
+  initialize?: typeof SignClient.init;
 }): Promise<WalletTransport> {
   if (!/^[0-9a-f]{32}$/i.test(options.projectId)) throw new Error("WalletConnect project ID format is invalid.");
   const owner = openWalletConnectStorage(options.dataDirectory);
   // SDK log bodies can contain pairing credentials and serialized requests.
   // Product failure stages are recorded by the caller without these values.
   options.onSdkStart?.();
-  const client = await SignClient.init({ projectId: options.projectId, metadata: { ...options.metadata, icons: [] },
+  const client = await (options.initialize ?? SignClient.init.bind(SignClient))({ projectId: options.projectId, metadata: { ...options.metadata, icons: [] },
     storage: owner.storage, logger: "silent", telemetryEnabled: false });
   let stopped = false;
   const listeners = new Set<(topic: string, selectionChanged?: boolean) => void>();
@@ -50,9 +52,20 @@ export async function createWalletConnectTransport(options: {
   };
   client.on("session_update", changed); client.on("session_delete", changed);
   client.on("session_expire", changed); client.on("session_event", selectionChanged);
+  const inspectValue = (session: SessionTypes.Struct): WalletSessionInspection => {
+    try { return { topic: session.topic, status: "present", session: sessionValue(session) }; }
+    catch { return { topic: session.topic, status: "unusable" }; }
+  };
+  const inspect = (topic: string): WalletSessionInspection => {
+    if (stopped) throw new Error("WalletConnect owner stopped.");
+    // A store failure is not evidence that the session disappeared.
+    const session = client.session.getAll().find((item) => item.topic === topic);
+    return session ? inspectValue(session) : { topic, status: "absent" };
+  };
   const current = (topic: string) => {
     if (stopped) return undefined;
-    try { return sessionValue(client.session.get(topic)); } catch { return undefined; }
+    const observed = inspect(topic);
+    return observed.status === "present" ? observed.session : undefined;
   };
   const requireActive = () => { if (stopped) throw new Error("WalletConnect owner stopped."); };
   return {
@@ -91,6 +104,8 @@ export async function createWalletConnectTransport(options: {
         request: { method: SUI_SIGN_TRANSACTION_METHOD, params: { transaction: input.transactionBytesBase64, address: input.account } } }));
     },
     session: current,
+    inspect,
+    inspectAll: () => { requireActive(); return client.session.getAll().map(inspectValue); },
     onSessionChanged(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     stop() {
       stopped = true; listeners.clear();

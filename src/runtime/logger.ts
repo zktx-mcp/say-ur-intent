@@ -4,6 +4,19 @@ export type Logger = {
   error(message: string, meta?: Record<string, unknown>): void;
 };
 
+export function flushStderr(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const failed = (error: Error) => { process.stderr.off("error", failed); reject(error); };
+    process.stderr.once("error", failed);
+    process.stderr.write("", (error) => {
+      // A failed stream write also emits error; keep its handler through that
+      // event instead of allowing EPIPE to replace the intended exit code.
+      if (error) { reject(error); return; }
+      process.stderr.off("error", failed); resolve();
+    });
+  });
+}
+
 export function createStderrLogger(scope: string): Logger {
   const write = (level: "info" | "warn" | "error", message: string, meta?: Record<string, unknown>) => {
     const record = {

@@ -2,10 +2,9 @@ import { createRuntimeReviewDependencies } from "./reviewDependencies.js";
 import { acquireDataDirectoryOwner } from "./shared/ownerLease.js";
 import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { createWalletConnectTransport } from "./walletConnectTransport.js";
+import { WalletSdkProcess } from "./walletSdkProcess.js";
 import { WALLETCONNECT_PROJECT_ID } from "./walletConnectConfig.js";
 import { WalletWorkflow } from "../core/session/walletWorkflow.js";
-import type { WalletTransport } from "../core/session/walletConnection.js";
 import { randomUUID } from "node:crypto";
 import { SqliteActivityStore } from "../core/activity/sqliteActivityStore.js";
 import { validateSupportedAdapterLifecycle } from "../adapters/adapterLifecycleValidators.js";
@@ -35,7 +34,7 @@ import type { SharedApplication } from "./shared/server.js";
 export async function createRuntimeApplication(bootConfig: BootConfig, logger: Logger, ownerId: string = randomUUID()): Promise<SharedApplication> {
   const access = new RuntimeDataAccess();
   const ownership = acquireDataDirectoryOwner(bootConfig.activityDatabasePath);
-  let sdkStarted = false;
+  let walletRuntime: WalletSdkProcess | undefined;
   let activityStore: SqliteActivityStore | undefined;
   let cards: CardStore | undefined;
   let workflow: WalletWorkflow | undefined;
@@ -77,7 +76,7 @@ export async function createRuntimeApplication(bootConfig: BootConfig, logger: L
     const workflowRecords = store.createWalletWorkflowStore(ownerId);
     const localData = store.createLocalDataService({
       advanceRequestDeadlines: (now) => workflowRecords.advanceRequestDeadlines(now),
-      onDataReplaced: () => { access.dataReplaced(); chart?.clearCache(); },
+      onDataReplaced: () => { access.dataReplaced(); workflow?.dataReplaced(); chart?.clearCache(); },
       suiGrpcUrl: DEFAULT_SUI_GRPC_URL,
       suiGraphqlUrl: DEFAULT_SUI_GRAPHQL_URL,
       verifySuiGrpcUrl: async (url) => {
@@ -136,20 +135,19 @@ export async function createRuntimeApplication(bootConfig: BootConfig, logger: L
       activityStore: store, localSettings, localData,
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION, network: SERVER_NETWORK } });
     const cardRecords = store.createCardRecordStore();
-    let transport: WalletTransport | undefined;
+    let metadata: { name: string; description: string; homepage: string } | undefined;
     try {
-      const metadata = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
+      metadata = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
         name: string; description: string; homepage: string;
       };
-      transport = await createWalletConnectTransport({ projectId: WALLETCONNECT_PROJECT_ID,
-        dataDirectory: dirname(bootConfig.activityDatabasePath), onSdkStart: () => { sdkStarted = true; },
-        metadata: { name: metadata.name, description: metadata.description, url: metadata.homepage } });
     } catch {
       logger.error("WalletConnect initialization unavailable", { stage: "initialization_failed" });
     }
+    walletRuntime = new WalletSdkProcess({ projectId: WALLETCONNECT_PROJECT_ID, dataDirectory: dirname(bootConfig.activityDatabasePath),
+      ...(metadata ? { metadata: { name: metadata.name, description: metadata.description, url: metadata.homepage } } : {}) });
     workflow = new WalletWorkflow({ records: workflowRecords, sessions, ownerId,
-      transport, computation: reviewComputationDeps, verifyReceipt: chainReceiptVerifier, readReceipt: publicChainReceiptReader, signatureClient: suiClient,
-      assertCurrent: access.assertCurrent, runExternalEvent: (work) => access.run(work), logger,
+      runtime: walletRuntime, computation: reviewComputationDeps, verifyReceipt: chainReceiptVerifier, readReceipt: publicChainReceiptReader, signatureClient: suiClient,
+      assertCurrent: access.assertCurrent, bindExternalEvent: (work) => access.bind(work), logger,
       verifyNetwork: async () => {
         const actual = await suiClient.core.getChainIdentifier();
         if (actual.chainIdentifier !== config.expectedChainIdentifier) throw new Error("Sui mainnet verification failed.");
@@ -186,13 +184,12 @@ export async function createRuntimeApplication(bootConfig: BootConfig, logger: L
       handleHttp: (request, response) => access.run(() => httpHandler(request, response)),
       async close() {
         workflow?.stop(); access.close(); cards?.stop(); chart?.clearCache();
-        try { await mcp.close(); } finally { store.close(); if (!sdkStarted) ownership.close(); }
+        try { await walletRuntime!.close(); } finally { try { await mcp.close(); } finally { store.close(); ownership.close(); } }
       }
     };
   } catch (error) {
     workflow?.stop(); access.close(); cards?.stop();
-    activityStore?.close();
-    if (!sdkStarted) ownership.close();
+    try { await walletRuntime?.close(); } finally { activityStore?.close(); ownership.close(); }
     throw error;
   }
 }

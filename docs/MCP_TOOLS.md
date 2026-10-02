@@ -954,8 +954,9 @@ the original input does not remove an admitted request that is still waiting.
 window as `awaiting_chain_result`, without waiting for the submission response.
 A stored chain result can therefore precede that response.
 
-An unadmitted ready Review may include `nextStateReadAfterMs`, a server-computed
-interval until its verified review material must be checked again. A positive
+An unadmitted ready internal Review may include `nextStateReadAfterMs`, a
+server-computed interval for checking material expiry, wallet-service startup,
+or earlier request work for the same account. A positive
 value schedules a same-card state read; an absent or zero value schedules no
 additional wake-up. It is separate from `actionRemainingMs` (card authority),
 the signing wait and the chain observation window. Only the backend changes
@@ -973,12 +974,12 @@ Read the same state again; do not resend a financial action. This conflict is
 neither a completed result nor a wait timeout. A command already committed
 before its response fails remains recorded and is recovered by reading it.
 
-Unavailable wallet setup distinguishes missing configuration, invalid project
-ID format, and backend initialization failure. A failed Connect card preserves
-its safe reason on subsequent reads. Connection-restoration or event-subscription
-failure disables wallet operations and returns a safe availability reason. The
-connection card provides restart guidance. Neither failure starts a pairing or signature request, and ordinary evidence reads
-remain available. SDK error bodies and configuration values are not returned.
+Wallet startup and restoration are asynchronous dependencies of the parent
+service. Connect/manage cards remain available during initialization or failure
+so the user can inspect state and request service recovery. Ordinary evidence
+and saved-result reads do not await the SDK. The package supplies its project
+identifier; these failures do not ask the user for a project ID. SDK error bodies
+and private configuration values are not returned.
 
 Review status is preparation state (`proposed`, `awaiting_wallet`,
 `wallet_connected`, `ready_for_wallet_review`, `blocked`, `refresh_required`,
@@ -1024,21 +1025,104 @@ travel in private metadata. Bytes/signatures never reach the card or model.
 
 Connection observation uses 5 seconds and request observation 3 seconds.
 Session responses and workflow card data expose `walletAvailability` separately
-from stored review, request and chain facts. It is either `{status: "available"}`
-or `{status: "unavailable", reason, message}`. Reasons are
-`initialization_failed`, `restoration_failed`, and `wallet_state_unavailable`.
-Initialization failure includes a missing backend wallet workflow or transport;
-the product supplies its WalletConnect identifier without a user setting.
-Availability describes the backend dependency, not account ownership, wallet
-approval or signing readiness.
+from stored review, request and chain facts:
+
+- `available`: the SDK and required database publication completed;
+- `initializing`: `process_start`, `sdk_start`, `session_restore` or `state_sync`,
+  with a neutral message; a failed state write remains in `state_sync` for recovery;
+- `recovering`: the current SDK run is being stopped after explicit recovery;
+- `unavailable`: a safe `reason` and `message`.
+
+The existing unavailable reasons are `initialization_failed`,
+`restoration_failed`, and `wallet_state_unavailable`. Every configured service
+has a `walletRunId`; an absent backend workflow has no run ID. Initialization or
+recovery does not mean that a wallet rejected a connection or transaction.
+Availability is a dependency fact, not account ownership or signing readiness.
+`walletObservation`, when present, carries `runId`, `sequence`, and `observedAt`
+for the last confirmed local SDK observation. Ordinary reads do not perform a
+fresh SDK check or prove that the wallet app is online. Implicit asset reads
+require an available service and a usable observation in that same run.
+
+Wallet-dependent app inputs (`connect`, `disconnect`, `use_account`,
+`prepare_review`, `request_signature`) carry the displayed `walletRunId`. A stale
+run cannot be transferred to a replacement SDK. Backend commands verify the
+session, account, chain, method and stored authority at their decision boundary.
+`acceptedWalletRunId` identifies a card's stored wallet input, when present; it
+is not new permission.
+
+Connect workflow data includes optional `connectionAction: "connect" | "disconnect"`
+only when that action was admitted on the card. The connection's current status
+is separate from the card's original operation. In particular, failed disconnect
+means remote removal was not confirmed, including after local service recovery.
+
+Connect tool responses and saved resources may include
+`data.walletRecoveryGuidance: { message, openControls: { tool:
+"session.create_wallet_connection", intent: "manage" } }`. Interaction status
+uses the same optional field at its top level. It describes conditional recovery
+for waiting/initializing wallet work or a route after confirmed unavailability;
+current stopping does not invite another restart. It grants no action permission
+and does not diagnose a hung service. The model must not call `ui.act_card` for
+the user. Existing per-review status follow-up remains unchanged.
+
+Views additionally know whether their own confirmation read or command response
+is pending. They show neutral communication guidance without synthesizing DB
+state, unlocking input, starting timers, or resending wallet commands. Uncertain
+signature delivery retains the exact-request check instead of new approval.
+
+Stored request reads use the exact management/admitted attempt or the ID-only
+session's current attempt. Unrelated callback cleanup, request deadlines and
+connection expiry do not block recorded results. Current wallet eligibility and
+new chain observation retain their required writes. Target session/card expiry
+errors still fail the read without deleting the stored execution result.
+
+The additional app-only input is
+`{ action: "restart_wallet_service", walletRunId }`. It is allowed only on a
+live, unconsumed Connect card created with `intent: "manage"`, after scoped
+permission, revision, owner and run checks. `recoveryImpact` lists the current
+connection and unsubmitted attempt IDs affected by confirmation. Ordinary tools
+can open or read this card but cannot execute the restart. The parent commits
+revocation of unsubmitted authority before terminating its own SDK child.
+Already dispatched transactions keep their exact digest and observation.
+
+The card's `runtimeRecovery` identifies `priorRunId`, admission/update times,
+and either a `stopping`/`starting` phase or an `available`, `failed`, `superseded`
+or `server_restarted` outcome. `nextRunId` exists only after a replacement has
+been reserved. Running recovery appears in `pendingWalletConnections` as
+`wallet_recovery_pending`, without a fabricated connection ID. It remains
+`progress: waiting` and observable after input expiry. Terminal recovery is
+`idle` and no longer pending. `waitOutcome: status_reached` describes observation
+ending, not success. Parent restart ends unfinished recovery; it does not replay
+it. A later recovery on another card cannot reopen a completed result.
+
+If an observed recovery failure cannot be saved, the affected current-state
+read reports a storage error instead of confirming an indefinitely waiting
+operation. Checking that card again retries the database write, not the SDK
+operation. Once saved, the failure is terminal even if the user later starts
+another recovery. A failed attempt is not relabelled as superseded by a newer
+one; superseded describes replacement of a still-running startup. Existing
+transaction results and already dispatched chain observation remain independent
+of recovery-result persistence.
+
+Recovery is not new pairing approval, remote wallet revocation or chain
+cancellation. Identical accepted restart input reads the same result, and a lost
+reply never retries it. A new management card and explicit confirmation may
+restart a replacement that remains unresponsive. A live Connect or internal Review view may use the existing five-second
+`nextStateReadAfterMs` hint to refresh service availability without creating a
+business operation. `review.accountRequestPending: true` means an earlier request
+for the preparation account still has unfinished work. Preparation and signing
+remain unavailable; the existing request-observation interval checks when that
+work finishes. Service readiness alone cannot clear that guard or reset the
+Review input deadline.
 
 Target-specific `progress.status` is `idle`, `waiting`, or `unavailable`. The last
 includes `reason: "wallet_unavailable"` and a safe message. A wait returns
 `unavailable` when a nonterminal wallet operation cannot be observed; it retains
 the saved facts. Completed requests return `status_reached` immediately, even
 when the wallet dependency is unavailable. Already submitted requests can still
-be observed by their exact digest independently of WalletConnect. These runtime
-fields do not change request states or activity counts.
+be observed by their exact digest independently of WalletConnect. Availability fields alone do not change request states or activity counts.
+Explicit recovery or actual service loss separately commits the required
+request transitions: unsubmitted requests stop for a user restart or fail for
+service loss, while verified chain outcomes remain unchanged.
 
 Wallet-dependent commands rejected for dependency failure use the error kind
 `wallet_unavailable`, with a safe reason and message. Invalid input and domain

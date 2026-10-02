@@ -67,7 +67,7 @@ async function tryStart<T extends StartedReviewServerLike>(
  * - Port free → bind and own the single review origin.
  * - Port held by a separate healthy instance of our review server → defer (run no
  *   local server; the peer serves the shared database for every client) and watch for
- *   the owner to exit, then take the origin over. No process is ever signalled.
+ *   the owner to exit, then take the origin over. No peer process is signalled.
  * - Port held by anything else (foreign, no identity answer, or our own pid) → clear
  *   error; the origin is never silently reassigned.
  */
@@ -84,10 +84,10 @@ export async function startOrDeferReviewServer<T extends StartedReviewServerLike
 
   const holder = await deps.probeIdentity(port);
   if (!holder || holder.service !== deps.serviceName || holder.pid === deps.currentPid) {
-    throw new Error(
+    throw Object.assign(new Error(
       `Review server port ${port} is already in use by a process that is not a separate ${deps.serviceName} review server. ` +
         `Use the same current runtime and data directory for every client, or choose a different SAY_UR_INTENT_REVIEW_PORT. The listener is not replaced automatically.`
-    );
+    ), { code: "REVIEW_PORT_CONFLICT" });
   }
 
   deps.logger.info("review port owned by a healthy peer; deferring and watching for takeover", {

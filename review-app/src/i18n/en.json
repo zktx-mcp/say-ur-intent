@@ -65,7 +65,7 @@
     "library": "TradingView Lightweight Charts"
   },
   "common": {
-    "walletStatusRecovery": "Restart the apps using Say Ur Intent to check the wallet connection again.",
+    "walletStatusRecovery": "Ask in chat to open wallet connection controls, then choose Restart wallet service.",
     "mainnet": "Sui mainnet",
     "retrievedAt": "Data retrieved"
   }

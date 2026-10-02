@@ -1,28 +1,33 @@
 import { z } from "zod";
 import { suiAddressStringSchema } from "../suiAddress.js";
+import type { WalletSessionInspection } from "./walletRuntime.js";
 
 export const SUI_MAINNET_WALLET_CHAIN = "sui:mainnet" as const;
 export const SUI_SIGN_TRANSACTION_METHOD = "sui_signTransaction" as const;
 export const WALLET_CONNECTION_POLL_SECONDS = 5;
+export const walletRunIdSchema = z.string().uuid();
+export const walletStartStageSchema = z.enum(["process_start", "sdk_start", "session_restore", "state_sync"]);
 export const walletUnavailableReasonSchema = z.enum([
   "initialization_failed", "restoration_failed", "wallet_state_unavailable"
 ]);
 export type WalletUnavailableReason = z.infer<typeof walletUnavailableReasonSchema>;
 export const walletAvailabilitySchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("available") }).strict(),
-  z.object({ status: z.literal("unavailable"), reason: walletUnavailableReasonSchema, message: z.string() }).strict()
+  z.object({ status: z.literal("available"), walletRunId: walletRunIdSchema }).strict(),
+  z.object({ status: z.literal("initializing"), walletRunId: walletRunIdSchema, stage: walletStartStageSchema, message: z.string() }).strict(),
+  z.object({ status: z.literal("recovering"), walletRunId: walletRunIdSchema, message: z.string() }).strict(),
+  z.object({ status: z.literal("unavailable"), walletRunId: walletRunIdSchema.optional(), reason: walletUnavailableReasonSchema, message: z.string() }).strict()
 ]);
 export type WalletAvailability = z.infer<typeof walletAvailabilitySchema>;
-export function walletUnavailable(reason: WalletUnavailableReason): Extract<WalletAvailability, { status: "unavailable" }> {
+export function walletUnavailable(reason: WalletUnavailableReason, walletRunId?: string): Extract<WalletAvailability, { status: "unavailable" }> {
   const message = reason === "restoration_failed"
     ? "Wallet connections could not be restored."
     : reason === "wallet_state_unavailable"
       ? "The wallet connection status could not be checked. Saved transaction results remain available."
       : "The wallet connection service could not start.";
-  return { status: "unavailable", reason, message };
+  return { status: "unavailable", reason, message, ...(walletRunId === undefined ? {} : { walletRunId }) };
 }
 export class WalletUnavailableError extends Error {
-  constructor(readonly reason: WalletUnavailableReason) { super(walletUnavailable(reason).message); }
+  constructor(readonly reason: WalletUnavailableReason, message = walletUnavailable(reason).message) { super(message); }
 }
 export const workflowProgressSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("idle") }).strict(),
@@ -80,7 +85,7 @@ export type WalletSession = {
   methods: string[];
   chain: typeof SUI_MAINNET_WALLET_CHAIN;
   expiresAt: string;
-  walletName?: string;
+  walletName?: string | undefined;
 };
 
 export interface WalletTransport {
@@ -92,5 +97,7 @@ export interface WalletTransport {
   }>;
   onSessionChanged(listener: (topic: string, selectionChanged?: boolean) => void): () => void;
   session(topic: string): WalletSession | undefined;
+  inspect(topic: string): WalletSessionInspection;
+  inspectAll(): WalletSessionInspection[];
   stop(): void;
 }

@@ -14,6 +14,11 @@ export class RuntimeDataAccess {
     return this.context.run({ generation: this.generation }, work);
   }
   ready(): void { this.initializing = false; }
+  bind<T>(work: (value: T) => void): (value: T) => void {
+    this.assertCurrent();
+    const generation = this.generation;
+    return (value) => this.context.run({ generation }, () => { this.assertCurrent(); work(value); });
+  }
   assertCurrent = (): void => {
     const context = this.context.getStore();
     if (this.closed || (context === undefined ? !this.initializing : context.generation !== this.generation)) {

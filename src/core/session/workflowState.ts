@@ -7,8 +7,9 @@ import { isInitialChainObservation, type TransactionRequest } from "./transactio
 import type { RequestAuthority } from "./sqliteWalletWorkflowStore.js";
 import type { ReviewEvaluationCandidate } from "./reviewValidity.js";
 import type { EventLogRecord } from "../eventlog/sink.js";
+import type { WalletRecovery, WalletObservation, WalletRecoveryImpact } from "./walletRuntime.js";
 
-export const workflowActions = ["connect", "disconnect", "use_account", "stop_connection", "prepare_review",
+export const workflowActions = ["connect", "disconnect", "use_account", "stop_connection", "restart_wallet_service", "prepare_review",
   "request_signature", "cancel", "stop_waiting", "read_result"] as const;
 export type WorkflowAction = (typeof workflowActions)[number];
 export type ConnectionView = WalletConnection & { pendingAction?: "disconnect" };
@@ -25,13 +26,17 @@ export function reviewPreparationAccount(boundAccount: string | undefined, activ
 }
 export type WorkflowEligibilityFacts = {
   evaluatedAt: string; ownerId: string; record?: CardRecord | undefined;
-  walletAvailability: WalletAvailability; activeAccount?: string | undefined;
+  walletAvailability: Pick<WalletAvailability, "status">; activeAccount?: string | undefined;
   connection?: ConnectionView | undefined;
   connections: ConnectionView[];
   session?: ReviewSession | undefined; request?: TransactionRequest | undefined;
   authority?: RequestAuthority | undefined; busyForAccount: boolean;
 };
 export type WorkflowFacts = WorkflowEligibilityFacts & {
+  walletAvailability: WalletAvailability;
+  walletObservation?: WalletObservation | undefined;
+  runtimeRecovery?: WalletRecovery | undefined;
+  recoveryImpact?: WalletRecoveryImpact | undefined;
   hasReviewInput: boolean;
   boundReview?: z.infer<typeof reviewStateOutputSchema> | undefined;
   receipt?: unknown; receiptDisplay?: ReceiptDisplay | undefined;
@@ -43,8 +48,15 @@ export type EvaluatedWorkflowState = WorkflowFacts & {
 };
 export type WorkflowEvaluationInput = {
   expectedCard?: CardRecord | undefined; reviewSessionId?: string | undefined;
+  readTarget?: ReviewReadTarget | undefined;
   candidate?: ReviewEvaluationCandidate | undefined; walletAvailability: WalletAvailability;
+  walletObservation?: WalletObservation | undefined;
   uiObservation?: boolean | undefined;
+};
+// Bound before asynchronous inspection and checked again in the DB transaction.
+// A live input needs current wallet eligibility even when an older attempt exists.
+export type ReviewReadTarget = {
+  reviewSessionId: string; attemptId?: string | undefined; walletDependent: boolean;
 };
 
 // Shared domain eligibility. The DB supplies current facts at its decision
@@ -63,6 +75,7 @@ export function workflowEligibility(facts: WorkflowEligibilityFacts) {
   if (record?.scope === "connect") {
     if (inputAvailable) {
       allowedActions.push("cancel");
+      if (record.state.input.intent === "manage" && walletAvailability.status !== "recovering") allowedActions.push("restart_wallet_service");
       if (walletAvailability.status === "available") {
         if (record.state.input.intent === "connect" && !facts.connections.some((item) =>
           item.status === "connected" || item.status === "awaiting_approval" || item.pendingAction)) allowedActions.push("connect");
@@ -74,13 +87,11 @@ export function workflowEligibility(facts: WorkflowEligibilityFacts) {
   if (session && inputAvailable && record?.scope === "review" && session.status !== "expired" && Date.parse(session.expiresAt) > at && !session.preparationId) {
     allowedActions.push("cancel");
     if (walletAvailability.status === "available" && !session.plans[0]?.reviewModel) {
-      if (!facts.busyForAccount) {
-        const selection = reviewPreparationAccount(session.account, facts.activeAccount);
-        if (selection.allowed) allowedActions.push("prepare_review");
-        else preparationIssue = selection.message;
-      }
-      if (session.status === "ready_for_wallet_review" && session.reviewState?.transactionReviewData &&
-          (!request || request.reviewRevision !== session.reviewRevision && !facts.busyForAccount)) allowedActions.push("request_signature");
+      const selection = reviewPreparationAccount(session.account, facts.activeAccount);
+      if (!selection.allowed) preparationIssue = selection.message;
+      else if (!facts.busyForAccount) allowedActions.push("prepare_review");
+      if (!facts.busyForAccount && session.status === "ready_for_wallet_review" && session.reviewState?.transactionReviewData &&
+          (!request || request.reviewRevision !== session.reviewRevision)) allowedActions.push("request_signature");
     }
   }
   if (record && session && remaining > 0 && request && request.reviewSessionId === session.id &&

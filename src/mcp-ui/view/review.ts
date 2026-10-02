@@ -1,4 +1,4 @@
-import { workflowViewSchema, reviewWalletChoices, type WorkflowView } from "../../core/session/workflowView.js";
+import { workflowViewSchema, reviewWalletChoices, walletRecoveryRoute, type WorkflowView } from "../../core/session/workflowView.js";
 import { section, element, row, accordion, button, field, select, mono, monoShort, timeValue } from "../../../review-app/src/ui/ui.js";
 import { rawToDisplay, signedRawToDisplay, suiAmount } from "../../../review-app/src/format.js";
 import { gasRows } from "../../../review-app/src/ui/chainReceiptView.js";
@@ -6,7 +6,7 @@ import { receiptView } from "../../../review-app/src/ui/receiptView.js";
 import { transactionGraph, createTransactionGraph, disposePtbGraphs } from "../../../review-app/src/ui/ptbDiagram.js";
 import { receiptForCard } from "./receiptData.js";
 import type { CardSnapshot, CardReceiptDisplay } from "../contracts.js";
-import type { CardRenderer, CardViewContext } from "./lifecycle.js";
+import { walletCommandGuidance, type CardRenderer, type CardViewContext } from "./lifecycle.js";
 import type { ProposalReviewModel } from "../../core/proposal/types.js";
 import { t } from "../../../review-app/src/i18n/i18n.js";
 import { REVIEW_UI_LABELS } from "../../core/action/types.js";
@@ -155,7 +155,8 @@ function pendingReviewDecision(snapshot: CardSnapshot, data: WorkflowView, act?:
   const status = row("Status", review.preparing ? "Updating review…" : reviewSessionLabels[review.status]);
   if (!proposal) status.classList.add("review-status");
   status.setAttribute("role", "status"); decision.append(status);
-  if (data.walletAvailability.status === "unavailable") decision.append(element("p", "ui-note", data.walletAvailability.message));
+  if (!proposal && data.walletAvailability.status !== "available") decision.append(element("p", "ui-note", data.walletAvailability.message));
+  if (review.accountRequestPending) decision.append(element("p", "ui-note", "An earlier transaction request for this account is still being processed. This review can continue when that work finishes."));
   const feedback = element("div", "review-action-feedback");
   if (!proposal && act && data.mode === "review" && snapshot.state === "ready") {
     appendReviewActions(decision, feedback, data, act, context?.automaticPaused, approvalVisible);
@@ -308,7 +309,7 @@ function reviewView(snapshot: CardSnapshot, display?: CardReceiptDisplay, act?: 
       const status = row("Status", request ? transactionRequestLabels[request.requestStatus] : review.preparing ? "Updating review…" : reviewSessionLabels[review.status]);
       if (!request && !proposal) status.classList.add("review-status");
       status.setAttribute("role", "status"); decision.append(status);
-      if (data.walletAvailability.status === "unavailable") decision.append(element("p", "ui-note", data.walletAvailability.message));
+      if (!proposal && (!request || request.requestStatus === "awaiting_signature") && data.walletAvailability.status !== "available") decision.append(element("p", "ui-note", data.walletAvailability.message));
       if (request) {
         if (request.reason) decision.append(element("p", "ui-note", request.reason));
         if (["stopped", "request_failed"].includes(request.requestStatus)) decision.append(element("p", "ui-note", "No chain execution result has been confirmed."));
@@ -345,7 +346,7 @@ function appendReviewActions(node: HTMLElement, feedback: HTMLElement, data: Wor
   actions.append(slot, cancel);
   const shownWallets = new Set<string>();
   const choose = (action: "prepare_review" | "request_signature", label: string, account: string, choices: WorkflowView["connections"], primary: boolean) => {
-    const send = (connectionId: string) => act?.({ action, connectionId, account, reviewRevision: review.reviewRevision });
+    const send = (connectionId: string) => act?.({ action, connectionId, account, walletRunId: data.walletAvailability.walletRunId, reviewRevision: review.reviewRevision });
     const control = button(label, () => { if (choices.length === 1) send(choices[0]!.connectionId); }, primary ? "primary" : "secondary");
     control.dataset.cardAction = action; control.disabled = !act;
     control.classList.add("review-primary-action");
@@ -404,17 +405,26 @@ function appendReviewActions(node: HTMLElement, feedback: HTMLElement, data: Wor
 export const reviewRenderer = {
   title: "Review transaction",
   guidance(snapshot, context) {
+    const command = walletCommandGuidance(context);
+    if (command) return command;
     const parsed = workflowViewSchema.safeParse(snapshot?.data);
     if (context.approvalUnresolved) return "Ask in chat to check the status of this same transaction request.";
     if (!context.confirmed || !parsed.success) return context.recoveryNeeded
       ? "Ask in chat to check this review's status before starting another review." : undefined;
     const data = parsed.data, review = data.review;
+    if (!data.request && !snapshot?.input.attemptId && review && !review.plan.reviewModel &&
+        (review.status === "expired" || snapshot?.state === "closed" && snapshot.reason !== "completed")) {
+      return "Ask in chat for a new transaction review.";
+    }
+    const route = walletRecoveryRoute({ walletAvailability: data.walletAvailability,
+      waiting: data.request?.requestStatus === "awaiting_signature" || !!review?.preparing });
+    if (route && (!data.request || data.request.requestStatus === "awaiting_signature") && !review?.plan.reviewModel) {
+      return (route === "conditional" ? "If this request is not responding, ask" : "Ask") +
+        " in chat to open wallet connection controls. You can restart the wallet service there after confirming the effects.";
+    }
     if (data.request || snapshot?.input.attemptId) return context.recoveryNeeded
       ? "Ask in chat to check the status of this same transaction request." : undefined;
     if (!review || review.plan.reviewModel) return undefined;
-    if (review.status === "expired" || snapshot?.state === "closed" && snapshot.reason !== "completed") {
-      return "Ask in chat for a new transaction review.";
-    }
     if (data.walletAvailability.status === "unavailable") return t.common.walletStatusRecovery;
     if (context.readOnly) return "Ask in chat for a new transaction review.";
     if (review.error && data.mode === "review" && snapshot?.state === "ready" &&

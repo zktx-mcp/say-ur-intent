@@ -20,7 +20,7 @@ describe("separate preparation, request and chain status", () => {
     expect(isInteractionPendingReviewStatus(status)).toBe(true);
   });
   it.each(["awaiting_signature", "submitting", "awaiting_chain_result", "stopped", "request_failed", "outcome_unknown"] as const)("exposes %s without fabricating execution", (status) => {
-    const response = reviewStatusResponse({ session: review, hasReviewInput: false, request: { ...request, requestStatus: status }, walletAvailability: { status: "available" }, progress: { status: "idle" } });
+    const response = reviewStatusResponse({ session: review, hasReviewInput: false, request: { ...request, requestStatus: status }, walletAvailability: { status: "available", walletRunId: "00000000-0000-4000-8000-000000000001" }, progress: { status: "idle" } });
     expect(response.status).toBe("ready_for_wallet_review"); expect(response.requestStatus).toBe(status);
     expect(response.pollingStatus).toBe(status); expect(response.executionResult).toBeUndefined();
     expect(response).not.toHaveProperty("tokenHash"); expect(response).not.toHaveProperty("ownerId");
@@ -28,14 +28,14 @@ describe("separate preparation, request and chain status", () => {
   it("preserves completed chain facts independently of later review expiry", () => {
     const execution = { reviewSessionId: "review", attemptId: "attempt", planId: "plan", status: "success" as const,
       txDigest: chainReceiptDigest, chainReceipt: chainReceiptFixture(), recordedAt: new Date(1).toISOString() };
-    const response = reviewStatusResponse({ session: { ...review, status: "expired" }, hasReviewInput: false, request: { ...request, requestStatus: "completed", execution }, walletAvailability: { status: "available" }, progress: { status: "idle" } });
+    const response = reviewStatusResponse({ session: { ...review, status: "expired" }, hasReviewInput: false, request: { ...request, requestStatus: "completed", execution }, walletAvailability: { status: "available", walletRunId: "00000000-0000-4000-8000-000000000001" }, progress: { status: "idle" } });
     expect(response.status).toBe("expired"); expect(response.pollingStatus).toBe("completed");
     expect(response.executionResult).toEqual(execution); expect(isWaitStoppingExecutionStatus("completed")).toBe(true);
     expect(isInteractionPendingReviewStatus("completed")).toBe(false);
   });
   it("observes a new review preparation even when a previous request already completed", () => {
     const completed = { ...request, requestStatus: "completed" as const };
-    expect(reviewProgress(true, completed, { status: "available" }, { stopped: false, pending: false })).toEqual({ status: "waiting" });
-    expect(reviewProgress(false, completed, { status: "available" }, { stopped: false, pending: false })).toEqual({ status: "idle" });
+    expect(reviewProgress(true, completed, { status: "available", walletRunId: "00000000-0000-4000-8000-000000000001" }, { stopped: false, pending: false })).toEqual({ status: "waiting" });
+    expect(reviewProgress(false, completed, { status: "available", walletRunId: "00000000-0000-4000-8000-000000000001" }, { stopped: false, pending: false })).toEqual({ status: "idle" });
   });
 });

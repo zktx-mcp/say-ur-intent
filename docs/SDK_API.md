@@ -146,9 +146,9 @@ The pinned SDK accepts `number | bigint` quote inputs. Its high-level quote quer
 
 ## WalletConnect and signature verification
 
-The owner initializes pinned SignClient with its public `storage` injection,
+The SDK child initializes pinned SignClient with its public `storage` injection,
 private session persistence, silent SDK logging and telemetry disabled. It uses
-`connect`, `session.get`, `session_update/session_delete/session_expire` events,
+`connect`, `session.getAll`, `session_update/session_delete/session_expire` events,
 and `request` on chain `sui:mainnet`, method `sui_signTransaction`.
 Pinned `session_event` does not update approved namespaces itself: account/chain
 selection events explicitly invalidate stored review/submission authority even
@@ -167,6 +167,19 @@ facts; its absence/timeout does not prove execution failure.
 SDK session storage persists only the pinned connection namespaces. History,
 requests and unknown queue keys are volatile. The SDK has no supported complete
 in-process disposal; its owner process lifetime bounds callbacks and storage.
+The parent uses a fixed packaged Node child entrypoint and private versioned IPC.
+Only the SDK child owns SDK storage. Restart first fences database submission
+authority and the old run, then sends SIGKILL to the owned child and waits for
+actual exit. Closing relay transport or receiving an IPC disconnection is not
+evidence that the SDK operation ended. No SDK private teardown, source patch,
+automatic financial retry or overlapping storage writer is used.
+
+Snapshots and per-session versions distinguish present, absent and unusable
+sessions. Source inspection failure disables the service instead of becoming an
+empty session list. `accountsChanged` and `chainChanged` invalidate selection
+even if namespace values are unchanged. The final pre-submission session check
+runs after asynchronous digest/signature/network checks. Responses from another
+SDK run cannot satisfy that check or restore submission authority.
 Actual target-wallet acceptance of the serialization is an integration
 requirement, not something inferred from these SDK APIs or a rejected request.
 

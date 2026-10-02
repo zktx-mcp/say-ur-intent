@@ -56,7 +56,8 @@ describe("npm release metadata", () => {
 
 // Archive requirements come from the deployed surfaces, independently of the
 // checker: five internal cards, retained Settings page, and adapted backend code.
-const archive = ["package.json", "README.md", "LICENSE", "dist/runtime/start.js", "docs/UTILITY_INDEX.md",
+const archive = ["package.json", "README.md", "LICENSE", "dist/runtime/start.js",
+  "dist/runtime/walletSdkChild.js", "dist/runtime/walletSdkChildRuntime.js", "dist/runtime/walletSdkProcess.js", "dist/runtime/walletSdkIpc.js", "docs/UTILITY_INDEX.md",
   "LICENSES/@mysten-sui-2.17.0-Apache-2.0.txt", ...MCP_RESOURCES.map((resource) => resource.path),
   ...["account", "receipt", "chart", "connect", "review"].flatMap((name) => [`dist/mcp-app/${name}.html`, `dist/mcp-app/${name}.notices.txt`]),
   ...["settings.js", "settings.css", "ui.css", "favicon.svg", "brand-light.svg", "brand-dark.svg"].map((name) => `dist/review-app/${name}`)];
@@ -64,7 +65,7 @@ const pack = (paths: string[]) => ({ filename: "fixture.tgz", files: paths.map((
 
 it("accepts the complete current archive and rejects missing notices, backend license or Settings assets", () => {
   expect(() => assertPackContents(pack(archive))).not.toThrow();
-  for (const missing of ["dist/mcp-app/review.notices.txt", "LICENSES/@mysten-sui-2.17.0-Apache-2.0.txt", "dist/review-app/settings.js"]) {
+  for (const missing of ["dist/runtime/walletSdkChild.js", "dist/runtime/walletSdkChildRuntime.js", "dist/runtime/walletSdkIpc.js", "dist/mcp-app/review.notices.txt", "LICENSES/@mysten-sui-2.17.0-Apache-2.0.txt", "dist/review-app/settings.js"]) {
     expect(() => assertPackContents(pack(archive.filter((path) => path !== missing)))).toThrow(missing);
   }
 });

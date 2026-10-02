@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ChildProcess } from "node:child_process";
+import type { WalletCommand, WalletEvent } from "../src/runtime/walletSdkIpc.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -17,14 +19,58 @@ import { WALLETCONNECT_PROJECT_ID } from "../src/runtime/walletConnectConfig.js"
 import { walletAvailabilitySchema, walletUnavailableReasonSchema } from "../src/core/session/walletConnection.js";
 import { SUI_MAINNET_CHAIN_IDENTIFIER } from "../src/runtime/suiEndpoint.js";
 import type { ControlIdentity } from "../src/runtime/shared/control.js";
+import { seedWalletSdk, walletRelay } from "./fixtures/walletRelay.js";
+import { acquireDataDirectoryOwner } from "../src/runtime/shared/ownerLease.js";
 
 // Fingerprint of the product owner's approved input, independent of the runtime constant.
 const approvedProjectFingerprint = "0878d5895848f26e5631d667db9f5473ebaf875775af53f190467b50f810147d";
 const fingerprint = (value: string) => createHash("sha256").update(value).digest("hex");
 
 const source = vi.hoisted(() => ({ failure: "", init: vi.fn(), connect: vi.fn(), request: vi.fn(),
-  storage: [] as Array<() => void>, leases: [] as Array<Mock<() => void>> }));
-vi.mock("@walletconnect/sign-client", () => ({ SignClient: { init: source.init } }));
+  exits: 0, realRelay: "", commands: [] as string[], children: [] as ChildProcess[], leases: [] as Array<Mock<() => void>> }));
+// The parent, supervisor, SQLite, tools and MCP are real. Only the operating
+// system child/IPC is a double here; real child/SDK tests cover that boundary.
+vi.mock("node:child_process", async (original) => {
+  const actual = await original<typeof import("node:child_process")>();
+  const { EventEmitter } = await import("node:events");
+  return { ...actual, fork: () => {
+    if (source.realRelay) {
+      const child = actual.fork(new URL("./fixtures/walletSdkChild.ts", import.meta.url), [], {
+        execArgv: ["--import", "tsx"], stdio: ["ignore", "ignore", "ignore", "ipc"],
+        env: { ...process.env, FIXTURE_WALLET_RELAY: source.realRelay, FIXTURE_WALLET_SUBSCRIBED_READ: "1" }
+      });
+      const send = child.send.bind(child);
+      child.send = ((message: WalletCommand, callback: (error: Error | null) => void) => {
+        source.commands.push(message.type); return send(message, callback);
+      }) as ChildProcess["send"];
+      source.children.push(child); return child;
+    }
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, { connected: true, pid: 100, exitCode: null, signalCode: null });
+    child.send = ((message: WalletCommand, callback: (error: Error | null) => void) => {
+      callback(null);
+      if (message.type !== "init") throw new Error("Unexpected SDK command in startup test");
+      void (async () => {
+        const envelope = { protocolVersion: 1 as const, runId: message.runId };
+        const emit = (event: WalletEvent) => child.emit("message", event);
+        if (source.failure === "storage") { emit({ ...envelope, type: "failure", reason: "initialization_failed" }); return; }
+        emit({ ...envelope, type: "stage", stage: "sdk_start" });
+        try { await source.init({ ...message, logger: "silent", telemetryEnabled: false }); }
+        catch { emit({ ...envelope, type: "failure", reason: "initialization_failed" }); return; }
+        emit({ ...envelope, type: "stage", stage: "session_restore" });
+        if (source.failure === "restore") { emit({ ...envelope, type: "failure", reason: "restoration_failed" }); return; }
+        if (source.failure === "hold") return;
+        emit({ ...envelope, type: "snapshot", ready: true, snapshot: { runId: message.runId, sequence: 1,
+          observedAt: new Date().toISOString(), sessions: [] } });
+      })();
+      return true;
+    }) as ChildProcess["send"];
+    child.kill = (() => { queueMicrotask(() => {
+      Object.assign(child, { connected: false, signalCode: "SIGKILL" }); source.exits += 1; child.emit("exit", null, "SIGKILL");
+    }); return true; }) as ChildProcess["kill"];
+    return child;
+  } };
+});
 vi.mock("../src/runtime/suiEndpoint.js", async (original) => {
   const actual = await original<typeof import("../src/runtime/suiEndpoint.js")>();
   const { SuiGrpcClient } = await import("@mysten/sui/grpc");
@@ -40,14 +86,6 @@ vi.mock("node:fs/promises", async (original) => {
       return Promise.reject(new Error("PRIVATE-METADATA-DETAIL"));
     }
     return actual.readFile(...args);
-  } };
-});
-vi.mock("../src/runtime/walletConnectStorage.js", async (original) => {
-  const actual = await original<typeof import("../src/runtime/walletConnectStorage.js")>();
-  return { ...actual, openWalletConnectStorage: (directory: string) => {
-    if (source.failure === "storage") throw new Error("PRIVATE-STORAGE-DETAIL");
-    const owner = actual.openWalletConnectStorage(directory);
-    source.storage.push(owner.closeBeforeSdkUse); return owner;
   } };
 });
 vi.mock("../src/runtime/shared/ownerLease.js", async (original) => {
@@ -77,17 +115,13 @@ vi.mock("../src/runtime/shared/mcpHttp.js", () => ({ createInternalMcpHandler: (
 
 beforeEach(() => {
   source.init.mockReset(); source.connect.mockReset(); source.request.mockReset(); source.failure = "";
+  source.exits = 0;
+  source.realRelay = ""; source.children = []; source.commands = [];
   source.init.mockImplementation(async () => {
     if (source.failure === "init") throw new Error("PRIVATE-SDK-DETAIL");
-    return { connect: source.connect, request: source.request, on() {}, off() {},
-      session: { getAll() { if (source.failure === "restore") throw new Error("PRIVATE-RESTORE-DETAIL"); return []; } },
-      core: { pairing: { getPairings: () => [] } } };
   });
 });
 afterEach(() => {
-  // The SDK itself is a double with no timers. This represents fixture process
-  // exit, after asserting production did not release an active SDK owner's lock.
-  for (const close of source.storage.splice(0)) close();
   for (const close of source.leases.splice(0)) close();
   vi.unstubAllEnvs();
 });
@@ -128,12 +162,12 @@ it.each([
     expect(walletAvailabilitySchema.parse(availability)).toMatchObject(reason ? { status: "unavailable", reason } : { status: "available" });
     {
       const card = (created.structuredContent as { data: { cardId: string; revision: number; state: string } }).data;
-      expect(card.state).toBe(message ? "closed" : "ready");
+      expect(card.state).toBe("ready");
       if (message) {
         expect(JSON.stringify(await call(TOOL_NAMES.sessionGetWalletConnection, { cardId: card.cardId }))).toContain(message);
         expect(JSON.stringify(await call(TOOL_NAMES.sessionWaitWalletConnection, { cardId: card.cardId, timeoutMs: 1 }))).toContain(message);
         const ref = created._meta![CARD_METADATA_KEY] as Record<string, unknown>;
-        expect(JSON.stringify(await call(CARD_TOOLS.act, { ...ref, revision: card.revision, input: { action: "connect" } }))).toContain(message);
+        expect(JSON.stringify(await call(CARD_TOOLS.act, { ...ref, revision: card.revision, input: { action: "connect", walletRunId: (availability as { walletRunId: string }).walletRunId } }))).toContain(message);
       }
     }
     expect((await call(TOOL_NAMES.accountGetActiveAccount)).isError).not.toBe(true);
@@ -147,8 +181,8 @@ it.each([
     if (project) expect(JSON.stringify([created, logger.error.mock.calls])).not.toContain(project);
   } finally {
     await app.close();
-    expect(source.leases.at(-1)).toHaveBeenCalledTimes(initCalls ? 0 : 1);
-    for (const close of source.storage.splice(0)) close();
+    expect(source.leases.at(-1)).toHaveBeenCalledOnce();
+    expect(source.exits).toBe(failure === "metadata" ? 0 : 1);
     for (const close of source.leases.splice(0)) close();
     rmSync(directory, { recursive: true, force: true });
   }
@@ -165,8 +199,8 @@ it("uses the same approved project identity for stdio peers regardless of old en
     startOrDeferReviewServer: async () => ({ deferred: true, close: async () => {} })
   }));
   vi.doMock("../src/runtime/shared/stdio.js", () => ({
-    startSharedStdio: async ({ control }: { control: ControlIdentity }) => {
-      controls.push(control);
+    startSharedStdio: async ({ control }: { control: ControlIdentity | Promise<ControlIdentity> }) => {
+      controls.push(await control);
       return { close: async () => {} };
     }
   }));
@@ -177,7 +211,8 @@ it("uses the same approved project identity for stdio peers regardless of old en
       vi.stubEnv("SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID", project);
       vi.resetModules();
       await import("../src/runtime/start.js");
-      await vi.waitFor(() => expect(process.listenerCount("SIGTERM")).toBe(processListeners.get("SIGTERM")!.size + index + 1));
+      await vi.waitFor(() => expect(controls).toHaveLength(index + 1));
+      expect(process.listenerCount("SIGTERM")).toBe(processListeners.get("SIGTERM")!.size + index + 1);
     }
     const expected = fingerprint(JSON.stringify({ network: "mainnet", chainIdentifier: SUI_MAINNET_CHAIN_IDENTIFIER,
       walletConnectProjectId: WALLETCONNECT_PROJECT_ID, grpcOverride: null, graphqlOverride: null }));
@@ -204,3 +239,50 @@ it("accepts only backend initialization, restoration and state failures in the p
     expect(walletUnavailableReasonSchema.safeParse(reason).success).toBe(false);
   }
 });
+
+it.each(["expired_pairing", "inactive_pairing"] as const)("keeps the real parent MCP usable during actual SDK %s cleanup and recovers through a scoped card", async (kind) => {
+  const directory = mkdtempSync(join(tmpdir(), "say-runtime-sdk-held-")), relay = await walletRelay();
+  source.realRelay = relay.url;
+  await seedWalletSdk(directory, kind);
+  const app = await createRuntimeApplication(loadBootConfig({ SAY_UR_INTENT_DATA_DIR: directory }), { info() {}, warn() {}, error() {} });
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const response = {} as { result: CallToolResult };
+    await app.handleMcp({ call: { name, arguments: args } } as unknown as IncomingMessage, response as unknown as ServerResponse);
+    return response.result;
+  };
+  const payload = (result: CallToolResult) => {
+    expect(result.isError).not.toBe(true);
+    return (result.structuredContent as { data: Record<string, any> }).data;
+  };
+  try {
+    // This request finishes while the real SDK's cleanup cannot finish.
+    const interaction = payload(await call(TOOL_NAMES.sessionGetInteractionStatus));
+    expect(interaction.walletAvailability.status).toBe("initializing");
+    expect(interaction.assetReadAccount.status).toBe("address_required");
+    await vi.waitFor(() => expect(relay.calls.some((request) => request.method === "irn_unsubscribe")).toBe(true), { timeout: 10000 });
+    const created = await call(TOOL_NAMES.sessionCreateWalletConnection, { intent: "manage" });
+    const reference = created._meta![CARD_METADATA_KEY] as Record<string, unknown>;
+    const current = payload(await call(CARD_TOOLS.read, reference));
+    expect(current.state).toBe("ready"); expect(current.data.allowedActions).toContain("restart_wallet_service");
+    expect(() => acquireDataDirectoryOwner(join(directory, "activity.sqlite"))).toThrow("runtime owner");
+    const priorRunId = current.data.walletAvailability.walletRunId;
+    const admitted = payload(await call(CARD_TOOLS.act, { ...reference, revision: current.revision,
+      input: { action: "restart_wallet_service", walletRunId: priorRunId } }));
+    expect(admitted.state).toBe("running");
+    await vi.waitFor(async () => {
+      const result = payload(await call(CARD_TOOLS.read, reference));
+      expect(result).toMatchObject({ state: "closed", reason: "completed", data: {
+        runtimeRecovery: { outcome: "available", priorRunId }, walletAvailability: { status: "available" }
+      } });
+    }, { timeout: 10000 });
+    expect(source.children).toHaveLength(2); expect(source.children[0]!.signalCode).toBe("SIGKILL");
+    expect(source.children[1]!.exitCode).toBeNull();
+    expect(() => acquireDataDirectoryOwner(join(directory, "activity.sqlite"))).toThrow("runtime owner");
+    // Pairing cleanup can publish wc_pairingDelete. It is not a signature or
+    // new pairing command; inspect the actual parent dispatch boundary instead.
+    expect(source.commands).toEqual(["init", "init"]);
+    expect(payload(await call(TOOL_NAMES.accountGetActiveAccount))).toBeDefined();
+  } finally {
+    await app.close(); await relay.close(); rmSync(directory, { recursive: true, force: true });
+  }
+}, 25000);

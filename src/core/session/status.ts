@@ -1,11 +1,13 @@
 import type { InternalSessionStatus, ReviewSession } from "../action/types.js";
 import { isRequestWaiting, type TransactionRequest, type TransactionRequestStatus } from "./transactionRequest.js";
 import { workflowProgress, type WalletAvailability, type WorkflowProgress } from "./walletConnection.js";
+import type { WalletObservation } from "./walletRuntime.js";
 
 export type ReviewSnapshot = {
   session: ReviewSession;
   request?: TransactionRequest | undefined;
   walletAvailability: WalletAvailability;
+  walletObservation?: WalletObservation | undefined;
   progress: WorkflowProgress;
   hasReviewInput: boolean;
 };
@@ -55,10 +57,10 @@ export function executionPollingHint() {
     recommendedIntervalSeconds: EXECUTION_POLLING_INTERVAL_SECONDS
   };
 }
-export function reviewStatusResponse({ session, request, walletAvailability, progress }: ReviewSnapshot) {
+export function reviewStatusResponse({ session, request, walletAvailability, walletObservation, progress }: ReviewSnapshot) {
   const pollingStatus = getExecutionPollingStatus(session, request);
   return {
-    walletAvailability, progress,
+    walletAvailability, walletObservation, progress,
     reviewSessionId: session.id, status: session.status, reviewRevision: session.reviewRevision,
     account: session.account, plans: session.plans, reviewState: session.reviewState,
     pollingStatus, statusCategory: executionStatusCategory(pollingStatus), pollingHint: executionPollingHint(),
