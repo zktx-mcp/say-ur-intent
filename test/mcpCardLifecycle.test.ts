@@ -2559,8 +2559,21 @@ it.each([false,true])('separates result-read authority expiry from admitted work
   f.chainRead.mockRejectedValueOnce(new Error('Fixture initial chain read unavailable'));
   expect((await f.act(card,{action:'request_signature',connectionId:connection.connectionId,account:f.account,reviewRevision:session.reviewRevision})).error).toBeUndefined();
   await vi.waitFor(()=>expect(f.run(()=>f.records.currentRequest(session.id))?.requestStatus).toBe('outcome_unknown'));
-  const current=await f.read(card);const attempt=workflowViewSchema.parse(current.snapshot.data).request!;
+  let current=await f.read(card);const attempt=workflowViewSchema.parse(current.snapshot.data).request!;
   expect(workflowViewSchema.parse(current.snapshot.data).allowedActions).toContain('read_result');
+  // Start the View near the stored deadline. Two poll periods allow initial
+  // confirmation and the read command before exercising the expiry transition.
+  // No observer is mounted while the fixture clock crosses the earlier wait.
+  const confirmationWindowMs = current.snapshot.pollAfterMs * 2;
+  const beforeWindowMs = Date.parse(card.snapshot.expiresAt) - f.now().getTime() - confirmationWindowMs;
+  expect(beforeWindowMs).toBeGreaterThan(0);
+  f.advance(beforeWindowMs); await vi.advanceTimersByTimeAsync(beforeWindowMs);
+  current = await f.read(card);
+  const beforeExpiry = workflowViewSchema.parse(current.snapshot.data);
+  expect(beforeExpiry.actionRemainingMs).toBe(confirmationWindowMs);
+  expect(beforeExpiry.allowedActions).toContain('read_result');
+  expect(beforeExpiry.request?.attemptId).toBe(attempt.attemptId);
+
   f.chainRead.mockImplementation(async()=>{await gate.promise;return originalRead();});
   const app=host(async({name,arguments:args})=>{
    if(name===CARD_TOOLS.act){expect((args.input as any).action).toBe('read_result');if(admitted)expect((await f.run(()=>f.cards.act(args as any))).error).toBeUndefined();throw new Error('Fixture result-read delivery failed');}
