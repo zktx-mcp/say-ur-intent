@@ -6,7 +6,7 @@ It does not define tool field contracts or response wording. Use `docs/MCP_TOOLS
 
 The README keeps only the short entry path; client-specific setup, restart behavior, and troubleshooting live here.
 
-These instructions target `@zktx.io/sui-mcp@0.5.0`. Package installation requires
+These instructions target `@zktx.io/sui-mcp@0.5.1`. Package installation requires
 that exact version to be published; use the developer checkout instructions when
 it is not available. A repository rename or local build does not publish the
 package. Changing client settings or rebuilding files does not replace an
@@ -121,7 +121,7 @@ per-client configuration below, which give the exact `command` and `args`.
 
 The npm package for this release is `@zktx.io/sui-mcp`. The commands below
 require the requested version to be published; confirm it with
-`npm view @zktx.io/sui-mcp@0.5.0 version` before switching. Both installation
+`npm view @zktx.io/sui-mcp@0.5.1 version` before switching. Both installation
 methods start the same `sui-mcp` stdio MCP server. Use a local checkout when
 working on a version that has not been published.
 
@@ -178,8 +178,26 @@ command, for example `"command": "cmd", "args": ["/c", "npx", "-y", "@zktx.io/su
 
 ## Switching the Installed Package
 
-Use these steps when selecting a different package installation. Confirm the
-requested version is available before changing your client configuration.
+### Updating an Existing Sui MCP Installation
+
+When updating `@zktx.io/sui-mcp`, keep its existing data directory and review
+port in every participating client. Fully quit the participating apps, update
+the installed package or configured version, then reopen them and check
+`read.get_server_status` in each client. The package name, version and server
+name must match the intended installation. Updating the package does not
+replace a backend that is already running.
+
+An update that retains the current database format uses the existing data;
+it does not require a fresh database, a reset or another wallet connection.
+This release uses database format 9. Older database formats are rejected
+without migration; see [Local Database Architecture](LOCAL_DB_ARCHITECTURE.md#current-format-and-backups).
+Do not reset data or resend a transaction as an update step. Coordinate a safe
+restart if a transaction request is still in progress.
+
+### Switching from a Different Package
+
+Use these steps when selecting Sui MCP instead of a different package.
+Confirm the requested version is available before changing your client configuration.
 Sui MCP starts with a new database and private WalletConnect store in its own
 data directory. It does not discover, read, import or convert a previous
 package's database or backup. Existing connections, saved cards, transaction
@@ -195,7 +213,7 @@ restart first. A previous wallet pairing can remain in the wallet app; remove
 an unwanted pairing there rather than assuming new local storage disconnected it.
 
 Replace the old registration instead of adding a second one. Use exactly
-`sui-mcp` for the registration name and select `@zktx.io/sui-mcp@0.5.0` in its
+`sui-mcp` for the registration name and select `@zktx.io/sui-mcp@0.5.1` in its
 command arguments. Do not append an environment label, version or numeric
 suffix. Remove obsolete runtime environment overrides. If you set
 `SUI_MCP_DATA_DIR`, choose a new empty directory; never point it at another
@@ -716,7 +734,7 @@ If the user supplied a specific Sui address for `read.summarize_wallet_assets` o
 
 A 404 means the requested package or version could not be retrieved from the
 selected registry. Confirm the exact name and version, for example with
-`npm view @zktx.io/sui-mcp@0.5.0 version --registry=https://registry.npmjs.org`.
+`npm view @zktx.io/sui-mcp@0.5.1 version --registry=https://registry.npmjs.org`.
 A new version may not have been published or become visible yet; a mistyped name
 or an alternate/private registry can also explain the response. Check the
 publication result and registry configuration before retrying. Do not assume

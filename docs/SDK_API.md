@@ -1,6 +1,9 @@
 # SDK API Verification
 
-This document records the pinned SDK APIs used by the current runtime. The source of truth is the installed package source in `node_modules`, not memory or external summaries.
+This document records the pinned SDK APIs used by the current runtime. Backend
+API facts come from the installed SDK source in `node_modules`. Browser
+libraries are embedded during the build; their packaged versions are recorded
+in the card dependency notices described below.
 
 ## Package Versions
 
@@ -11,7 +14,23 @@ This document records the pinned SDK APIs used by the current runtime. The sourc
 - `@walletconnect/sign-client`, `@walletconnect/types`, `@walletconnect/utils`: `2.23.10`
 - `qrcode`: `1.5.4`
 - `@zktx.io/ptb-model`: `0.5.0`
-- `mermaid`: `11.12.0`
+- `mermaid`: `11.16.1`
+
+## Bundled Transaction Diagrams
+
+The backend uses `@zktx.io/ptb-model` to generate a flowchart from verified
+review material or a transaction read from Sui. The shared browser renderer
+uses Mermaid to display that flowchart in the Review and Receipt cards.
+The diagram is display evidence; it does not authorize signing or execution.
+
+`scripts/build-mcp-ui.ts` embeds each card's script and styles in one HTML
+resource and records the modules included in that resource. Check
+`dist/mcp-app/review.notices.txt` and `receipt.notices.txt`, or the dependency
+notices embedded in their HTML, for the actual browser-library versions.
+The dependency versions in a new source-checkout build come from
+`package-lock.json`. Reinstalling a published package's runtime dependencies
+does not replace the libraries already embedded in its card HTML. A browser
+dependency update requires rebuilding and distributing the card resources.
 
 ## MCP Apps
 
