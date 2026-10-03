@@ -65,7 +65,7 @@
     "library": "TradingView Lightweight Charts"
   },
   "common": {
-    "walletStatusRecovery": "Ask in chat to open wallet connection controls, then choose Restart wallet service.",
+    "walletStatusRecovery": "To restart the connection service, fully quit all apps using Say Ur Intent, then reopen them. This does not confirm removal of a connection in your wallet app.",
     "mainnet": "Sui mainnet",
     "retrievedAt": "Data retrieved"
   }

@@ -168,9 +168,10 @@ SDK session storage persists only the pinned connection namespaces. History,
 requests and unknown queue keys are volatile. The SDK has no supported complete
 in-process disposal; its owner process lifetime bounds callbacks and storage.
 The parent uses a fixed packaged Node child entrypoint and private versioned IPC.
-Only the SDK child owns SDK storage. Restart first fences database submission
-authority and the old run, then sends SIGKILL to the owned child and waits for
-actual exit. Closing relay transport or receiving an IPC disconnection is not
+Only the SDK child owns SDK storage. The supervisor fences a terminating run,
+sends SIGKILL to its owned child and waits for actual exit. Its explicit
+replacement primitive remains private infrastructure; Connect and Settings do
+not expose a restart command. Closing relay transport or receiving an IPC disconnection is not
 evidence that the SDK operation ended. No SDK private teardown, source patch,
 automatic financial retry or overlapping storage writer is used.
 

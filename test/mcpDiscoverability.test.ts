@@ -996,9 +996,9 @@ describe("MCP discoverability", () => {
           details: { reason: "connected_account_required", followUp: { tool: TOOL_NAMES.sessionGetInteractionStatus } }
         }
       });
-      await walletFixture.approve();
+      const { connection: selectedConnection } = await walletFixture.approve();
       walletFixture.notify({ ...walletFixture.transport.session("fixture-topic")!, accounts: [walletAccount] });
-      await activityStore.setActiveAccount(walletAccount, "wallet_connection");
+      await activityStore.setActiveAccount(walletAccount, "wallet_connection", undefined, { id: selectedConnection.connectionId });
       const wallet = await client.callTool({
         name: TOOL_NAMES.readSummarizeWalletAssets,
         arguments: {}

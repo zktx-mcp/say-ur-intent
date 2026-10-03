@@ -14,7 +14,7 @@ These scenarios translate the internal intent corpus into English release-review
 
 Current-release intent evidence answers can answer evidence questions without creating route recommendations, payment support, portfolio plans, P&L, transaction material, or signing readiness. Account-bound DeepBook review has a separate local transaction-material build path that is not part of these intent evidence answer rows.
 
-Partial wallet context is allowed only when an active account is already set or the user provides an explicit Sui address.
+For current asset reads, use the connection-qualified default from `assetReadAccount`, or an explicit Sui address supplied by the user. A stored active address alone is insufficient.
 
 `What is 10 SUI worth?`
 Class: `answer_only`.
@@ -112,14 +112,12 @@ Do not present it as a global USD price, route recommendation, price-impact calc
 
 `How much do I have?`
 Class: `clarify`.
-Explain that active account context is needed before wallet assets can be read.
-If none is set, ask for wallet identity connection.
-Do not ask for manual address entry.
+Check `session.get_interaction_status.assetReadAccount`. If no usable default is available, ask for a Sui address for tools that accept `account`. Open Connect only when the user requests connection.
 
 `Connect my wallet.`
 Class: `tool_wait`.
-Call `session.create_wallet_connection` and present the internal Connect card. The user selects the connection operation; read or wait using its cardId. Opening or waiting never creates a pairing automatically. A connection is account context, not transaction approval or login.
-On `connected`, call `account.get_active_account` before announcing the active account.
+Call `session.create_wallet_connection` with `intent: connect` and present the internal Connect card. Its authenticated View starts one pairing after checking current state; the ordinary tool call or wait does not. Read or wait using its cardId. A connection is account context, not transaction approval or login.
+Use `session.get_interaction_status.assetReadAccount` before announcing a usable default address. Resolve `connectionConflict` through user-confirmed targeted disconnection; never pick a wallet silently.
 On `timed_out`, say the wallet connection is still pending, not failed.
 
 `I want to buy $10 worth of SUI.`
@@ -135,8 +133,7 @@ Do not map vague quantity words to a fixed percent.
 
 `Sell half.`
 Class: `clarify`.
-Explain that balance is needed before calculating half.
-Use active account context if set; otherwise ask the user to connect wallet identity before wallet-account calculation.
+Explain that balance-relative swap amounts are unsupported and ask for an explicit source amount. Do not promise a spendable-balance calculation or start pairing to resolve that unsupported input.
 
 `5`
 Class: `clarify`.

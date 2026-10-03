@@ -8,7 +8,7 @@ The README keeps only the short entry path; client-specific setup, restart behav
 
 Say Ur Intent is tested from a local checkout in this repository state.
 
-The card and wallet-service recovery behavior described here includes unpublished checkout changes.
+The card and connection behavior described here includes unpublished checkout changes.
 Installing `@zktx.io/say-ur-intent@0.4.4` does not select this checkout. Use the
 local build configuration below to run these changes, or the documentation
 bundled with your installed package to follow its supported flow. A development
@@ -51,7 +51,7 @@ They do not require wallet connection.
 
 This placeholder is only the sender value required by DeepBook SDK simulation reads. It is not a user's wallet, signing authorization, or fake user liquidity.
 
-Wallet-account reads require a wallet connection session created through `session.create_wallet_connection`.
+Reads that require a connected default account use `session.create_wallet_connection`. Tools with an `account` input also accept an explicit Sui address without a wallet connection.
 
 ## Developer Checkout Setup
 
@@ -417,7 +417,7 @@ After the MCP server is connected:
    - `read.summarize_deepbook_account_inventory` for DeepBook manager or pool-account inventory.
    - `read.summarize_sui_activity_scan` for a live bounded activity summary.
    - `read.summarize_sui_function_activity_scan` for sent transactions that called one full function target.
-   If the user provided a specific Sui address for these reads, pass that address as `account` instead of starting wallet connection.
+   If the selected tool accepts `account` and the user supplied a Sui address, pass it instead of starting wallet connection. DeepBook account inventory has no explicit address input.
 8. For local review evidence, use `read.list_review_activity`, `read.summarize_review_funnel`, or `read.get_review_session_detail`.
 9. For local endpoint settings or local data controls, ask your AI client to call `settings.create_local_settings_session`, then open the returned settings URL in the same machine's system browser. Setting changes apply after restart.
 
@@ -437,26 +437,31 @@ local configuration value. Only the backend owner starts its isolated SDK child,
 clients use the same product identifier when identifying that shared backend.
 Do not paste pairing URIs or UI permission values into chat.
 
-If the wallet service stops responding, ask in chat to open wallet connection
-controls. Open **Wallet service help**, choose **Restart wallet service**, review
-the affected connections and approval requests, and choose **Confirm restart**.
-Keep the apps open during this recovery. Merely opening a card does not restart
-the service. Normal initialization is shown without a failure warning.
+Say Ur Intent allows one usable wallet connection across the shared data folder,
+with one or more wallet-approved Sui mainnet addresses. If several valid
+connections are saved, the Connect card lists them for target-specific
+Disconnect confirmation. Account use and signing remain blocked until the
+conflict is resolved. No connection is silently chosen or remotely removed.
 
-Service recovery interrupts unsubmitted approval requests. Update the review
-and make a new Request choice afterward. It does not cancel a transaction on Sui
-or remove a connection from the wallet app. An interrupted disconnect remains
-unconfirmed; check retained connections in the wallet app. If the replacement
-service remains unresponsive, ask for new wallet connection controls to restart
-that run. Relay or wallet availability cannot be guaranteed by restarting it.
-Ordinary reads and saved results remain available, and already submitted
-transactions can still be checked by their recorded digest.
+There is no Restart wallet service button in Connect or Settings. If the
+connection service is unavailable or a disconnection remains unresponsive,
+fully quit all apps using Say Ur Intent and reopen them. Closing only a window
+or a client that does not own the shared backend is insufficient. Another open
+client may take ownership. Verify that the old backend and SDK child exited
+and that the new service becomes available; editing a config file is not a
+runtime restart. A process that survives app exit needs separate diagnosis,
+not a claim that recovery succeeded.
 
-The shared backend uses internal API version 4. All clients sharing a data
-folder must use a compatible installation. When changing installations, stop the
-old clients and restart them with the same updated installation; an incompatible
-owner is refused. Wallet-service recovery within a running compatible backend
-uses the card instead. Product schema 9 and private SDK format 1 are retained.
+Restarting does not cancel a transaction on Sui or confirm remote disconnection.
+Check retained connections in your wallet app. Saved results and the known
+digests of submitted transactions remain available after restart. An
+unsubmitted approval needs a fresh review and explicit wallet approval; nothing
+is resent automatically. Normal initialization is not a failure warning.
+
+The shared backend uses internal API version 6. All clients sharing a data
+folder must use a compatible installation. Fully quit the old clients before
+starting the same updated installation; an incompatible owner is refused.
+Product schema 9 and private SDK format 1 are retained.
 
 Review requires an explicit card action and individual wallet approval. The
 backend uses Sui sign-only requests, verifies returned bytes/digest/signer and
@@ -557,9 +562,9 @@ The port is not a browser-wallet authorization origin.
 builds, and verifies the actual npm tarball and bundled licenses. It installs the
 tarball in a temporary directory and runs that installed binary to check MCP
 initialization, tools, document/card resources, the local Settings page and
-assets, and an explicit wallet-service restart in that isolated installation.
-It confirms that the parent remains running, the SDK run changes, and the SDK
-storage lease is released after shutdown. Runtime startup requires reachable Sui mainnet endpoints; a startup
+assets, and the isolated SDK child. It confirms that Connect rejects restart
+input, manage does not pair merely by opening, and the SDK keeps its exclusive
+storage lease until shutdown. Runtime startup requires reachable Sui mainnet endpoints; a startup
 failure leaves dependent checks unverified. The check uses an isolated data
 directory and port, ends the child process before cleanup, and does not use your
 stored wallet sessions, pair a wallet, sign, submit, reset data, or publish to npm.

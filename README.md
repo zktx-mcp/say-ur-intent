@@ -1,7 +1,5 @@
 # Say Ur Intent
 
-**JUST SAY "CONNECT WALLET."**
-
 Say Ur Intent is a local-first Sui review and evidence layer for AI clients.
 
 It turns a supported Sui action into an internal Review card where you inspect
@@ -29,24 +27,15 @@ Users can ask ordinary questions:
 - "How much are my USD-denominated assets together?"
 - "What is the shortfall?"
 
-The broader product direction does not stop at pre-execution review. From
-verified evidence, Say Ur Intent aims to carry an AI client's or MCP server's Sui
-payment or action request through a human-readable local review and on to
-user-controlled wallet signing and execution receipt evidence — only after Say Ur
-Intent independently builds or verifies the transaction material. The three
-layers below state what is implemented today, what is deliberately sequenced
-next, and what stays permanently out of scope. For any
-such request, Say Ur Intent explains what current verified evidence supports, what
-choices remain with the user, and what claims are unsupported.
+This document describes the current checkout. Its card and connection changes
+are not included merely by installing the published `0.4.4` package. Use
+[Developer Checkout Setup](docs/MCP_SETUP.md#developer-checkout-setup) for this
+build, or the documentation bundled with your installed package.
 
 ## Product Scope in Two Layers
 
-Say Ur Intent is one product, but it must be read at two distinct layers. Do not collapse them:
-
 - **Implemented:** Sui mainnet read evidence, non-signable external proposal review, and account-bound DeepBook swap review using protocol-agnostic adapters. Five internal cards use the same SQLite state and permission model. The backend verifies stored material, ownership, quote/policy provenance, human-readable facts, simulation and PTB evidence before an explicit user request. WalletConnect carries bytes only between the backend and wallet; ordinary MCP responses expose facts, request status and observed execution results. Settings remains a local token page; its card and the next package release are sequenced separately.
 - **Never (permanently unsupported at every layer):** no private-key custody, no MCP or AI autonomous execution, no forwarding of opaque external transaction bytes to a wallet, no silent settlement-token or route choice, no fiat cash-out, no P&L, no peg guarantee.
-
-In one sentence: Say Ur Intent is a local-first Sui intent evidence and review layer that progresses from verified evidence to user-controlled wallet signing only after Say Ur Intent independently builds or verifies the transaction material and shows a human-readable local review.
 
 DeepBook provides the current scoped Sui conversion, price, and orderbook
 evidence through the shared protocol adapter contracts. Wallet and Sui balance reads
@@ -59,7 +48,7 @@ recommendations, or silently choose settlement tokens for users.
 
 Account-bound transaction building, signing requests and chain observation stay
 in the local backend. The Review card displays evidence and current permitted
-actions. Public review JSON, card metadata and backups never contain transaction
+actions. Public review JSON, model-facing card data and backups never contain transaction
 bytes, signatures, SDK keys or signing permission. Reopening a card reads its
 stored state and never replays a financial request.
 
@@ -110,7 +99,14 @@ It also includes:
 
 ## Screens
 
-**Review and result.** The internal Review card automatically prepares and renews verified conditions for one selected wallet/account. Users inspect its transaction graph, amounts and costs, then choose Request wallet approval and approve in their wallet. Multiple candidates require a choice; failed preparation has an explicit retry. Receipt and completed Review show the executed transaction graph, actual asset changes and net network fee. Supplementary facts are in one Details slide; earlier estimates in Review remain distinct from actual chain results. Missing graph or receipt data is marked unavailable. Cards use a single document layout without nested card panels.
+**Wallet connection.** Connect one Sui mainnet wallet and use one of its approved
+addresses. A manage card shows Connect wallet when no connection is active;
+opening it alone does not pair. A connect-intent card starts pairing after its
+View confirms permission and current state. Each disconnection requires the
+user to confirm its exact target. Connection is not transaction approval.
+
+
+**Review and result.** The internal Review card automatically prepares and renews verified conditions for one selected wallet/account. Users inspect its transaction graph, amounts and costs, then choose Request wallet approval and approve in their wallet. One wallet connection is used at a time; choose among its approved addresses when needed. Conflicting saved connections must be resolved through targeted disconnection. Failed preparation has an explicit retry. Receipt and completed Review show the executed transaction graph, actual asset changes and net network fee. Supplementary facts are in one Details slide; earlier estimates in Review remain distinct from actual chain results. Missing graph or receipt data is marked unavailable. Cards use a single document layout without nested card panels.
 
 **DeepBook USDC chart.** `ui.open_chart` opens an internal MCP Apps card with
 official DeepBookV3 Indexer candles and volume for one selected USDC pool.
@@ -187,11 +183,8 @@ For quote responses alone, these conclusions are unsupported:
 
 ## Install
 
-This branch includes unpublished card and wallet-service recovery changes. Installing
-`@zktx.io/say-ur-intent@0.4.4` does not install those changes. To use this checkout,
-follow [Developer Checkout Setup](docs/MCP_SETUP.md#developer-checkout-setup).
-For a published installation, use the documentation bundled with that package.
-A local commit or successful package check does not publish a release.
+Use the checkout setup above for unpublished changes. A local commit or successful
+package check does not publish a release.
 
 This release uses npm package `@zktx.io/say-ur-intent` and MCP Registry name
 `io.github.zktx-mcp/say-ur-intent`. Once the requested version is published,

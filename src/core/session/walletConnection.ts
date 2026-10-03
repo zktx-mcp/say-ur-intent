@@ -59,6 +59,37 @@ export const walletConnectionSchema = z.object({
   reason: z.string().optional()
 }).strict();
 export type WalletConnection = z.infer<typeof walletConnectionSchema>;
+export type ConnectionView = WalletConnection & { pendingAction?: "disconnect" };
+export const connectionConflictSchema = z.object({
+  reason: z.literal("multiple_connections"),
+  connectionIds: z.array(z.string().min(1)).min(2).refine((ids) => new Set(ids).size === ids.length)
+}).strict();
+export type ConnectionConflict = z.infer<typeof connectionConflictSchema>;
+export const CONNECTION_CONFLICT_MESSAGE = "More than one wallet connection is saved. Disconnect the connections you no longer need before continuing.";
+export type StoredReadAccount = { address: string; walletId?: string | undefined };
+export const assetReadAccountSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("available"), account: suiAddressStringSchema }).strict(),
+  z.object({ status: z.literal("address_required") }).strict()
+]);
+export type AssetReadAccount = z.infer<typeof assetReadAccountSchema>;
+
+// Management may name every recorded target. Account use requires exactly one
+// live connection and no connection operation still awaiting its outcome.
+export function walletConnectionSelection(connections: readonly ConnectionView[], at: number, stored?: StoredReadAccount): {
+  connection?: ConnectionView; conflict?: ConnectionConflict; pairingAllowed: boolean; assetReadAccount: AssetReadAccount;
+} {
+  const connected = connections.filter((item) => item.status === "connected" && Date.parse(item.expiresAt) > at);
+  const pending = connections.some((item) => item.pendingAction || item.status === "awaiting_approval");
+  const connection = connected.length === 1 && !pending ? connected[0] : undefined;
+  return {
+    ...(connected.length > 1 ? { conflict: { reason: "multiple_connections" as const,
+      connectionIds: connected.map((item) => item.connectionId).sort() } } : {}),
+    ...(connection ? { connection } : {}),
+    pairingAllowed: connected.length === 0 && !pending,
+    assetReadAccount: connection && stored?.walletId === connection.connectionId && connection.accounts.includes(stored.address)
+      ? { status: "available", account: stored.address } : { status: "address_required" }
+  };
+}
 export type WalletConnectionStatus = WalletConnection["status"];
 export class WalletUserRejectedError extends Error {
   constructor() { super("The wallet request was rejected by the user."); }

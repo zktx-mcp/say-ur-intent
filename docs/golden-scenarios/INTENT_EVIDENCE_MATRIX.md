@@ -2,7 +2,7 @@
 
 This matrix is a current-release release review checklist for AI clients. It tests whether the implemented read and review surfaces let a user get a concise, useful answer before any transaction-building or signing work.
 
-The goal is not to push the user toward a review session. The goal is to verify that current intent evidence is easy for AI clients to consume, summarize, and explain without claiming that the product can do unsupported work such as execution, signing readiness, route recommendation, fiat cash-out, or P&L.
+The goal is not to push the user toward a review session. The goal is to verify that current intent evidence is easy for AI clients to consume, summarize, and explain without claiming that the product can do unsupported work such as autonomous execution, signing readiness, route recommendation, fiat cash-out, or P&L.
 
 For deterministic natural-language USD-denominated replay scenarios, required MCP tool paths, expected answer shapes, and manual client observation fields, see `docs/golden-scenarios/INTENT_EVIDENCE_GOLDEN_ANSWERS.md`.
 
@@ -125,9 +125,7 @@ Clarify the source amount. Give examples such as `1 SUI` or `10 SUI`.
 Do not map vague words to a fixed amount or percent.
 
 `What is in my wallet?`
-Use active account context if set; otherwise start the wallet identity flow.
-Explain the active account read-context boundary.
-Do not ask for a manual address for an active-wallet question or imply login/signing authorization.
+Use `session.get_interaction_status.assetReadAccount` if available; otherwise ask for a Sui address for an address-capable read. Open Connect only when the user requests connection. A stored selection does not prove a usable connection or signing authority.
 
 `Show balances for this address: 0x...`
 Use `read.summarize_wallet_assets` or `read.classify_wallet_assets` with `account`.
@@ -224,15 +222,17 @@ Report current status and checks returned by the review layer.
 Do not give a safety guarantee or signing-readiness claim when status is blocked.
 
 `Connect my wallet.`
-Use `session.create_wallet_connection`, then wait or poll.
-Present the internal Connect card, use its cardId for reads/waits, and confirm active read context after explicit connection or account selection. Opening the card does not create a pairing.
+Use `session.create_wallet_connection` with `intent: connect`, then read or wait on its cardId.
+Its authenticated View starts pairing only after confirming permission and current eligibility. A manage card instead waits for the user to choose Connect wallet. Confirm the usable default through `assetReadAccount`; an ordinary tool call or wait does not pair.
 Do not call it login, permanent authorization, or transaction permission.
 
 `Can I sign now?`
 Use review status only.
-If the returned review status is `ready_for_wallet_review` with an emitted
-transaction review data, say the user can request approval in the Review card
-and must approve the exact transaction in their own wallet. If the
+A `ready_for_wallet_review` status with emitted transaction review data means
+the evidence is available to inspect, not that input permission or wallet
+eligibility is current. Request wallet approval must be offered by the current
+authenticated Review card, and the user must approve that exact transaction
+in their own wallet. If the
 review is blocked, explain the returned missing or failed review evidence.
 Do not use safe-to-sign language, do not return transaction material, and do
 not describe MCP output as signing data.

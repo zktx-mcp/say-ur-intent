@@ -34,7 +34,7 @@ import type { McpServerDeps } from "../src/mcp/server.js";
 import { walletWorkflowFixture, deferred } from "./fixtures/walletWorkflow.js";
 import { TOOL_NAMES } from "../src/mcp/toolNames.js";
 import { CARD_METADATA_KEY, CARD_RESOURCE_PREFIX, CARD_TOOLS, cardReferenceSchema, cardSubmissionSchema, type CardKind, type CardSnapshot } from "../src/mcp-ui/contracts.js";
-import { startCard, type CardRenderer } from "../src/mcp-ui/view/lifecycle.js";
+import { startCard, type CardContent, type CardRenderer } from "../src/mcp-ui/view/lifecycle.js";
 import QRCode from "qrcode";
 
 type Host = {
@@ -521,8 +521,8 @@ it.each(["success", "failure"] as const)("the actual Connect view observes a del
     expect(root.querySelectorAll("section").filter((section) => section.className === "ui-card")).toHaveLength(0);
     expect(factValues(root, "Network")).toEqual(["Sui mainnet"]);
     expect(factValues(root, "Status")).toEqual(["Wallet connected"]);
-    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect", "Restart wallet service"]);
-    const walletRow = root.querySelectorAll("div").find((item) => item.className === "ui-row" && item.children[0]?.textContent === "Fixture Wallet")!;
+    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect"]);
+    const walletRow = root.querySelectorAll("div").find((item) => item.className === "ui-row" && item.children[0]?.textContent === "Approved address")!;
     expect((walletRow.children[1]!.children[0] as unknown as HTMLElement).title).toBe(f.account);
     root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
     expect(root.textContent.match(/Sui mainnet/g)).toHaveLength(1);
@@ -538,7 +538,7 @@ it.each(["success", "failure"] as const)("the actual Connect view observes a del
     root.querySelectorAll("button").find((button) => button.textContent === "Back")!.click();
     expect(f.transport.disconnect).not.toHaveBeenCalled();
     expect(root.querySelectorAll("section").filter((section) => section.className === "ui-card")).toHaveLength(0);
-    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect", "Restart wallet service"]);
+    expect(root.querySelectorAll("button").map((control) => control.textContent)).toEqual(["Disconnect"]);
     root.querySelectorAll("button").find((button) => button.textContent === "Disconnect")!.click();
     root.querySelectorAll("button").find((button) => button.textContent === "Confirm disconnect")!.click();
     await vi.waitFor(() => expect(root.textContent).toContain("Disconnecting wallet…"));
@@ -841,23 +841,24 @@ it("takes a single displayed wallet from preparation through actual SQLite admis
   } finally { f.close(); }
 });
 
-it("requires an explicit wallet for multiple candidates and offers no signature for zero or unavailable candidates", async () => {
+it("offers no wallet selector or signature for multiple, zero or unavailable connections", async () => {
   const f = await walletWorkflowFixture();
   try {
     const { connection } = await f.approve(), { card } = await f.prepare(connection.connectionId);
     const snapshot = structuredClone(card.snapshot), data = workflowViewSchema.parse(snapshot.data);
     data.connections.push({ ...data.connections[0]!, connectionId: "second-connection", walletName: "Second wallet" });
+    data.connectionConflict = { reason: "multiple_connections", connectionIds: [connection.connectionId, "second-connection"] };
+    delete data.usableConnectionId; data.assetReadAccount = { status: "address_required" };
     snapshot.data = data;
     const act = vi.fn(), rendered = reviewRenderer.result(snapshot, undefined, act);
     const node = rendered.node as unknown as Element;
-    const form = node.querySelectorAll("form").find((item) => item.querySelectorAll("button").some((b) => b.dataset.cardAction === "request_signature"))!;
-    form.dispatchEvent(new Event("submit", { cancelable: true })); expect(act).not.toHaveBeenCalled();
-    form.querySelector("select")!.value = "second-connection";
-    form.dispatchEvent(new Event("submit", { cancelable: true }));
-    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "request_signature", walletRunId: f.runtime.runId, connectionId: "second-connection", account: f.account, reviewRevision: 1 });
+    expect(node.querySelectorAll("select")).toHaveLength(0);
+    expect(node.querySelectorAll("button").some((b) => b.dataset.cardAction === "request_signature")).toBe(false);
+    expect(act).not.toHaveBeenCalled();
     rendered.dispose();
     for (const unavailable of [false, true]) {
       data.connections = unavailable ? [connection] : [];
+      delete data.connectionConflict;
       if (unavailable) data.walletAvailability = { status: "unavailable", reason: "restoration_failed", message: "Wallet state cannot be checked." };
       const blocked = reviewRenderer.result({ ...snapshot, data }, undefined, act);
       expect((blocked.node as unknown as Element).querySelectorAll("button").some((b) => b.dataset.cardAction === "request_signature")).toBe(false);
@@ -1023,18 +1024,23 @@ it("owns missing wallet guidance per permitted action without blocking the other
     const { connection } = await f.approve(), { card } = await f.prepare(connection.connectionId);
     const otherAccount = `0x${"d".repeat(64)}`;
     const scenarios = [
-      { name: "both empty", connections: [], activeAccount: f.account, hints: ["No wallet connection is available for this account."], actions: [] },
-      { name: "only signing empty", connections: [{ ...connection, methods: [] }], activeAccount: f.account, hints: ["No connected wallet is available for this transaction."], actions: ["prepare_review"] },
-      { name: "only preparation empty", connections: [connection], activeAccount: otherAccount, hints: ["No wallet connection is available to update the review for the selected account."], actions: ["request_signature"] },
-      { name: "different accounts empty", connections: [], activeAccount: otherAccount, hints: ["No connected wallet is available for this transaction.", "No wallet connection is available to update the review for the selected account."], actions: [] },
+      { name: "both empty", connections: [], activeAccount: f.account, hints: ["No connected wallet is available for this transaction."], actions: [] },
+      { name: "only signing empty", connections: [{ ...connection, methods: [] }], activeAccount: f.account, defaultAvailable: true, hints: ["No connected wallet is available for this transaction."], actions: ["prepare_review"] },
+      { name: "only preparation empty", connections: [connection], activeAccount: otherAccount, hints: [], actions: ["request_signature"] },
+      { name: "different accounts empty", connections: [], activeAccount: otherAccount, hints: ["No connected wallet is available for this transaction."], actions: [] },
       { name: "wallet unavailable", connections: [], activeAccount: f.account, unavailable: true, hints: [], actions: [] },
       { name: "neither permitted", connections: [], activeAccount: f.account, permitted: [], hints: [], actions: [] },
-      { name: "preparation alone", connections: [], activeAccount: f.account, permitted: ["prepare_review"] as const, hints: ["No wallet connection is available to update the review for the selected account."], actions: [] },
+      { name: "preparation alone", connections: [], activeAccount: f.account, permitted: ["prepare_review"] as const, hints: [], actions: [] },
       { name: "signing alone", connections: [], activeAccount: f.account, permitted: ["request_signature"] as const, hints: ["No connected wallet is available for this transaction."], actions: [] }
     ];
     for (const scenario of scenarios) {
       const data = workflowViewSchema.parse(structuredClone(card.snapshot.data));
       data.connections = scenario.connections; data.activeAccount = scenario.activeAccount;
+      // Publish coherent backend facts, not a changed row list with the old
+      // default still marked usable. An unqualified stored address no longer
+      // establishes a preparation target; a bound signature remains separate.
+      data.usableConnectionId = !scenario.unavailable && scenario.connections.length ? connection.connectionId : undefined;
+      data.assetReadAccount = scenario.defaultAvailable ? { status: "available", account: f.account } : { status: "address_required" };
       if (scenario.permitted) data.allowedActions = [...scenario.permitted];
       if (scenario.unavailable) data.walletAvailability = { status: "unavailable", reason: "restoration_failed", message: "Wallet state cannot be checked." };
       const act = vi.fn(), rendered = reviewRenderer.result({ ...card.snapshot, data }, undefined, act), node = rendered.node as unknown as Element;
@@ -1973,7 +1979,7 @@ it.each(["account", "connection", "bound_connection"] as const)("offers the curr
   } finally { f.close(); }
 });
 
-it.each(["clear", "select", "multiple", "bound_change", "bound_clear"] as const)("keeps the displayed review account aligned with its binding: %s", async (mode) => {
+it.each(["clear", "select", "bound_change", "bound_clear"] as const)("keeps the displayed review account aligned with its binding: %s", async (mode) => {
   const f = await walletWorkflowFixture();
   const visibility = new EventTarget();
   document.addEventListener = visibility.addEventListener.bind(visibility); document.removeEventListener = visibility.removeEventListener.bind(visibility);
@@ -1981,24 +1987,13 @@ it.each(["clear", "select", "multiple", "bound_change", "bound_clear"] as const)
   try {
     const { connection } = await f.approve(), account = `0x${"b".repeat(64)}`;
     f.notify({ ...f.transport.session("fixture-topic")!, accounts: [f.account, account] }, true);
-    let secondId: string | undefined;
-    if (mode === "multiple") {
-      // Model two already-approved stored sessions, without bypassing pairing admission.
-      const restored = { topic: "fixture-restored-review-wallet", accounts: [f.account, account], methods: ["sui_signTransaction"],
-        chain: "sui:mainnet" as const, expiresAt: connection.expiresAt, walletName: "Second fixture wallet" };
-      const session = f.transport.session.bind(f.transport);
-      vi.spyOn(f.transport, "session").mockImplementation((topic) => topic === restored.topic ? restored : session(topic));
-      vi.spyOn(f.transport, "inspectAll").mockImplementation(() => [session("fixture-topic"), restored].flatMap((value) => value ? [{ topic: value.topic, status: "present" as const, session: value }] : []));
-      f.observe();
-      secondId = f.run(() => f.records.restoreConnection(restored, f.now())).connection.connectionId;
-    }
     const bound = mode === "bound_change" || mode === "bound_clear";
     if (mode === "select") await f.run(() => f.activity.clearActiveAccount(f.now()));
     const card = bound ? (await f.prepare(connection.connectionId)).card : await f.run(async () => {
       const { session } = await f.sessions.createReviewSession([f.plan], f.now());
       return f.cards.create("review", { reviewSessionId: session.id });
     });
-    const deliver = mode === "multiple" || bound;
+    const deliver = bound;
     const app = host(async ({ name, arguments: args }) => {
       if (name === CARD_TOOLS.act && !deliver) throw new Error("Fixture preparation was not delivered");
       return cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(args)) : f.cards.act(args as any)));
@@ -2038,22 +2033,7 @@ it.each(["clear", "select", "multiple", "bound_change", "bound_clear"] as const)
       expect(app.callServerTool).toHaveBeenCalledTimes(calls);
       expect(f.quote).not.toHaveBeenCalled();
     }
-    if (mode === "multiple") {
-      expect(current.automaticAction).toBeUndefined();
-      expect(current.connections.filter((item) => item.status === "connected" && item.accounts.includes(account))).toHaveLength(2);
-      const form = root.querySelectorAll("form").find((item) => item.querySelectorAll("button").some((button) => button.dataset.cardAction === "prepare_review"))!;
-      const choice = form.querySelector("select")!;
-      expect(choice.value).toBe("");
-      form.dispatchEvent(new Event("submit", { cancelable: true })); await vi.advanceTimersByTimeAsync(0);
-      expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(0);
-      choice.value = secondId!; form.dispatchEvent(new Event("submit", { cancelable: true }));
-      await vi.waitFor(() => expect(f.quote).toHaveBeenCalledOnce());
-      await vi.waitFor(() => expect(f.run(() => f.sessions.readReviewSession(current.review!.reviewSessionId))?.status).toBe("ready_for_wallet_review"));
-      const commands = app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act);
-      expect(commands).toHaveLength(1);
-      expect(commands[0]![0].arguments.input).toMatchObject({ action: "prepare_review", account, connectionId: secondId });
-      expect(workflowViewSchema.parse((await f.read(card)).snapshot.data).review!.account).toBe(account);
-    } else if (mode === "select") {
+    if (mode === "select") {
       const commands = app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act);
       expect(commands).toHaveLength(1);
       expect(commands[0]![0].arguments.input).toMatchObject({ action: "prepare_review", account });
@@ -2723,14 +2703,13 @@ it.each(["disconnect", "use_account_connection", "use_account_removed"] as const
     app.ontoolresult!({ ...cardToolResult(card), _meta: { [CARD_METADATA_KEY]: { cardId: card.snapshot.cardId, permission: card.permission } } });
     const button = (text: string) => root.querySelectorAll("button").find((node) => node.textContent === text);
     const chooseAccount = () => {
-      expect(button("Use account")?.disabled).toBe(false);
-      const select = root.querySelector("select")!; expect(select.disabled).toBe(false); select.value = `${connection.connectionId}:${f.account}`;
-      root.querySelector("form")!.dispatchEvent(new Event("submit", { cancelable: true }));
+      expect(button("Use address")?.disabled).toBe(false);
+      expect(root.querySelectorAll("select")).toHaveLength(0); button("Use address")!.click();
     };
     if (mode === "disconnect") {
       await vi.waitFor(() => expect(button("Disconnect")?.disabled).toBe(false)); button("Disconnect")!.click();
       expect(button("Confirm disconnect")?.disabled).toBe(false); button("Confirm disconnect")!.click();
-    } else { await vi.waitFor(() => expect(button("Use account")?.disabled).toBe(false)); chooseAccount(); }
+    } else { await vi.waitFor(() => expect(button("Use address")?.disabled).toBe(false)); chooseAccount(); }
     await vi.waitFor(() => expect(root.textContent).toContain(mode === "disconnect" ? "Message from an earlier wallet disconnect request" : "Message from an earlier account selection"));
     const current = workflowViewSchema.parse((await f.read(card)).snapshot.data), target = current.connections.find((item) => item.connectionId === connection.connectionId)!;
     expect(current.connection).toBeUndefined(); expect(target.status).toBe(mode === "use_account_removed" ? "connected" : "disconnected");
@@ -2779,9 +2758,9 @@ it.each(["other_connection", "wallet_unavailable"] as const)("does not end a fai
     });
     startCard("connect", connectRenderer);
     app.ontoolresult!({ ...cardToolResult(card), _meta: { [CARD_METADATA_KEY]: { cardId: card.snapshot.cardId, permission: card.permission } } });
-    await vi.waitFor(() => expect(root.querySelectorAll("button").find((node) => node.textContent === "Use account")?.disabled).toBe(false));
-    root.querySelector("select")!.value = `${connection.connectionId}:${f.account}`;
-    root.querySelector("form")!.dispatchEvent(new Event("submit", { cancelable: true }));
+    await vi.waitFor(() => expect(root.querySelectorAll("button").find((node) => node.textContent === "Use address")?.disabled).toBe(false));
+    expect(root.querySelectorAll("select")).toHaveLength(0);
+    root.querySelectorAll("button").find((node) => node.textContent === "Use address")!.click();
     await vi.advanceTimersByTimeAsync(0);
     expect(root.querySelector(".ui-error")?.textContent).toContain("Fixture selection still unconfirmed");
     expect(root.textContent).not.toContain("Message from an earlier account selection");
@@ -3012,7 +2991,7 @@ it.each(["ended", "unavailable"] as const)("uses confirmed connection facts for 
       expect(root.textContent).not.toContain("Ask in chat to check your wallet connection.");
       expect(recoveryButton("Retry connection")).toBeUndefined();
     } else {
-      await vi.waitFor(() => expect(visibleGuidance()).toBe("Ask in chat to open wallet connection controls. You can restart the wallet service there after confirming the effects."));
+      await vi.waitFor(() => expect(visibleGuidance()).toBe("To restart the connection service, fully quit all apps using Say Ur Intent, then reopen them. This does not confirm removal of a connection in your wallet app."));
       expect(workflowViewSchema.parse((await f.read(card)).snapshot.data)).toMatchObject({ walletAvailability: { status: "unavailable" }, connections: [], allowedActions: ["cancel"] });
       expect(root.textContent).toContain("Connection not confirmed");
       expect(root.textContent).not.toContain("Ask in chat to connect");
@@ -3289,140 +3268,6 @@ it("describes an unestimated internal receive amount without presenting an unkno
   } finally { f.close(); }
 });
 
-it("observes an admitted service restart after a lost reply without replaying it on expiry or frame return", async () => {
-  const f = await walletWorkflowFixture(), held = deferred<[]>();
-  try {
-    await f.approve();
-    vi.spyOn(f.transport, "restore").mockImplementationOnce(() => held.promise);
-    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
-    const replace = vi.spyOn(f.runtime, "replace");
-    const app = host(async ({ name, arguments: input }) => {
-      const response = await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any));
-      if (name === CARD_TOOLS.act) throw new Error("Fixture restart reply lost");
-      return cardToolResult(response);
-    });
-    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
-    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
-    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
-    control("Restart wallet service")!.click();
-    expect(root.textContent).toContain("Approval requests interrupted");
-    expect(replace).not.toHaveBeenCalled();
-    control("Confirm restart")!.click();
-    await vi.waitFor(() => expect(replace).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(root.textContent).toContain("Starting wallet service"));
-    expect(control("Confirm restart")).toBeUndefined();
-    f.advance(card.snapshot.inputRemainingMs + 1);
-    await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs * 2);
-    expect((await f.read(card)).snapshot).toMatchObject({ state: "running", data: { observe: true, runtimeRecovery: { phase: "starting" } } });
-    held.resolve([]); await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
-    await vi.waitFor(() => expect(root.textContent).toContain("Wallet service restarted."));
-    expect(replace).toHaveBeenCalledOnce();
-    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(1);
-    await app.onteardown!();
-    root = new Element("main");
-    const returned = host(async ({ arguments: input }) => cardToolResult(await f.run(() => f.cards.read(cardReferenceSchema.parse(input)))));
-    startCard("connect", connectRenderer); returned.ontoolresult!(cardCreation(card, card.permission));
-    await vi.waitFor(() => expect(root.textContent).toContain("Wallet service restarted."));
-    expect(replace).toHaveBeenCalledOnce(); expect(f.connect).toHaveBeenCalledOnce();
-    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled(); await returned.onteardown!();
-  } finally { held.resolve([]); f.close(); }
-});
-
-it("requires a new confirmation when another card replaces the displayed wallet service run", async () => {
-  const f = await walletWorkflowFixture();
-  try {
-    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
-    const app = host(async ({ name, arguments: input }) => cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any))));
-    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
-    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
-    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
-    control("Restart wallet service")!.click();
-    const other = await f.run(() => f.cards.create("connect", { intent: "manage" }));
-    const priorRun = f.runtime.runId;
-    await f.act(other, { action: "restart_wallet_service" });
-    await vi.waitFor(() => { expect(f.runtime.runId).not.toBe(priorRun); expect(f.runtime.availability().status).toBe("available"); });
-    control("Confirm restart")!.click();
-    await vi.waitFor(() => expect(root.textContent).toContain("Check the current selection"));
-    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(0);
-    expect(f.run(() => f.cardRecords.get(card.snapshot.cardId)?.state.state)).toBe("ready");
-    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled(); await app.onteardown!();
-  } finally { f.close(); }
-});
-
-it.each(["before_read", "after_read"] as const)("requires a new restart confirmation when another connection is admitted %s", async (timing) => {
-  const f = await walletWorkflowFixture(), opening = deferred<Awaited<ReturnType<typeof f.connect>>>();
-  let teardown: (() => unknown) | undefined;
-  try {
-    f.connect.mockImplementationOnce(() => opening.promise);
-    const card = await f.run(() => f.cards.create("connect", { intent: "manage" })), other = await f.createConnection();
-    const run = f.runtime.runId, replace = vi.spyOn(f.runtime, "replace");
-    const admitOther = async () => { expect((await f.act(other, { action: "connect" })).error).toBeUndefined(); };
-    let interleave = false;
-    const app = host(async ({ name, arguments: input }) => {
-      const response = await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any));
-      if (name === CARD_TOOLS.read && interleave) {
-        interleave = false;
-        // Capture the confirmed read first; the other Host commits before
-        // that response reaches the View and before its subsequent action.
-        await admitOther();
-      }
-      return cardToolResult(response);
-    });
-    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission)); teardown = app.onteardown;
-    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
-    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
-    control("Restart wallet service")!.click(); expect(factValues(root, "Affected wallet")).toEqual([]);
-    if (timing === "before_read") await admitOther(); else interleave = true;
-    control("Confirm restart")!.click();
-    await vi.waitFor(() => expect(root.textContent).toContain(timing === "before_read" ? "Check the current selection" : "This request does not match the card's current state."));
-    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
-    expect(replace).not.toHaveBeenCalled(); expect(f.runtime.runId).toBe(run); expect(f.connect).toHaveBeenCalledOnce();
-    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(timing === "before_read" ? 0 : 1);
-    expect(f.run(() => f.cardRecords.get(card.snapshot.cardId)?.acceptedInput)).toBeUndefined();
-    expect(f.run(() => f.records.connections()[0]?.connection.status)).toBe("awaiting_approval");
-    expect(control("Confirm restart")).toBeUndefined();
-    control("Restart wallet service")!.click(); expect(factValues(root, "Affected wallet")).toEqual(["Wallet connection"]);
-    control("Confirm restart")!.click();
-    await vi.waitFor(() => expect(f.runtime.availability().status).toBe("available"));
-    await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
-    await vi.waitFor(() => expect(root.textContent).toContain("Wallet service restarted."));
-    expect(replace).toHaveBeenCalledOnce(); expect(f.runtime.runId).not.toBe(run);
-    expect(f.run(() => f.records.connections()[0]?.connection.status)).toBe("stopped");
-    expect(f.connect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
-  } finally { await teardown?.(); f.close(); }
-});
-
-it("shows failed recovery after explicit storage repair without replaying the restart", async () => {
-  const f = await walletWorkflowFixture(), held = deferred<[]>(), db = new Database(`${f.directory}/activity.sqlite`);
-  let teardown: (() => unknown) | undefined;
-  try {
-    vi.spyOn(f.transport, "restore").mockImplementationOnce(() => held.promise);
-    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
-    const replace = vi.spyOn(f.runtime, "replace");
-    const app = host(async ({ name, arguments: input }) => {
-      try { return cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any))); }
-      catch { return errorToolResult({ kind: "internal_error", details: { message: "Fixture storage failure" } }); }
-    });
-    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission)); teardown = app.onteardown;
-    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
-    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false));
-    control("Restart wallet service")!.click(); control("Confirm restart")!.click();
-    await vi.waitFor(() => expect(f.runtime.availability().status).toBe("initializing"));
-    db.exec("CREATE TRIGGER reject_failure BEFORE UPDATE OF result_json ON live_read_cards WHEN json_extract(NEW.result_json,'$.outcome')='failed' BEGIN SELECT RAISE(ABORT,'fixture outcome refusal'); END");
-    f.runtime.fail("initialization_failed");
-    await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
-    await vi.waitFor(() => expect(control("Check status")?.disabled).toBe(false));
-    expect(replace).toHaveBeenCalledOnce(); expect(control("Confirm restart")).toBeUndefined();
-    db.exec("DROP TRIGGER reject_failure"); control("Check status")!.click();
-    await vi.waitFor(() => expect(root.textContent).toContain("The wallet connection service could not start."));
-    expect(root.textContent).toContain("Ask in chat to open wallet connection controls");
-    expect(root.textContent).not.toContain("Wallet service restarted.");
-    expect(control("Confirm restart")).toBeUndefined(); expect(replace).toHaveBeenCalledOnce();
-    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(1);
-    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
-  } finally { await teardown?.(); held.resolve([]); db.exec("DROP TRIGGER IF EXISTS reject_failure"); db.close(); f.close(); }
-});
-
 it.each(["success", "failure", "teardown"] as const)("shows neutral pre-admission guidance during a finite disconnect reply (%s)", async (ending) => {
   const f = await walletWorkflowFixture(), reply = deferred<void>();
   try {
@@ -3436,9 +3281,16 @@ it.each(["success", "failure", "teardown"] as const)("shows neutral pre-admissio
     await vi.waitFor(() => expect(control("Disconnect")?.disabled).toBe(false)); control("Disconnect")!.click();
     control("Confirm disconnect")!.click();
     await vi.waitFor(() => expect(visibleGuidance()).toContain("Waiting for a response…"));
-    expect(visibleGuidance()).toContain("open wallet connection controls");
+    expect(visibleGuidance()).toContain("check this same request");
     expect(control("Confirm disconnect")!.disabled).toBe(true);
     expect(root.querySelectorAll("summary").some((item) => item.textContent === "Wallet service help")).toBe(false);
+    control("Back")!.click();
+    expect(control("Disconnect")!.disabled).toBe(true);
+    expect(control("Restart wallet service")).toBeUndefined();
+    expect(visibleGuidance()).toContain("Waiting for a response…");
+    control("Disconnect")!.click();
+    expect(control("Confirm disconnect")).toBeUndefined(); expect(control("Confirm restart")).toBeUndefined();
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(1);
     expect(f.run(() => f.cardRecords.get(card.snapshot.cardId)?.state.state)).toBe("ready");
     expect(f.transport.disconnect).not.toHaveBeenCalled();
     if (ending === "teardown") await app.onteardown!();
@@ -3452,26 +3304,6 @@ it.each(["success", "failure", "teardown"] as const)("shows neutral pre-admissio
   } finally { reply.resolve(); f.close(); }
 });
 
-it("keeps confirmation reads distinct from a sent restart while preserving its confirmation screen", async () => {
-  const f = await walletWorkflowFixture(), check = deferred<void>(); let reads = 0;
-  try {
-    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
-    const app = host(async ({ name, arguments: input }) => {
-      if (name === CARD_TOOLS.read && ++reads === 2) await check.promise;
-      return cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any)));
-    });
-    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
-    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
-    await vi.waitFor(() => expect(control("Restart wallet service")?.disabled).toBe(false)); control("Restart wallet service")!.click(); control("Confirm restart")!.click();
-    await vi.waitFor(() => expect(visibleGuidance()).toBe("Checking the current selection…"));
-    expect(control("Confirm restart")!.disabled).toBe(true);
-    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(0);
-    check.resolve(); await vi.advanceTimersByTimeAsync(0); await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
-    await vi.waitFor(() => expect(root.textContent).toContain("Wallet service restarted."));
-    expect(visibleGuidance()).not.toContain("Checking the current selection"); await app.onteardown!();
-  } finally { check.resolve(); f.close(); }
-});
-
 it("distinguishes an unconfirmed disconnect from the earlier successful connection in visible result guidance", async () => {
   const f = await walletWorkflowFixture(), held = deferred<void>();
   try {
@@ -3481,10 +3313,9 @@ it("distinguishes an unconfirmed disconnect from the earlier successful connecti
     await f.act(card, { action: "disconnect", connectionId: connection.connectionId });
     const pending = await f.read(card);
     const context = { confirmed: true, readOnly: false, recoveryNeeded: false, approvalUnresolved: false, automaticPaused: false };
-    expect(connectRenderer.guidance(pending.snapshot, context)).toContain("If this request is not responding");
-    const controls = await f.run(() => f.cards.create("connect", { intent: "manage" }));
-    await f.act(controls, { action: "restart_wallet_service" });
-    await vi.waitFor(() => expect(f.runtime.availability().status).toBe("available"));
+    expect(connectRenderer.guidance(pending.snapshot, context)).toContain("If this disconnection is not responding");
+    held.reject(new Error("Fixture disconnect not confirmed"));
+    await vi.waitFor(() => expect(f.run(() => f.records.connection(connection.connectionId)?.sdkPending)).toBe(false));
     const failed = await f.read(card), historical = await f.read(connected);
     const view = connectRenderer.result(failed.snapshot, undefined, undefined);
     expect(factValues(view.node as unknown as Element, "Status")).toEqual(["Disconnection could not be confirmed"]);
@@ -3511,5 +3342,246 @@ it("keeps an expired review's next step ahead of unrelated service recovery", as
     expect(reviewRenderer.guidance(ended.snapshot, { confirmed: true, readOnly: false, recoveryNeeded: true,
       approvalUnresolved: false, automaticPaused: false })).toBe("Ask in chat for a new transaction review.");
     expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+  } finally { f.close(); }
+});
+
+it("keeps disconnect confirmation and Details in the same View across reads and Back", async () => {
+  const f = await walletWorkflowFixture();
+  const visibility = new EventTarget();
+  document.addEventListener = visibility.addEventListener.bind(visibility); document.removeEventListener = visibility.removeEventListener.bind(visibility);
+  Object.defineProperty(document, "visibilityState", { value: "visible", writable: true });
+  try {
+    await f.approve(); const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const controls = vi.fn(connectRenderer.controls), guidance = vi.fn(connectRenderer.guidance);
+    const app = host(async ({ arguments: input }) => cardToolResult(await f.run(() => f.cards.read(cardReferenceSchema.parse(input)))));
+    startCard("connect", { ...connectRenderer, controls, guidance }); app.ontoolresult!(cardCreation(card, card.permission));
+    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
+    await vi.waitFor(() => expect(control("Disconnect")?.disabled).toBe(false));
+    const view: CardContent = controls.mock.results[0]!.value;
+    const details = root.querySelectorAll("details").find((item) => item.querySelector("summary")?.textContent === "Details")!;
+    details.open = true; const revision = card.snapshot.revision;
+    control("Disconnect")!.click();
+    expect(view.visibleConfirmation?.()).toBe("disconnect"); expect(visibleGuidance()).toBe("");
+    expect(control("Confirm disconnect")?.disabled).toBe(false);
+    for (const state of ["hidden", "visible"]) {
+      Object.defineProperty(document, "visibilityState", { value: state, writable: true }); visibility.dispatchEvent(new Event("visibilitychange"));
+    }
+    await vi.waitFor(() => expect(app.callServerTool).toHaveBeenCalledTimes(2));
+    expect(controls).toHaveBeenCalledOnce(); expect(view.visibleConfirmation?.()).toBe("disconnect");
+    expect(guidance.mock.calls.at(-1)?.[1].visibleConfirmation).toBe("disconnect");
+    control("Back")!.click();
+    expect(view.visibleConfirmation?.()).toBeUndefined(); expect(root.querySelectorAll("details")).toContain(details); expect(details.open).toBe(true);
+    expect(f.run(() => f.cardRecords.get(card.snapshot.cardId)!.state.revision)).toBe(revision);
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(0);
+    expect(f.transport.disconnect).not.toHaveBeenCalled(); await app.onteardown!();
+  } finally { f.close(); }
+});
+
+it("keeps automatic disconnect confirmation factual during pending transport and a read error", async () => {
+  const f = await walletWorkflowFixture(), reply = deferred<void>();
+  const visibility = new EventTarget();
+  document.addEventListener = visibility.addEventListener.bind(visibility); document.removeEventListener = visibility.removeEventListener.bind(visibility);
+  Object.defineProperty(document, "visibilityState", { value: "visible", writable: true });
+  let failRead = false;
+  try {
+    await f.approve(); const card = await f.run(() => f.cards.create("connect", { intent: "disconnect" }));
+    const controls = vi.fn(connectRenderer.controls), guidance = vi.fn(connectRenderer.guidance);
+    const app = host(async ({ name, arguments: input }) => {
+      if (name === CARD_TOOLS.read && failRead) throw new Error("Fixture confirmation state read failed");
+      if (name === CARD_TOOLS.act) { await reply.promise; throw new Error("Fixture disconnect delivery failed"); }
+      return cardToolResult(await f.run(() => f.cards.read(cardReferenceSchema.parse(input))));
+    });
+    startCard("connect", { ...connectRenderer, controls, guidance }); app.ontoolresult!(cardCreation(card, card.permission));
+    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
+    await vi.waitFor(() => expect(control("Confirm disconnect")?.disabled).toBe(false));
+    const view: CardContent = controls.mock.results[0]!.value;
+    expect(view.visibleConfirmation?.()).toBe("disconnect");
+    control("Confirm disconnect")!.click();
+    expect(control("Confirm disconnect")!.disabled).toBe(true);
+    expect(view.visibleConfirmation?.()).toBe("disconnect");
+    expect(guidance.mock.calls.at(-1)?.[1]).toMatchObject({ visibleConfirmation: "disconnect", commandPending: { phase: "sending", action: "disconnect" } });
+    expect(visibleGuidance()).toContain("Waiting for a response…");
+    reply.resolve(); await vi.waitFor(() => expect(root.textContent).toContain("Fixture disconnect delivery failed"));
+    // The failed command pauses the View. Its confirmed read replaces the
+    // old content; explicitly reopen the current controls before testing a
+    // read error while a confirmation is actually displayed.
+    await vi.waitFor(() => expect(control("Disconnect")?.disabled).toBe(false));
+    expect(view.visibleConfirmation?.()).toBeUndefined();
+    control("Disconnect")!.click();
+    const currentView: CardContent = controls.mock.results.at(-1)!.value;
+    expect(currentView.visibleConfirmation?.()).toBe("disconnect");
+    failRead = true;
+    for (const value of ["hidden", "visible"]) {
+      Object.defineProperty(document, "visibilityState", { value, writable: true }); visibility.dispatchEvent(new Event("visibilitychange"));
+    }
+    await vi.waitFor(() => expect(visibleGuidance()).toContain("Use Check status"));
+    expect(control("Confirm disconnect")?.disabled).toBe(true);
+    expect(currentView.visibleConfirmation?.()).toBe("disconnect");
+    failRead = false; control("Check status")!.click();
+    await vi.waitFor(() => expect(control("Confirm disconnect")?.disabled).toBe(false));
+    f.advance(card.snapshot.inputRemainingMs + 1);
+    for (const value of ["hidden", "visible"]) {
+      Object.defineProperty(document, "visibilityState", { value, writable: true }); visibility.dispatchEvent(new Event("visibilitychange"));
+    }
+    await vi.waitFor(() => expect(control("Confirm disconnect")).toBeUndefined());
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(1);
+    expect(f.transport.disconnect).not.toHaveBeenCalled(); await app.onteardown!();
+  } finally { reply.resolve(); f.close(); }
+});
+
+it("discards a disposed confirmation and its callbacks before a new View uses the same card", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    await f.approve();
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const handler = async ({ name, arguments: input }: { name: string; arguments: Record<string, unknown> }) =>
+      cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(input)) : f.cards.act(input as any)));
+    const controls = vi.fn(connectRenderer.controls), first = host(handler);
+    startCard("connect", { ...connectRenderer, controls }); first.ontoolresult!(cardCreation(card, card.permission));
+    const control = (label: string) => root.querySelectorAll("button").find((item) => item.textContent === label);
+    await vi.waitFor(() => expect(control("Disconnect")?.disabled).toBe(false)); control("Disconnect")!.click();
+    const oldView: CardContent = controls.mock.results[0]!.value, oldBack = control("Back")!;
+    expect(oldView.visibleConfirmation?.()).toBe("disconnect"); await first.onteardown!();
+    expect(oldView.visibleConfirmation?.()).toBeUndefined();
+    root = new Element("main"); const returned = host(handler);
+    startCard("connect", connectRenderer); returned.ontoolresult!(cardCreation(card, card.permission));
+    await vi.waitFor(() => expect(control("Disconnect")?.disabled).toBe(false));
+    expect(control("Confirm disconnect")).toBeUndefined();
+    const reads = returned.callServerTool.mock.calls.length, current = root.textContent;
+    oldBack.click(); await vi.advanceTimersByTimeAsync(0);
+    expect(root.textContent).toBe(current); expect(returned.callServerTool).toHaveBeenCalledTimes(reads);
+    expect(f.run(() => f.cardRecords.get(card.snapshot.cardId)?.acceptedInput)).toBeUndefined();
+    await returned.onteardown!();
+  } finally { f.close(); }
+});
+
+it("resolves a visible connection conflict with one exact Disconnect and returns to single-wallet controls", async () => {
+  const f = await walletWorkflowFixture(), held = deferred<void>();
+  let close: (() => unknown) | undefined;
+  try {
+    let sessions = ["a", "b"].map((topic) => ({ topic, accounts: [f.account], methods: ["sui_signTransaction"],
+      chain: "sui:mainnet" as const, expiresAt: new Date(f.now().getTime() + 60000).toISOString(), walletName: "Same wallet" }));
+    const targets = sessions.map((session) => f.run(() => f.records.restoreConnection(session, f.now())).connection);
+    vi.spyOn(f.transport, "session").mockImplementation((topic) => sessions.find((session) => session.topic === topic));
+    vi.spyOn(f.transport, "inspectAll").mockImplementation(() => sessions.map((session) => ({ topic: session.topic, status: "present", session })));
+    vi.mocked(f.transport.disconnect).mockImplementation(async (topic) => { await held.promise; sessions = sessions.filter((session) => session.topic !== topic); });
+    f.observe();
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const app = host(async ({ name, arguments: args }) => cardToolResult(await f.run(() =>
+      name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(args)) : f.cards.act(args as any))));
+    close = app.onteardown; startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
+    await vi.waitFor(() => expect(root.textContent).toContain("More than one wallet connection is saved."));
+    expect(root.querySelectorAll("select")).toHaveLength(0);
+    expect(root.querySelectorAll("summary").map((item) => item.textContent)).not.toContain("Wallet service help");
+    const buttons = root.querySelectorAll("button");
+    expect(buttons.filter((item) => item.textContent === "Disconnect")).toHaveLength(2);
+    expect(buttons.some((item) => item.textContent === "Use address" || item.textContent === "Connect wallet")).toBe(false);
+    for (const target of targets) expect(root.textContent).toContain(target.connectionId);
+    buttons.find((item) => item.textContent === "Disconnect")!.click();
+    expect(f.transport.disconnect).not.toHaveBeenCalled();
+    const targetId = factValues(root, "Connection")[0]!;
+    const selected = targets.findIndex((target) => target.connectionId === targetId);
+    expect(selected).not.toBe(-1);
+    root.querySelectorAll("button").find((item) => item.textContent === "Confirm disconnect")!.click();
+    await vi.waitFor(() => expect(f.transport.disconnect).toHaveBeenCalledExactlyOnceWith(selected === 0 ? "a" : "b"));
+    await vi.waitFor(() => expect(visibleGuidance()).toContain("fully quit all apps"));
+    expect(root.textContent).toContain("Disconnecting wallet…");
+    expect(factValues(root, "Connection")).toEqual([targetId]);
+    held.resolve(); await vi.advanceTimersByTimeAsync(card.snapshot.pollAfterMs);
+    await vi.waitFor(() => expect(root.textContent).toContain("Wallet disconnected"));
+    expect(visibleGuidance()).toContain("manage the remaining connection");
+    expect(factValues(root, "Connection")).toEqual([targetId]);
+    expect(factValues(root, "Wallet")).toEqual(["Same wallet"]);
+    await close?.(); close = undefined; root = new Element("main");
+    const next = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const nextApp = host(async ({ arguments: args }) => cardToolResult(await f.run(() => f.cards.read(cardReferenceSchema.parse(args)))));
+    close = nextApp.onteardown; startCard("connect", connectRenderer); nextApp.ontoolresult!(cardCreation(next, next.permission));
+    await vi.waitFor(() => expect(root.querySelectorAll("button").some((item) => item.textContent === "Use address")).toBe(true));
+    expect(root.textContent).not.toContain("More than one wallet connection");
+    expect(root.querySelectorAll("select")).toHaveLength(0);
+    expect(f.connect).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+  } finally { held.resolve(); await close?.(); f.close(); }
+});
+
+it("starts manage pairing only from its visible Connect wallet button and retries after a fresh read", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    let refuse = true;
+    const app = host(async ({ name, arguments: args }) => {
+      if (name === CARD_TOOLS.act && refuse) { refuse = false; throw new Error("Fixture manual connection delivery failed"); }
+      return cardToolResult(await f.run(() => name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(args)) : f.cards.act(args as any)));
+    });
+    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
+    const connect = () => root.querySelectorAll("button").find((item) => item.textContent === "Connect wallet");
+    await vi.waitFor(() => expect(connect()?.disabled).toBe(false)); expect(f.connect).not.toHaveBeenCalled();
+    connect()!.click();
+    await vi.waitFor(() => expect(root.textContent).toContain("Fixture manual connection delivery failed"));
+    await vi.waitFor(() => expect(connect()?.disabled).toBe(false)); expect(f.connect).not.toHaveBeenCalled();
+    const reads = app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.read).length;
+    connect()!.click(); await vi.waitFor(() => expect(f.connect).toHaveBeenCalledOnce());
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.read).length).toBeGreaterThan(reads);
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(2);
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled(); await app.onteardown!();
+  } finally { f.close(); }
+});
+
+it("offers explicit Use address when the saved same address belongs to another connection", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    const { connection } = await f.approve();
+    await f.run(() => f.activity.setActiveAccount(f.account, "wallet_connection", f.now(), { id: "previous-connection" }));
+    const { session } = await f.run(() => f.sessions.createReviewSession([f.plan], f.now()));
+    const review = await f.run(() => f.cards.create("review", { reviewSessionId: session.id }));
+    expect(workflowViewSchema.parse(review.snapshot.data).automaticAction).toBeUndefined();
+    const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const app = host(async ({ name, arguments: args }) => cardToolResult(await f.run(() =>
+      name === CARD_TOOLS.read ? f.cards.read(cardReferenceSchema.parse(args)) : f.cards.act(args as any))));
+    startCard("connect", connectRenderer); app.ontoolresult!(cardCreation(card, card.permission));
+    const use = () => root.querySelectorAll("button").find((item) => item.textContent === "Use address");
+    await vi.waitFor(() => expect(use()?.disabled).toBe(false));
+    expect(root.querySelectorAll("select")).toHaveLength(0);
+    use()!.click();
+    await vi.waitFor(async () => expect(await f.run(() => f.activity.getActiveAccount())).toMatchObject({ walletId: connection.connectionId }));
+    expect(workflowViewSchema.parse((await f.read(review)).snapshot.data).automaticAction).toMatchObject({ action: "prepare_review", connectionId: connection.connectionId });
+    expect(app.callServerTool.mock.calls.filter(([call]) => call.name === CARD_TOOLS.act)).toHaveLength(1);
+    expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled(); await app.onteardown!();
+  } finally { f.close(); }
+});
+
+it("renders the backend's single usable choice while an expired connected record remains manageable", async () => {
+  const f = await walletWorkflowFixture();
+  try {
+    const { connection } = await f.approve();
+    const historical = f.run(() => f.records.restoreConnection({ topic: "recorded-expired", accounts: [f.account], methods: ["sui_signTransaction"],
+      chain: "sui:mainnet", expiresAt: new Date(f.now().getTime() - 1).toISOString(), walletName: connection.walletName }, f.now())).connection;
+    await f.run(() => f.activity.clearActiveAccount(f.now()));
+    let card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const act = vi.fn(), controls = connectRenderer.controls(card.snapshot, act, undefined), node = controls.node as unknown as Element;
+    expect(node.querySelectorAll("button").filter((item) => item.textContent === "Disconnect")).toHaveLength(2);
+    expect(node.textContent).toContain("Recorded connection. It is not available for account use.");
+    expect(factValues(node, "Connection").sort()).toEqual([connection.connectionId, historical.connectionId].sort());
+    expect(node.querySelectorAll("select")).toHaveLength(0);
+    node.querySelectorAll("button").find((item) => item.textContent === "Use address")!.click();
+    expect(act).toHaveBeenCalledExactlyOnceWith({ action: "use_account", walletRunId: f.runtime.runId, connectionId: connection.connectionId, account: f.account });
+    controls.dispose();
+    // Set the source without another SDK check so this is still the observation gap.
+    await f.run(() => f.activity.setActiveAccount(f.account, "wallet_connection", f.now(), { id: connection.connectionId }));
+    const { session } = await f.run(() => f.sessions.createReviewSession([f.plan], f.now()));
+    const review = await f.run(() => f.cards.create("review", { reviewSessionId: session.id }));
+    const data = workflowViewSchema.parse(review.snapshot.data);
+    expect(data.automaticAction).toMatchObject({ action: "prepare_review", connectionId: connection.connectionId });
+    const rendered = reviewRenderer.controls(review.snapshot, vi.fn(), undefined);
+    expect(rendered.node.textContent).not.toContain("No wallet connection is available");
+    expect(rendered.node.textContent).toContain("Fixture Wallet"); rendered.dispose();
+    f.advance(Date.parse(connection.expiresAt) - f.now().getTime());
+    card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    const expired = connectRenderer.controls(card.snapshot, vi.fn(), undefined);
+    expect(expired.node.textContent).toContain("No usable wallet connection");
+    expect((expired.node as unknown as Element).querySelectorAll("button").some((item) => item.textContent === "Connect wallet")).toBe(true);
+    expect(factValues(expired.node as unknown as Element, "Connection").sort()).toEqual([connection.connectionId, historical.connectionId].sort());
+    (expired.node as unknown as Element).querySelectorAll("button").find((item) => item.textContent === "Disconnect")!.click();
+    expect(factValues(expired.node as unknown as Element, "Connection")).toHaveLength(1);
+    expired.dispose(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
   } finally { f.close(); }
 });

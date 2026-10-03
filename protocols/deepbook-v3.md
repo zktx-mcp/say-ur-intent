@@ -13,12 +13,12 @@ Protocol concepts referenced by current runtime evidence include:
 - Read-only orderbook context through pinned DeepBook SDK simulation reads.
 - Read-only raw-quantity and display-amount quotes through pinned DeepBook SDK simulation reads.
 
-DeepBook orderbook, raw-quantity quote, and display-amount quote reads use an internal SDK simulation sender placeholder. They do not require wallet connection because these market reads are not wallet-account reads.
+DeepBook orderbook, raw-quantity quote, and display-amount quote reads use an internal SDK simulation sender placeholder. They use `client.core.simulateTransaction` and do not require wallet connection because these market reads are not wallet-account reads. These read queries are separate from review-time simulation of the exact transaction material.
 
-Signable swap review for the account-bound DeepBook swap route is part of current runtime support; `read.list_supported_protocols` and the concrete MCP tool responses are the authoritative status. Before a `ready_for_wallet_review` state allows user-controlled signing on the local review page, the review server validates the pinned registry, refreshes the live quote, resolves objects, and runs `client.core.simulateTransaction` review.
+Signable swap review for the account-bound DeepBook swap route is part of current runtime support; `read.list_supported_protocols` and the concrete MCP tool responses are the authoritative status. The internal Review card displays account-bound evidence after the backend validates the pinned registry, refreshes the live quote, resolves objects, and simulates the exact stored material with validation checks enabled. `ready_for_wallet_review` describes that evidence, not signing authority.
 
 Out of scope:
 
 - Limit or market order review.
 
-The MCP layer and review API do not sign, execute, or return transaction bytes. Wallet signing and execution happen only in the user's wallet from the local review page.
+Ordinary MCP tools and review-status reads do not authorize a transaction or return transaction bytes. An explicit Review-card action admits the exact request, the user's wallet signs it through WalletConnect, and the backend verifies the returned bytes and signer before submitting once. Chain outcome comes from independent receipt reads.

@@ -85,7 +85,7 @@ once and offers an explicit same-card read for unfinished state or a read failur
 it does not start polling or expiry timers. Teardown ignores late replies. A
 failed read preserves an already displayed result without claiming current state.
 
-Connect shows wallet state and the selected account. The connected-wallet overview omits the separate Close action; Back in disconnection confirmation returns to the overview without sending a command. A connect-intent card prepares its QR automatically after authenticated state confirmation; manage and disconnect intents do not pair. It hides additional pairing while connections or connection operations exist, and uses an in-card target-specific Confirm disconnect/Back step for disconnection. Confirmation is discarded when the card revision or target changes. Connect shows approved accounts and read context. An explicit connection with
+Connect shows wallet state and the selected account. The connected-wallet overview omits the separate Close action; Back in disconnection confirmation returns to the overview without sending a command. A connect-intent card prepares its QR automatically after authenticated state confirmation; manage pairs only after an explicit Connect wallet click; disconnect intent does not pair. It hides additional pairing while unexpired connected wallets or pending connection operations exist, and uses an in-card target-specific Confirm disconnect/Back step for disconnection. Confirmation is discarded when the card revision or target changes. Connect shows approved accounts and read context. An explicit connection with
 one approved account can set read context; multiple accounts require selection.
 The stored read context persists separately from default asset-read eligibility. An implicit asset read requires a usable current connection for the selected account; explicit-address reads and stored result reads do not. Clearing read context is not wallet disconnection. Reconciliation alone never
 sets it again. A waiting Connect card displays only the same live pairing QR
@@ -110,8 +110,8 @@ The sign action requires backend-permitted
 ready_for_wallet_review, verified transaction review data, a matching live
 account and the user's wallet selection. With exactly one current candidate,
 show its wallet and account and use the explicit action button as that selection;
-do not require a dropdown. Multiple candidates require an explicit selection.
-Preparation never grants wallet approval. Only the approval request requires a normal-flow transaction button; failed preparation offers an explicit retry and ambiguous targets require selection. Cancel review beside the primary action explicitly ends this card’s unsubmitted input; it never cancels a submitted transaction. Only the backend sends bytes to the
+do not require a dropdown. Multiple valid connections block preparation and signing; show the reason and direct the user to resolve them in Connect.
+Preparation never grants wallet approval. Only the approval request requires a normal-flow transaction button; failed preparation offers an explicit retry. Several approved addresses require selection within the single wallet connection. Cancel review beside the primary action explicitly ends this card’s unsubmitted input; it never cancels a submitted transaction. Only the backend sends bytes to the
 wallet and verifies its response. A card never reports its own chain result.
 
 Use the backend's preparation choices for account compatibility; do not recreate
@@ -290,29 +290,32 @@ that read cannot reconnect, sign or resubmit. Existing DB expiry wake-ups remain
 independent of progress polling. Availability and allowed actions participate in
 display identity; remaining-time hints do not reset input selection.
 
-Wallet-service startup and recovery are separate from connection and transaction
-states. Show normal initialization neutrally; do not describe it as missing
-connection approval. A live Connect/manage card places **Restart wallet service**
-inside **Wallet service help**, followed by an impact summary and **Confirm
-restart**/**Back**. Confirmation binds the displayed run and affected operations;
-a changed run or impact requires a new confirmation. An already consumed card
-does not acquire a second input permission. Its recovery guidance points to new
-wallet connection controls in chat when another restart is possible.
+Wallet-service startup is separate from connection and transaction states.
+Show normal initialization neutrally. Connect owns connection, approved-address
+selection and exact-target disconnection; it has no Wallet service help section
+or service-restart control. Normal disconnected manage shows Connect wallet;
+opening manage never starts pairing. In `connectionConflict`, show each target
+and its Disconnect control in the main content, including enough identity to
+distinguish equal names or addresses. Hide account-use and review/signing
+controls until the backend reports a unique usable connection.
 
-The common lifecycle classifies a failed restart using that same card's saved
-recovery identity. Admitted recovery is observed, an unadmitted current target
-requires explicit confirmation, and an ended target becomes historical. Restart
-is never an automatic action or automatic-command retry. Reading state, moving
-between chats, replacing the SDK run and repairing a display cannot clear the
-View's command pause or repeat a restart. Run identity also binds existing wallet
-actions, retained Review controls and retry confirmation.
+The local confirmation stage describes presentation, not authority. Inform the
+common lifecycle when opening or leaving a disconnect confirmation so it applies
+current guidance and input locks to the new controls. Back cannot cancel a sent
+command, unlock another action, discard its error or resend it. Preserve the
+same View and opened Details during unchanged state reads; disposed callbacks
+cannot alter its replacement. Normal display changes do not postpone required
+backend state reads.
 
-Running recovery keeps observation after input expiry. Terminal recovery shows
-its own outcome even if another run is now starting. Service restart success
-does not mean remote disconnection, new wallet approval or chain success. A
-state-publication failure offers **Check status** for the same card; it does not
-repeat SDK startup. Current service messages, last recorded connection facts and
-the last successful service-check time must remain distinct.
+For a stopped/unresponsive connection service, explain the actual operational
+path: fully quit all apps using Say Ur Intent, then reopen them. Closing a peer
+or window alone may not stop the shared owner. Do not promise that restart
+removes remote sessions or confirms an interrupted disconnect. Normal QR or
+initialization is not diagnosed as failure by a timer. An uncertain command
+first offers the same-request status check; the model cannot act for the user.
+Historical service-recovery cards retain their own recorded result and no new
+input. Their service outcome never implies connection approval, remote removal
+or a transaction outcome.
 
 Local-data counts describe the backend state at the time they are read. A later
 replacement warning must not use a stale count, especially zero, as an assurance

@@ -941,7 +941,7 @@ export class SqliteActivityStore implements ActivityStore {
       (address, id, name, now) => this.setActiveAccountSync(address, "wallet_connection", now, { id, name }),
       clock, this.createTransactionMaterialStore(),
       (input, at) => this.evaluateWorkflowState(input, records, ownerId, at === undefined ? clock : () => at),
-      () => this.getActiveAccountSync()?.address);
+      () => this.getActiveAccountSync());
     return records;
   }
 
@@ -1002,13 +1002,13 @@ export class SqliteActivityStore implements ActivityStore {
       const authority = request && records.authority(request.attemptId);
       const details = request?.execution && records.executionDetails(request.attemptId);
       const connection = record?.state.kind === "connect" && record.operationId ? records.connection(record.operationId) : undefined;
-      const activeAccount = this.getActiveAccountSync()?.address, targetAccount = session?.account ?? activeAccount;
+      const storedAccount = this.getActiveAccountSync(), activeAccount = storedAccount?.address, targetAccount = session?.account ?? activeAccount;
       const facts = { evaluatedAt: now.toISOString(), ownerId, record, session, request, authority,
         hasReviewInput: !!session && session.status !== "expired" && Date.parse(session.expiresAt) > now.getTime() &&
           cards.hasReviewInput(session.id, ownerId, now),
         walletAvailability: input.walletAvailability, walletObservation: input.walletObservation,
-        runtimeRecovery: record && records.walletRecovery(record), activeAccount,
-        recoveryImpact: record?.scope === "connect" && record.state.input.intent === "manage" ? records.walletRecoveryImpact() : undefined,
+        runtimeRecovery: record && records.walletRecovery(record), activeAccount, activeAccountConnectionId: storedAccount?.walletId,
+        walletDependent: !target || target.walletDependent,
         connections: records.connectionViews(),
         connection: connection ? records.connectionView(connection.connection) : undefined,
         boundReview: request && (record?.operationId || record?.scope === "review_manage") ? records.requestReview(request.attemptId) : undefined,

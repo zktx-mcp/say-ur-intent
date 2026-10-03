@@ -242,7 +242,7 @@ export async function smokeInstalledRuntime(installDir: string, binPath: string)
     }
     const status = await (await get(`/api${settings.pathname}`, { "x-say-ur-intent-token": settings.hash.slice(1) })).json() as { server?: { version?: string; network?: string } };
     if (status.server?.version !== manifest.version || status.server.network !== "mainnet") throw new Error("Installed Settings server metadata mismatch.");
-    stage = "packaged wallet child and scoped service recovery";
+    stage = "packaged wallet child and retired-input rejection";
     const parentPid = transport.pid;
     const resultData = (value: Awaited<ReturnType<Client["callTool"]>>) => {
       const payload = value.structuredContent as { ok?: boolean; data?: unknown } | undefined;
@@ -262,20 +262,25 @@ export async function smokeInstalledRuntime(installDir: string, binPath: string)
     const storePath = join(installDir, "runtime-data/walletconnect/sessions.sqlite");
     if (!existsSync(storePath) || process.platform !== "win32" && (statSync(storePath).mode & 0o077) !== 0) throw new Error("Installed SDK storage is missing or not private.");
     const priorRun = before.walletAvailability.walletRunId;
-    card = cardSnapshotSchema.parse(resultData(await client.callTool({ name: CARD_TOOLS.act, arguments: {
+    const refused = await client.callTool({ name: CARD_TOOLS.act, arguments: {
       ...reference, revision: card.revision, input: { action: "restart_wallet_service", walletRunId: priorRun }
-    } })));
-    const recovering = Date.now();
-    while (card.state !== "closed" && Date.now() - recovering < DEFAULT_REQUEST_TIMEOUT_MSEC) {
-      await new Promise((resolve) => setTimeout(resolve, WALLET_CONNECTION_POLL_SECONDS * 1000)); card = await current();
-    }
+    } });
+    if (!refused.isError) throw new Error("Installed Connect card accepted its retired restart action.");
+    card = await current();
     const after = workflowViewSchema.parse(card.data);
-    if (card.state !== "closed" || card.reason !== "completed" || !after.runtimeRecovery || !("outcome" in after.runtimeRecovery) || after.runtimeRecovery.outcome !== "available" ||
-        after.runtimeRecovery.priorRunId !== priorRun || after.walletAvailability.status !== "available" ||
-        after.runtimeRecovery.nextRunId !== after.walletAvailability.walletRunId || after.walletAvailability.walletRunId === priorRun ||
-        parentPid === undefined || transport.pid !== parentPid) throw new Error("Installed SDK recovery did not preserve the parent and replace its run.");
+    if (card.state !== "ready" || after.walletAvailability.status !== "available" ||
+        after.walletAvailability.walletRunId !== priorRun || after.runtimeRecovery || after.automaticAction ||
+        !after.allowedActions.includes("connect") || parentPid === undefined || transport.pid !== parentPid) {
+      throw new Error("Installed wallet controls changed the SDK run or started pairing without user input.");
+    }
+    try {
+      const conflictingLease = acquireDataDirectoryOwner(storePath); conflictingLease.close();
+      throw new Error("Installed SDK child did not retain its exclusive storage lease.");
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "DATA_DIRECTORY_OWNED") throw error;
+    }
     walletChecked = true;
-    process.stderr.write("Installed package MCP, card resources, Settings and wallet-child recovery checks passed.\n");
+    process.stderr.write("Installed package MCP, card resources, Settings and wallet-child ownership checks passed.\n");
   } catch (error) {
     throw new Error(`Installed package check failed at ${stage}.${stage === "startup/mainnet prerequisites" ? " Startup requires reachable Sui mainnet endpoints." : ""}`, { cause: error });
   } finally {

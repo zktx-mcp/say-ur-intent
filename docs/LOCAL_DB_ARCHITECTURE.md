@@ -1,6 +1,6 @@
 # Local DB Architecture
 
-Say Ur Intent uses a local SQLite database for durable product state that must survive MCP server restarts. The database stores account read context, Say Ur Intent review activity evidence, live review and session state shared across local AI clients, and user-requested bounded Sui activity facts. It is not a custody store, wallet authorization store, background indexer, complete wallet-history store, or raw transaction archive.
+Say Ur Intent uses a local SQLite database for durable product state that must survive MCP server restarts. The database stores account read context, Say Ur Intent review activity evidence, live review and session state shared across local AI clients, and user-requested bounded Sui activity facts. It is not a custody store, background indexer, complete wallet-history store, or raw transaction archive. Private per-request authority records enforce one admitted transaction; they do not grant standing wallet approval or hold the user's signing key.
 
 This document is for maintainers and contributors who change local state, import/export behavior, activity queries, or review evidence storage. Product users normally need only the README and `docs/MCP_SETUP.md`.
 
@@ -129,7 +129,7 @@ Non-terminal review session expiry is recorded lazily when the session is read o
 
 ## Shared local server
 
-Exactly one parent runtime owner per data directory binds the configured loopback port and creates the shared product services and SQLite stores. Other clients authenticate the listener before sending control credentials and forward MCP messages to it. The authentication covers database identity, internal API version 4, configuration (including WalletConnect project configuration) and server instance. Proof and subsequent dispatch use the same TCP connection. Host/Origin validation is separate from authentication; neither protects against a malicious process running as the same OS user.
+Exactly one parent runtime owner per data directory binds the configured loopback port and creates the shared product services and SQLite stores. Other clients authenticate the listener before sending control credentials and forward MCP messages to it. The authentication covers database identity, internal API version 6, configuration (including WalletConnect project configuration) and server instance. Proof and subsequent dispatch use the same TCP connection. Host/Origin validation is separate from authentication; neither protects against a malicious process running as the same OS user.
 
 The private `runtime-control.key` file is separate from UI permissions and wallet credentials and is excluded from product backups. Stdio closure and process signals close the owned server. No client signals a peer backend. The parent may terminate only its own SDK child. A peer can acquire the port after it becomes free. Failed calls are not replayed automatically. MCP framing, cancellation and EOF handling start before backend acquisition; wallet SDK readiness does not block parent service startup.
 
@@ -188,34 +188,44 @@ perform a current session check. After digest, signer and mainnet verification,
 the parent performs a final session check before the synchronous submission CAS
 and dispatch. A later remote event is not presumed already known.
 
-`restart_wallet_service` is admitted in a live Connect/manage card. Its accepted
-input and typed recovery result use `live_read_cards` JSON fields, with no
-connection `operation_id`. Admission and revocation of unsubmitted authority
-commit together. SDK callback flags remain pending until actual child exit;
-parent verification, submission and lookup flags remain pending until their own
-work ends. SDK readiness cannot clear those independent guards. A recovery card
-is not complete at process creation or lease acquisition: SDK restoration and
-database publication must finish. A failed result write can be repaired by a
-current read without another SDK command. Parent recovery closes unfinished
-cards as `server_restarted`; their last saved recovery phase is historical.
+Historical service-recovery results in `live_read_cards` remain readable;
+Connect accepts no new service-restart input. Parent recovery closes unfinished
+cards as `server_restarted`. SDK callback flags remain pending until actual
+child exit, while parent verification, submission and lookup flags remain until
+their own work ends. SDK readiness does not clear those independent guards.
 
-An admission that changes wallet choices or recovery impact also publishes the
+Initial SDK restoration considers the entire known connection set, including
+prior-owner records, before publishing current eligibility. Only confirmed
+known connected records transfer to the new owner. Multiple valid records are
+management targets, not usable wallet choices: `connectionConflict` is derived
+from those rows with no additional table. Targeted disconnection remains
+available while new pairing, account use, review preparation and signing are
+blocked. The final submission transaction applies the same single-connection
+rule. Failed/stopped records and unknown SDK sessions do not restore authority.
+
+`active_account_context.wallet_id` preserves the connection through which the
+default address was selected. Current eligibility requires that exact ID and
+an approved address in the sole unexpired connection, with no pending connection
+operation. Missing source IDs remain valid historical/import data but require
+explicit selection before current default use. Eligibility is derived at the
+database evaluation time and published to cards as `usableConnectionId` and
+`assetReadAccount`; Views do not recount recorded connections. This adds no
+table or expiry writer. Stored status, disconnection outcomes and historical
+account records retain their separate meanings.
+
+An admission that changes connection eligibility or targets also publishes the
 owner's ready Connect/Review card revisions in that same transaction, after
 consuming its own input. A competing admission after the confirmation read
 therefore invalidates the earlier revision even before the SDK returns a QR or
 approval. Publication failure rolls back admission; no SDK operation starts.
 
-Recovery execution and outcome persistence have separate completion facts. A
-failed replacement reservation leaves the old run fenced and unavailable; no
-new SDK process is started by repairing that record. The workflow retains
-unsaved failure facts against their exact card, run and data generation.
-Service-loss authority revocation and the recovery's failure outcome commit
-together. Current wallet-state reads retry only those database writes, and a
-new recovery admission first settles a known failure rather than relabelling
-it as superseded. Only a genuinely unfinished startup can be superseded.
-Repeated reads do not change a stored outcome's time or revision. Unrelated
-stored transaction results and dispatched chain observation do not depend on
-that recovery write succeeding.
+Service-loss authority revocation is retained against its SDK run and data
+generation until it commits. Current wallet-state reads retry that database
+write; they do not start another SDK process. Repeated reads after a successful
+repair do not repeat the transition. Unrelated stored transaction results and
+already dispatched chain observation remain independent of that write.
+The supervisor's explicit replacement primitive requires fencing and actual
+child exit before a new run, but it has no current card or model entry point.
 
 If a completed callback's flag write fails, the owner retains its exact operation
 identity as completion evidence. A current state read can retry that database

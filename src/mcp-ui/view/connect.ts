@@ -1,9 +1,10 @@
 import QRCode from "qrcode";
+import { CONNECTION_CONFLICT_MESSAGE } from "../../core/session/walletConnection.js";
 import { t } from "../../../review-app/src/i18n/i18n.js";
-import { connectionRecoveryRoute, workflowViewSchema, type WorkflowView } from "../../core/session/workflowView.js";
+import { workflowViewSchema, type WorkflowView } from "../../core/session/workflowView.js";
 import type { CardSnapshot, CardWalletDisplay } from "../contracts.js";
 import { section, accordion, element, row, monoShort, button, field, select, timeValue } from "../../../review-app/src/ui/ui.js";
-import { walletCommandGuidance, type CardDisplayRecovery, type CardRenderer, type CardViewContext } from "./lifecycle.js";
+import { walletCommandGuidance, type CardConfirmation, type CardDisplayRecovery, type CardRenderer, type CardViewContext } from "./lifecycle.js";
 import "./workflow.css";
 
 const connectionLabels: Record<NonNullable<WorkflowView["connection"]>["status"], string> = {
@@ -16,14 +17,31 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
   const data = workflowViewSchema.parse(snapshot.data);
   const node = element("div", "workflow-card"), facts = section();
   let disposed = false;
+  let confirmation: { action: CardConfirmation; overview: Element[] } | undefined;
+  // Local presentation is not command authority. Every panel switch lets the
+  // frame apply its current guidance and lock to the newly visible controls.
+  const showPanel = (next?: { action: CardConfirmation; node: HTMLElement }) => {
+    if (disposed) return;
+    const overview = confirmation?.overview ?? [...node.children];
+    confirmation = next ? { action: next.action, overview } : undefined;
+    node.replaceChildren(...(next ? [next.node] : overview));
+    context?.onDisplayChange?.();
+  };
   const connected = data.connections.filter((connection) => connection.status === "connected");
+  // An admitted operation describes its own target. The unsubmitted overview
+  // describes current connections; a result must not display another wallet
+  // under the original operation's status.
+  const displayedConnections = data.connection
+    ? data.connection.accounts.length ? [data.connection] : [] : connected;
+  const distinguishTargets = displayedConnections.length > 1 || !!data.connectionConflict;
   const available = connected.filter((connection) => connection.pendingAction === undefined);
+  const usable = data.connections.find((connection) => connection.connectionId === data.usableConnectionId);
   const pending = data.connections.some((connection) => connection.status === "awaiting_approval" || connection.pendingAction === "disconnect");
   const waitingElsewhere = !data.connection && data.connections.some((connection) => connection.status === "awaiting_approval");
   const action = (label: string, input: Record<string, unknown>) => {
-    const bound = ["connect", "disconnect", "use_account", "restart_wallet_service"].includes(String(input.action))
+    const bound = ["connect", "disconnect", "use_account"].includes(String(input.action))
       ? { ...input, walletRunId: data.walletAvailability.walletRunId } : input;
-    const control = button(label, () => { if (!disposed) act?.(bound); }, ["disconnect", "restart_wallet_service"].includes(String(input.action)) ? "danger" : input.action === "connect" ? "primary" : "secondary");
+    const control = button(label, () => { if (!disposed) act?.(bound); }, ["disconnect"].includes(String(input.action)) ? "danger" : input.action === "connect" ? "primary" : "secondary");
     control.dataset.cardAction = String(input.action); control.disabled = !act; return control;
   };
   facts.append(row("Network", t.common.mainnet));
@@ -41,53 +59,69 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
   }
   const status = row(data.walletAvailability.status !== "available" ? "Last recorded status" : "Status",
     data.connectionAction === "disconnect" && data.connection?.status === "failed" ? "Disconnection could not be confirmed" :
-    pending && connected.some((item) => item.pendingAction === "disconnect") ? "Disconnecting wallet…" : data.connection ? connectionLabels[data.connection.status] : connected.length ? "Wallet connected" : waitingElsewhere ? "Connection approval is pending in another card" : data.walletAvailability.status !== "available" ? "Connection not confirmed" : "No wallet connected");
+    (data.connection ? data.connection.pendingAction === "disconnect" : pending && connected.some((item) => item.pendingAction === "disconnect")) ? "Disconnecting wallet…" : data.connection ? connectionLabels[data.connection.status] : data.connectionConflict ? "Multiple wallet connections need attention" : waitingElsewhere ? "Connection approval is pending in another card" : usable ? "Wallet connected" : data.walletAvailability.status !== "available" ? connected.length ? "Wallet connected" : "Connection not confirmed" : connected.length ? "No usable wallet connection" : "No wallet connected");
   status.setAttribute("role", "status"); facts.append(status);
   if (data.walletAvailability.status !== "available") {
     facts.append(element("p", "ui-note", data.walletAvailability.message));
-    if (data.connection && !connected.some((connection) => connection.connectionId === data.connection!.connectionId)) {
+    if (data.connection && !displayedConnections.length) {
       facts.append(row("Last updated", timeValue(data.connection.updatedAt)));
     }
   }
   if (data.connection?.reason) facts.append(element("p", "ui-note", data.connection.reason));
   if (data.activeAccount && connected.some((connection) => connection.accounts.some((account) => account !== data.activeAccount))) {
-    facts.append(row("Selected account", monoShort(data.activeAccount)));
+    facts.append(row("Saved default address", monoShort(data.activeAccount)));
   }
+  if (data.connectionConflict) facts.append(element("p", "ui-note", CONNECTION_CONFLICT_MESSAGE));
+  if (act && data.allowedActions.includes("connect") && snapshot.input.intent === "manage") facts.append(action("Connect wallet", { action: "connect" }));
   node.append(facts);
   const details = accordion("Details");
   if (data.walletObservation) details.body.append(row("Last service check", timeValue(data.walletObservation.observedAt)));
+  if (data.connection && !distinguishTargets) details.body.append(row("Connection", data.connection.connectionId));
 
-  const choices = available.flatMap((connection) => connection.accounts.map((account) => ({ connection, account })));
-  if (act && data.allowedActions.includes("use_account") && choices.some((choice) => choice.account !== data.activeAccount)) {
-    const form = document.createElement("form"), choiceInput = select({ choices: [{ value: "", label: "Select an account" }, ...choices.map((choice) => ({ value: `${choice.connection.connectionId}:${choice.account}`, label: `${choice.connection.walletName ?? "Wallet"} · ${choice.account}` }))] });
-    form.className = "ui-form";
-    choiceInput.required = true; choiceInput.setAttribute("aria-label", "Account to use");
-    const use = button("Use account", () => undefined); use.type = "submit"; use.dataset.cardAction = "use_account";
-    form.append(field("Account", choiceInput), use); form.addEventListener("submit", (event) => {
-      event.preventDefault(); const choice = choices.find((item) => `${item.connection.connectionId}:${item.account}` === choiceInput.value);
-      if (!disposed && choice) act?.({ action: "use_account", walletRunId: data.walletAvailability.walletRunId, connectionId: choice.connection.connectionId, account: choice.account });
-    }); details.body.append(form);
+  const choices = usable?.accounts.map((account) => ({ connection: usable, account })) ?? [];
+  const readAccount = data.assetReadAccount;
+  if (act && data.allowedActions.includes("use_account") && choices.some((choice) => readAccount?.status !== "available" || choice.account !== readAccount.account)) {
+    const accounts = section("Address for reads");
+    accounts.append(element("p", "ui-note", "Choose the default address for reads. Existing transaction reviews keep their original address."));
+    if (choices.length === 1) {
+      const choice = choices[0]!;
+      accounts.append(action("Use address", { action: "use_account", connectionId: choice.connection.connectionId, account: choice.account }));
+    } else {
+      const form = document.createElement("form"), choiceInput = select({ choices: [{ value: "", label: "Select an address" },
+        ...choices.map((choice) => ({ value: choice.account, label: choice.account }))] });
+      form.className = "ui-form"; choiceInput.required = true; choiceInput.setAttribute("aria-label", "Default address for reads");
+      const use = button("Use address", () => undefined); use.type = "submit"; use.dataset.cardAction = "use_account";
+      form.append(field("Address", choiceInput), use); form.addEventListener("submit", (event) => {
+        event.preventDefault(); const choice = choices.find((item) => item.account === choiceInput.value);
+        if (!disposed && choice) act?.({ action: "use_account", walletRunId: data.walletAvailability.walletRunId, connectionId: choice.connection.connectionId, account: choice.account });
+      }); accounts.append(form);
+    }
+    facts.append(accounts);
   }
-  for (const connection of connected) {
+  for (const connection of displayedConnections) {
     const item = element("div");
+    if (distinguishTargets) item.append(row("Connection", connection.connectionId));
     if (data.walletAvailability.status === "unavailable") item.append(row("Last updated", timeValue(connection.updatedAt)));
     details.body.append(row("Connection expires", timeValue(connection.expiresAt)));
-    for (const account of connection.accounts) item.append(row(connection.walletName ?? "Wallet", monoShort(account)));
-    if (act && !connection.pendingAction && data.allowedActions.includes("disconnect")) {
+    item.append(row("Wallet", connection.walletName ?? "Connected wallet"));
+    if (!data.connection && !data.connectionConflict && data.walletAvailability.status === "available" && !pending && connection.connectionId !== data.usableConnectionId) {
+      item.append(element("p", "ui-note", "Recorded connection. It is not available for account use."));
+    }
+    for (const account of connection.accounts) item.append(row("Approved address", monoShort(account)));
+    if (act && connection.status === "connected" && !connection.pendingAction && data.allowedActions.includes("disconnect")) {
       const controls = element("div", "card-actions");
       const open = button("Disconnect", () => undefined, "secondary"); open.dataset.cardAction = "disconnect"; open.disabled = !act;
       open.addEventListener("click", () => {
         if (disposed) return;
-        const original = [...node.children];
         const confirmation = section("Disconnect wallet?");
         confirmation.append(row("Wallet", connection.walletName ?? "Wallet"), row("Network", t.common.mainnet));
+        if (distinguishTargets) confirmation.append(row("Connection", connection.connectionId));
         for (const account of connection.accounts) confirmation.append(row("Account", monoShort(account)));
-        const back = button("Back", () => undefined, "secondary");
-        back.addEventListener("click", () => { if (!disposed) node.replaceChildren(...original); });
+        const back = button("Back", () => showPanel(), "secondary");
         const actions = element("div", "card-actions");
         actions.append(action("Confirm disconnect", { action: "disconnect", connectionId: connection.connectionId }), back);
         confirmation.append(actions);
-        node.replaceChildren(confirmation);
+        showPanel({ action: "disconnect", node: confirmation });
       });
       controls.append(open); item.append(controls);
       if (snapshot.input.intent === "disconnect" && available.length === 1) queueMicrotask(() => { if (!disposed) open.click(); });
@@ -106,29 +140,6 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
     } else facts.append(element("p", "ui-note", "The QR code is not available in this view."));
   }
   if (act && data.allowedActions.includes("stop_connection")) facts.append(action("Stop connecting", { action: "stop_connection" }));
-  const help = accordion("Wallet service help");
-  const impact = data.recoveryImpact;
-  if (data.allowedActions.includes("restart_wallet_service") && !impact) throw new Error("Wallet restart details are unavailable.");
-  if (act && impact && data.allowedActions.includes("restart_wallet_service") && data.walletAvailability.walletRunId) {
-    help.body.append(element("p", "ui-note", "If the wallet service stops responding, you can restart it here. Other cards and submitted transaction results remain available."));
-    const open = button("Restart wallet service", () => {
-      if (disposed) return;
-      const original = [...node.children], confirmation = section("Restart wallet service?");
-      confirmation.append(element("p", "ui-note", "This interrupts connection attempts and approval requests that have not been submitted. Update the review and request approval again afterward. It does not cancel a submitted transaction or remove connections from your wallet app."));
-      confirmation.append(row("Approval requests interrupted", String(impact.attemptIds.length)));
-      for (const connection of data.connections.filter((item) => ["connected", "awaiting_approval"].includes(item.status))) {
-        confirmation.append(row("Affected wallet", connection.walletName ?? "Wallet connection"));
-        for (const account of connection.accounts) confirmation.append(row("Account", monoShort(account)));
-      }
-      const back = button("Back", () => { if (!disposed) node.replaceChildren(...original); }, "secondary");
-      const actions = element("div", "card-actions");
-      actions.append(action("Confirm restart", { action: "restart_wallet_service" }), back);
-      confirmation.append(actions);
-      node.replaceChildren(confirmation);
-    });
-    open.dataset.cardAction = "restart_wallet_service"; help.body.append(open);
-  } else help.body.append(element("p", "ui-note", "If the wallet service stops responding, ask in chat to open wallet connection controls, then choose Restart wallet service."));
-  facts.append(help.details);
   if (details.body.children.length) facts.append(details.details);
   let drawing = false, displayFailure: CardDisplayRecovery | undefined;
   const draw = () => {
@@ -150,7 +161,8 @@ function connectionView(snapshot: CardSnapshot, act?: (input: Record<string, unk
       context?.onDisplayChange?.();
     });
   };
-  return { node, mount: draw, displayRecovery: () => displayFailure, dispose: () => { disposed = true; } };
+  return { node, mount: draw, displayRecovery: () => displayFailure, visibleConfirmation: () => confirmation?.action,
+    dispose: () => { disposed = true; confirmation = undefined; } };
 }
 
 export const connectRenderer = {
@@ -164,19 +176,21 @@ export const connectRenderer = {
     if (data.connectionAction === "disconnect" && data.connection?.status === "failed") {
       return "Check the connection in your wallet app and remove it there if it is still listed. Disconnection was not confirmed here.";
     }
-    const recoveryRoute = connectionRecoveryRoute(data);
-    if (recoveryRoute) {
-      const here = !context.readOnly && data.allowedActions.includes("restart_wallet_service");
-      return (recoveryRoute === "conditional" ? "If this request is not responding, " : "") +
-        (here ? (recoveryRoute === "conditional" ? "open" : "Open") + " Wallet service help and choose Restart wallet service."
-          : (recoveryRoute === "conditional" ? "ask" : "Ask") + " in chat to open wallet connection controls. You can restart the wallet service there after confirming the effects.");
+    // The visible heading, effects and Confirm/Back controls describe this
+    // step. A route back into the overview would name controls hidden here.
+    if (context.visibleConfirmation) return undefined;
+    if (data.runtimeRecovery) return undefined;
+    if (data.connectionAction === "disconnect" && data.connection?.status === "disconnected") {
+      return data.connectionConflict
+        ? "Ask in chat to open wallet connection controls to disconnect another saved connection."
+        : data.connections.some((item) => item.status === "connected")
+          ? "To manage the remaining connection, ask in chat to open wallet connection controls." : undefined;
     }
-    if (data.runtimeRecovery) return "phase" in data.runtimeRecovery
-      ? data.runtimeRecovery.phase === "stopping" ? undefined
-        : "To restart a wallet service that remains unresponsive, ask in chat to open new wallet connection controls."
-      : data.runtimeRecovery.outcome === "available" ? undefined : "Ask in chat to open wallet connection controls if you need to restart the service again.";
-    if (data.walletAvailability.status === "unavailable") return !context.readOnly && data.allowedActions.includes("restart_wallet_service")
-      ? "Open Wallet service help and choose Restart wallet service." : t.common.walletStatusRecovery;
+    if (data.walletAvailability.status === "unavailable") return t.common.walletStatusRecovery;
+    if (data.connection?.pendingAction === "disconnect" || !data.connection && data.connections.some((item) => item.pendingAction === "disconnect")) return "If this disconnection is not responding, " +
+      "fully quit all apps using Say Ur Intent, then reopen them. Check any retained connection in your wallet app.";
+    if (data.connectionConflict) return context.readOnly || !data.allowedActions.includes("disconnect")
+      ? "Ask in chat to open wallet connection controls, then disconnect the connections you no longer need." : undefined;
     if (!data.connection && data.connections.some((connection) => connection.status === "awaiting_approval")) {
       return "Continue in the wallet connection card you opened first.";
     }
@@ -187,7 +201,8 @@ export const connectRenderer = {
       return context.recoveryNeeded && context.readOnly ? "Ask in chat to check your wallet connection." : undefined;
     }
     if (data.automaticAction && !context.automaticPaused) return undefined;
-    return "Ask in chat to connect your wallet.";
+    return data.allowedActions.includes("connect") && snapshot?.input.intent === "manage" && !context.readOnly
+      ? undefined : "Ask in chat to connect your wallet.";
   },
   controls: (snapshot, act, _display, wallet = undefined, context = undefined) => connectionView(snapshot, act, wallet, context),
   result: (snapshot, _receipt, act, wallet = undefined, context = undefined) => connectionView(snapshot, act, wallet, context)

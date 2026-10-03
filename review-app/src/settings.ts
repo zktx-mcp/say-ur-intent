@@ -107,7 +107,7 @@ function render(): void {
   content.push(element("h1", "settings-title", "Say Ur Intent Settings"));
   content.push(
     note(
-      "Use this local page to manage wallet read context, local data, and Sui read endpoints. Settings changes do not sign transactions or grant custody."
+      "Use this local page to manage the default address for reads, local data, and Sui read endpoints. Settings changes do not sign transactions or grant custody."
     )
   );
 
@@ -148,19 +148,20 @@ function renderStatusPanel(): HTMLElement {
   panel.append(row("Effective GraphQL endpoint", statusPayload.localSettings.suiGraphqlUrl.effectiveValue));
   panel.append(row("Stored GraphQL endpoint", statusPayload.localSettings.suiGraphqlUrl.storedValue));
   panel.append(row("Restart required", statusPayload.restartRequired ? "yes" : "no"));
-  panel.append(row("Active account", statusPayload.activeAccount?.account ?? "none"));
+  panel.append(row("Default address", statusPayload.activeAccount?.account ?? "none"));
   panel.append(row("Data counts", Object.entries(statusPayload.dataCounts).map(([key, value]) => `${key}: ${value}`).join(", ")));
   return panel;
 }
 
 function renderWalletPanel(): HTMLElement {
-  const panel = card("Wallet");
+  const panel = card("Default address for reads");
   panel.append(
     note(
-      "Clear active account removes only the local read context; it does not disconnect a wallet or revoke onchain permission. To connect or disconnect a wallet, ask your AI client to open the wallet connection card. Disconnection requires confirmation in that card."
+      "Clearing the default address does not disconnect your wallet or revoke onchain permission. Choose an approved address or disconnect in the wallet connection card."
     )
   );
-  panel.append(endRow(button("Clear active account", () => void clearActiveAccount(), "secondary")));
+  if (statusPayload?.activeAccount) panel.append(endRow(button("Clear default address", () => void clearActiveAccount(), "secondary")));
+  else panel.append(note(statusPayload ? "No default address is selected." : "Loading…"));
   appendFeedback(panel, "wallet");
   return panel;
 }
@@ -275,10 +276,10 @@ async function refresh(): Promise<void> {
 }
 
 async function clearActiveAccount(): Promise<void> {
-  if (!window.confirm("Clear the local active account read context? This does not disconnect a wallet or revoke onchain permission.")) {
+  if (!window.confirm("Clear the default address for reads? This does not disconnect your wallet or revoke onchain permission.")) {
     return;
   }
-  await postAction("wallet", "clear-active-account", "Active account context cleared.");
+  await postAction("wallet", "clear-active-account", "Default address cleared.");
 }
 
 async function saveEndpoint(url: string): Promise<void> {

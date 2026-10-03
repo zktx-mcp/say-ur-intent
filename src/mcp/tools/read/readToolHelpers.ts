@@ -1,3 +1,4 @@
+import { CONNECTION_CONFLICT_MESSAGE } from "../../../core/session/walletConnection.js";
 import {
   ReadServiceCacheError,
   ReadServiceInputError
@@ -64,12 +65,13 @@ export async function resolveExplicitOrActiveAccount(
         details: { ...(availability.status === "unavailable" ? { reason: availability.reason } : {}), message: availability.message, walletAvailability: availability } }) };
       return { status: "error", result: errorToolResult({ kind: active ? "input_invalid" : "active_account_not_set",
         details: { reason: "connected_account_required",
-          message: "This tool requires a selected account with a usable wallet connection. An address alone cannot be used.",
+          message: context?.connectionConflict ? CONNECTION_CONFLICT_MESSAGE : "This tool requires a selected account with a usable wallet connection. An address alone cannot be used.",
+          ...(context?.connectionConflict ? { connectionConflict: context.connectionConflict } : {}),
           followUp: { tool: TOOL_NAMES.sessionGetInteractionStatus,
             answerFields: ["walletAvailability", "connections", "pendingWalletConnections", "assetReadAccount"],
             reason: `Check current connections and pending operations. Use pendingWalletConnections.items[].cardId with ${TOOL_NAMES.sessionGetWalletConnection} or ${TOOL_NAMES.sessionWaitWalletConnection}. If no operation is pending and the user requests connection or account selection, open ${TOOL_NAMES.sessionCreateWalletConnection}. Only the user may act in that card.` } } }) };
     }
-    const message = availability.status !== "available"
+    const message = context?.connectionConflict ? CONNECTION_CONFLICT_MESSAGE + " Provide a Sui address in chat for this public read." : availability.status !== "available"
       ? "The wallet connection cannot be checked. Please provide a Sui address in chat to view its assets."
       : "No connected wallet is available for the selected account. Please provide a Sui address in chat.";
     return { status: "address_required", message, result: errorToolResult({ kind: "input_invalid",

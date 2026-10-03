@@ -160,9 +160,10 @@ Use this single responsibility schema when editing documentation:
 Do not remove all repetition. These repeated boundaries are allowed when they
 protect readers on separate surfaces:
 
-- the top-level statement that the product does not execute, sign, hold custody,
-  rank venues, choose routes, silently choose settlement tokens, provide fiat
-  cash-out, compute P&L, or provide signing readiness;
+- the top-level boundary against autonomous execution, private-key signing or
+  custody, venue ranking, route choice, silent settlement-token selection, fiat
+  cash-out, P&L and signing-readiness claims; user-approved wallet signing and
+  independently verified backend submission are distinct supported operations;
 - the core answer path that `read.preview_intent_evidence.responseSummary` and
   response-local `userAnswerUse.answerFields` identify fields for
   USD-denominated coverage, balance-total, and shortfall answers;

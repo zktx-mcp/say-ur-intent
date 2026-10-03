@@ -475,9 +475,9 @@ const scenarioInvokers: Record<string, ScenarioInvoker> = {
     try { return await f.run(async () => {
       const { client, server, activityStore } = await connectFreshClient({ activityStore: f.activity, workflow: f.workflow });
       try {
-        await f.approve();
+        const { connection } = await f.approve();
         f.notify({ ...f.transport.session("fixture-topic")!, accounts: [accountAddress] });
-        await activityStore.setActiveAccount(accountAddress, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
+        await activityStore.setActiveAccount(accountAddress, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"), { id: connection.connectionId });
         return textPayload(await client.callTool({ name: scenario.tool, arguments: {} }));
       } finally { await Promise.allSettled([client.close(), server.close()]); }
     }); } finally { f.close(); }

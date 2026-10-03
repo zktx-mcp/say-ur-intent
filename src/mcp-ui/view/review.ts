@@ -1,5 +1,6 @@
-import { workflowViewSchema, reviewWalletChoices, walletRecoveryRoute, type WorkflowView } from "../../core/session/workflowView.js";
-import { section, element, row, accordion, button, field, select, mono, monoShort, timeValue } from "../../../review-app/src/ui/ui.js";
+import { CONNECTION_CONFLICT_MESSAGE } from "../../core/session/walletConnection.js";
+import { workflowViewSchema, reviewWalletChoices, type WorkflowView } from "../../core/session/workflowView.js";
+import { section, element, row, accordion, button, mono, monoShort, timeValue } from "../../../review-app/src/ui/ui.js";
 import { rawToDisplay, signedRawToDisplay, suiAmount } from "../../../review-app/src/format.js";
 import { gasRows } from "../../../review-app/src/ui/chainReceiptView.js";
 import { receiptView } from "../../../review-app/src/ui/receiptView.js";
@@ -86,7 +87,7 @@ function proposalFacts(proposal: ProposalReviewModel, checks: NonNullable<Review
 }
 
 function displayedReviewAccount(data: WorkflowView): string | undefined {
-  return data.review?.account ?? data.activeAccount;
+  return data.review?.account ?? (data.assetReadAccount?.status === "available" ? data.assetReadAccount.account : undefined);
 }
 
 function reviewedConditions(data: WorkflowView): HTMLElement {
@@ -156,6 +157,7 @@ function pendingReviewDecision(snapshot: CardSnapshot, data: WorkflowView, act?:
   if (!proposal) status.classList.add("review-status");
   status.setAttribute("role", "status"); decision.append(status);
   if (!proposal && data.walletAvailability.status !== "available") decision.append(element("p", "ui-note", data.walletAvailability.message));
+  if (!proposal && data.connectionConflict) decision.append(element("p", "ui-note", CONNECTION_CONFLICT_MESSAGE));
   if (review.accountRequestPending) decision.append(element("p", "ui-note", "An earlier transaction request for this account is still being processed. This review can continue when that work finishes."));
   const feedback = element("div", "review-action-feedback");
   if (!proposal && act && data.mode === "review" && snapshot.state === "ready") {
@@ -359,23 +361,18 @@ function appendReviewActions(node: HTMLElement, feedback: HTMLElement, data: Wor
       slot.append(control); node.append(actions);
       return;
     }
-    const form = document.createElement("form"); form.className = "ui-form";
-    const choice = select({ choices: [{ value: "", label: "Choose a wallet" }, ...choices.map((item) => ({ value: item.connectionId, label: item.walletName ?? item.connectionId }))] });
-    choice.required = true; choice.setAttribute("aria-label", action === "prepare_review" ? "Wallet connection for this review" : "Wallet to approve this transaction");
-    control.type = "submit"; slot.append(control); form.append(field("Wallet", choice), actions);
-    form.addEventListener("submit", (event) => { event.preventDefault(); if (choices.some((item) => item.connectionId === choice.value)) send(choice.value); });
-    node.append(form);
   };
-  const canRequestApproval = approvalVisible && data.allowedActions.includes("request_signature") && !!review.account && data.walletAvailability.status === "available";
-  const canPrepare = data.allowedActions.includes("prepare_review") && !!data.activeAccount && data.walletAvailability.status === "available";
-  const approvalChoices = canRequestApproval ? reviewWalletChoices(data.connections, review.account!, true) : [];
-  const preparationChoices = canPrepare ? reviewWalletChoices(data.connections, data.activeAccount!) : [];
+  const canRequestApproval = !data.connectionConflict && approvalVisible && data.allowedActions.includes("request_signature") && !!review.account && data.walletAvailability.status === "available";
+  const preparationAccount = data.assetReadAccount?.status === "available" ? data.assetReadAccount.account : undefined;
+  const canPrepare = data.allowedActions.includes("prepare_review") && !!preparationAccount && data.walletAvailability.status === "available";
+  const approvalChoices = canRequestApproval ? reviewWalletChoices(data, review.account!, true) : [];
+  const preparationChoices = canPrepare ? reviewWalletChoices(data, preparationAccount!) : [];
   const automatic = data.automaticAction;
   if (!automaticPaused && !approvalChoices.length && automatic?.action === "prepare_review") {
     const target = preparationChoices.find((item) => item.connectionId === automatic.connectionId);
     if (target) { node.append(row("Wallet", target.walletName ?? "Connected wallet")); shownWallets.add(target.connectionId); }
   }
-  if (canRequestApproval && canPrepare && review.account === data.activeAccount && !approvalChoices.length && !preparationChoices.length) {
+  if (canRequestApproval && canPrepare && review.account === preparationAccount && !approvalChoices.length && !preparationChoices.length) {
     node.append(element("p", "ui-note", "No wallet connection is available for this account."));
   } else {
     if (canRequestApproval && !approvalChoices.length) node.append(element("p", "ui-note", "No connected wallet is available for this transaction."));
@@ -383,16 +380,16 @@ function appendReviewActions(node: HTMLElement, feedback: HTMLElement, data: Wor
   }
   if (approvalChoices.length) choose("request_signature", "Request wallet approval", review.account!, approvalChoices, true);
   else if (approvalVisible && preparationChoices.length && (!data.automaticAction || automaticPaused)) {
-    choose("prepare_review", automaticPaused ? "Continue review" : review.state || review.error ? "Retry review" : "Use this wallet", data.activeAccount!, preparationChoices, true);
+    choose("prepare_review", automaticPaused ? "Continue review" : review.state || review.error ? "Retry review" : "Update review", preparationAccount!, preparationChoices, true);
   }
   else {
-    const wallet = reviewWalletChoices(data.connections, review.account ?? data.activeAccount ?? "");
+    const wallet = reviewWalletChoices(data, review.account ?? preparationAccount ?? "");
     if (wallet.length === 1 && !shownWallets.has(wallet[0]!.connectionId)) {
       node.append(row("Wallet", wallet[0]!.walletName ?? "Connected wallet")); shownWallets.add(wallet[0]!.connectionId);
     }
     const unavailable = button("Request wallet approval", () => {}, "primary");
     unavailable.classList.add("review-primary-action"); unavailable.disabled = true;
-    slot.append(unavailable); node.append(actions);
+    if (!data.connectionConflict) slot.append(unavailable); node.append(actions);
   }
   // One primary action occupies this position; its feedback stays below it.
   const lifetime = element("div", "review-lifetime");
@@ -416,16 +413,11 @@ export const reviewRenderer = {
         (review.status === "expired" || snapshot?.state === "closed" && snapshot.reason !== "completed")) {
       return "Ask in chat for a new transaction review.";
     }
-    const route = walletRecoveryRoute({ walletAvailability: data.walletAvailability,
-      waiting: data.request?.requestStatus === "awaiting_signature" || !!review?.preparing });
-    if (route && (!data.request || data.request.requestStatus === "awaiting_signature") && !review?.plan.reviewModel) {
-      return (route === "conditional" ? "If this request is not responding, ask" : "Ask") +
-        " in chat to open wallet connection controls. You can restart the wallet service there after confirming the effects.";
-    }
     if (data.request || snapshot?.input.attemptId) return context.recoveryNeeded
       ? "Ask in chat to check the status of this same transaction request." : undefined;
     if (!review || review.plan.reviewModel) return undefined;
     if (data.walletAvailability.status === "unavailable") return t.common.walletStatusRecovery;
+    if (data.connectionConflict) return "Ask in chat to open wallet connection controls, then disconnect the connections you no longer need.";
     if (context.readOnly) return "Ask in chat for a new transaction review.";
     if (review.error && data.mode === "review" && snapshot?.state === "ready" &&
         !data.allowedActions.includes("prepare_review") && !review.preparing) {

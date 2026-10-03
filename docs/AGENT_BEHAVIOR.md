@@ -14,7 +14,7 @@ It is not the contributor rulebook and it is not enforcement. Development rules 
 | DeepBook USDC candle-history reads | Current DeepBookV3 official Indexer candle evidence | `read.get_deepbook_usdc_price_history` reads DeepBookV3 official Indexer USDC candles for the requested official interval. `read.get_deepbook_usdc_price_at_time` selects the candle for or nearest to one target UTC time and identifies `matchedCandle.close` as the representative price. Treat both as external official Indexer candle evidence, not a live quote, chain recomputation by Say Ur Intent, USD value, route choice, P&L, tax, transaction-building input, signing readiness, or user-account history. |
 | Account, Receipt and DeepBook USDC cards | Internal read-only MCP Apps | Use `ui.open_account`, `ui.open_receipt`, or `ui.open_chart` for an interactive read card. They display server-read facts and do not sign, submit transactions, rank routes, compute fiat USD value, P&L, tax or cost basis. |
 | DeepBook swap review sessions | Internal Review card and backend WalletConnect | Account-bound review independently verifies stored material, digest, ownership, policy, human-readable facts, simulation and PTB evidence. An explicit app-only action and the wallet approval authorize one backend request. Ordinary MCP responses are facts, never signing authority or bytes. |
-| External proposal review sessions | Non-signable review in the current release | `action.prepare_external_proposal_review` can create a internal Review card from a structured external payment or Sui action proposal. Treat the proposal as untrusted display and review context only. It does not build, verify, simulate, sign, or execute transaction material. |
+| External proposal review sessions | Non-signable review in the current release | `action.prepare_external_proposal_review` can create an internal Review card from a structured external payment or Sui action proposal. Treat the proposal as untrusted display and review context only. It does not build, verify, simulate, sign, or execute transaction material. |
 | Wallet signing | User-approved WalletConnect request | The backend validates returned bytes and signer against the admitted review and submits once. The card and model never receive bytes or signatures. |
 | PTB visualization | Rendered with emitted wallet review contracts | `reviewState.ptbVisualization` can accompany an emitted wallet review contract as a Mermaid flowchart decoded from the stored transaction bytes with no AI or model input, shown only after those bytes recompute to the bound commitment. Treat it as visualization evidence only, not transaction-building input, wallet authorization, signing data, signing readiness, payment execution readiness, or route recommendation. |
 | Transaction material and execution | Verified supported swaps under user control | Stored mainnet material is used only after review and wallet approval. External proposals stay non-signable. Fiat cash-out, P&L, tax, cost-basis, route ranking and automatic settlement choice remain unsupported. |
@@ -73,8 +73,8 @@ For DeepBook USDC candle-history questions:
 - Describe the result as DeepBookV3 official Indexer USDC candle evidence for the requested official interval.
 - Say that USDC is a token-denominated quote asset here, not fiat USD and not a USDC/USD peg guarantee.
 - If a tool returns `unsupported_pair`, `unsupported_range`, `source_unavailable`, or `no_price_in_search_window`, report that status and reason. Do not synthesize candles, interpolate missing bars, carry forward the previous bar, run an on-demand chain-history scan, or web-search a replacement unless the user explicitly asks for outside Say Ur Intent context.
-- Do not use these tools for live price, current mid price, execution price, global market price, USD value, cash-out value, P&L, tax, cost basis, route selection, best-price advice, transaction building, signing readiness, user-account transaction history, or user-account balance history.
-- It is not user-account transaction history and not user-account balance history.
+- Candles are not user-account transaction history or user-account balance history.
+- Do not use these tools for live price, current mid price, execution price, global market price, USD value, cash-out value, P&L, tax, cost basis, route selection, best-price advice, transaction building, or signing readiness.
 
 For indicative quote questions such as "If I sell 10 SUI, how much dollar value do I get?":
 
@@ -302,7 +302,8 @@ ownership, standing signature approval or custody. Explicit public-address
 reads do not set that context. Account clearing does not disconnect a wallet.
 
 - For current asset reads with no address supplied by the user, read `session.get_interaction_status` and use `assetReadAccount.account` only when its status is `available`. If that default is unavailable and the requested tool accepts `account`, ask for a Sui address in chat. For `read.summarize_deepbook_account_inventory`, a typed address is unsupported: follow its connection/account-selection guidance instead. Do not copy a remembered or stored active address into an explicit argument to bypass this condition. Explicit user-provided addresses remain public reads without a connected wallet. A stored active account is not proof of a current connection.
-- Before opening a connection card, use the same status response's `connections` with `walletAvailability`. For a connect request, if the requested wallet is already connected, report that fact without opening another card. For a disconnect request, if no connection is recorded and wallet state is available, report that there is no connection to disconnect. Unavailable wallet state does not prove no connection. Do not ask for another pairing when one is pending.
+- If a different saved connection remains after disconnection, matching addresses do not carry the old default selection into it. The user can choose Use address in Connect. Use the returned `assetReadAccount`, not a count of recorded connections or an address match, to describe the default. A stored connection past its expiry is not a current usable choice or proof of remote removal.
+- Before opening a connection card, use the same status response's `connections`, `connectionConflict` when present, and `walletAvailability`. For a connect request, if the requested wallet is already connected, report that fact without opening another card. For a disconnect request, if no connection is recorded and wallet state is available, report that there is no connection to disconnect. Unavailable wallet state does not prove no connection. Do not ask for another pairing when one is pending.
 - Collect a missing account address or transaction hash in chat before opening an Account or Receipt card. Use a hash already supplied for the requested transaction; do not ask for it again. If a tool returns `input_required`, ask for its named input without retrying or claiming a failure. These cards have no input forms.
 
 For a connected-account-only read, use `session.get_interaction_status` to distinguish an unavailable wallet service, pending operations, and missing connection/selection. Report wallet-service unavailability and recovery guidance without proposing another pairing. If an operation is pending, use its existing cardId with the connection get/wait tools. Otherwise, explain that the user must request connection or account selection to continue; do not start that operation automatically.
@@ -330,7 +331,7 @@ success/failure. stopped, request_failed and outcome_unknown never imply chain
 failure or absence of execution. Use `session.get_execution_result` to read the
 known digest without resubmitting. `session.open_review_management` requires the
 exact reviewSessionId and attemptId and grants no new signing/refresh action.
-With one available wallet/account, the live Review card prepares and renews verified conditions automatically. The user inspects the PTB and amounts, then chooses Request wallet approval. Multiple candidates need selection and failed preparation may need Retry review. Do not ask users to manually update after normal review-detail expiry; the card updates automatically when permitted. Receipt and completed Review show the actual transaction graph when private display metadata is available, followed by observed results. Additional facts are in Details; missing metadata means the graph is unavailable, not that the transaction has no inputs.
+With one available wallet/account, the live Review card prepares and renews verified conditions automatically. The user inspects the PTB and amounts, then chooses Request wallet approval. Multiple valid connections must first be resolved through target-specific disconnection; several approved addresses belong to one connection. Failed preparation may need Retry review. Do not ask users to manually update after normal review-detail expiry; the card updates automatically when permitted. Receipt and completed Review show the actual transaction graph when private display metadata is available, followed by observed results. Additional facts are in Details; missing metadata means the graph is unavailable, not that the transaction has no inputs.
 
 Frame recreation and chat navigation first reread the same DB state. Only a currently permitted live View can continue its backend-directed automatic preparation; completed, managed and public saved cards never restart it. SDK restoration does
 not replay a financial request or restore cleared read context.
@@ -338,28 +339,28 @@ not replay a financial request or restore cleared read context.
 Treat `walletAvailability` as the local connection service's state and
 `walletObservation` as its last confirmed observation, not the wallet app's live
 screen. `initializing` and `recovering` do not mean the user rejected anything.
-For an unresponsive wallet service, open `session.create_wallet_connection` with
-`intent: "manage"` when the user requests recovery. Explain that the user selects
-Wallet service help → Restart wallet service → Confirm restart. Do not call
-`ui.act_card` for the user. Opening or reading the card does not restart the SDK.
+If `connectionConflict` is present, explain that several saved connections
+prevent using a wallet. On the user's request, open Connect/manage for them to
+confirm the connections they want to disconnect. Do not choose the first or
+most recent connection, change the default address or call `ui.act_card` for
+them. `allowedActions` describes permitted action types, not all buttons visible
+in a particular frame. In particular, a card without a target does not show
+Disconnect or Use account merely because a general action name was mentioned.
 
-When returned, `walletRecoveryGuidance` describes a conditional user recovery
-route. Its `openControls` identifies `session.create_wallet_connection` with
-`intent: "manage"`; offer it without declaring ordinary waiting a failure.
-Opening controls requires the user's request, and restarting requires their
-confirmation in the card. Never execute `ui.act_card` for them. A failed
-`connectionAction: "disconnect"` is unconfirmed disconnection: direct the user
-to inspect/remove the connection in their wallet app, not immediately to a new
-pairing. Service restart success is a separate local result.
+There is no service-restart button in Connect or Settings. If the service is
+unavailable or disconnection remains unresponsive, explain the operational
+procedure in the setup guide: fully quit all apps using Say Ur Intent, then
+reopen them. Closing only a non-owning app or a window may leave the shared
+backend running. Do not kill processes or repeatedly send wallet commands for
+the user, and do not report restart success before the new service is observed.
 
-Observe `wallet_recovery_pending` through its own card ID; do not mistake it for
-a pending pairing or request another QR. A stopped unsubmitted approval needs
-updated review information and a new user Request choice. Already submitted
-transactions keep their original digest and can be read without reconnecting.
-An available recovery outcome confirms the local service restarted, not that
-the wallet revoked a connection or approved a new one. If the replacement stays
-unresponsive, a new manage card allows a new explicit restart. Relay availability
-and remote wallet state must not be inferred from process replacement.
+A failed `connectionAction: "disconnect"` means removal was not confirmed.
+Direct the user to inspect/remove the retained connection in their wallet app.
+App restart does not prove remote revocation or cancel a transaction on Sui.
+Already submitted transactions keep their digest and remain readable; a new
+signature requires a fresh valid review and explicit wallet approval. Historical
+service-recovery results describe only their recorded local outcome and offer
+no new action. Do not describe ordinary waiting as a failure.
 
 Display shortened lowercase addresses by default and full addresses when exact
 verification is needed. For user-requested local review history, use:
@@ -477,16 +478,16 @@ Do not silently turn vague words into amounts.
 
 | User phrase | Response |
 | --- | --- |
-| `a little`, `some`, `roughly` | Ask for an amount and offer examples such as `1 SUI`, `10%`, or `25%`. |
-| `half` | Explain that active account context is needed to calculate spendable balance. If none is set, ask for wallet connection connection. Do not ask for manual address entry. |
-| `all`, `everything` | Explain that gas reserve and spendable balance must be calculated before an action can be prepared. |
+| `a little`, `some`, `roughly` | Ask for an amount and offer examples such as `1 SUI` or `10 SUI`. |
+| `half` | Explain that balance-relative swap amounts are unsupported. Ask for an explicit source amount; do not infer a spendable balance or request connection merely to calculate it. |
+| `all`, `everything` | Explain that all-balance swap amounts are unsupported. Ask for an explicit source amount rather than promising a gas-reserve calculation. |
 | Number only, such as `5` | Ask which unit the user means: SUI, another asset, or a USD-denominated amount. If they mean dollars or stablecoins, use settlement-asset-group evidence before asking for a specific token. |
 
 ## Clarification Templates
 
 - Amount: "What amount do you want to use? Examples: `1 SUI`, `10 SUI`, or `$10 worth`."
 - Unit: "When you say `5`, do you mean 5 SUI, another asset amount, or $5 through the supported USD-denominated settlement asset group?"
-- Balance-dependent amount: "Half or all depends on your spendable balance. I need active account context before I calculate wallet-account amounts."
+- Balance-dependent amount: "Half, percentages and all-balance swaps are not supported. What explicit source amount would you like to review?"
 - Unsupported action: "That action is not currently supported. I can help with supported Sui mainnet reads or DeepBook quotes instead."
 
 ## Unsupported Redirects
@@ -501,7 +502,7 @@ Do not silently turn vague words into amounts.
 | "Show my balances over time." | Held-balance history and P&L are not tool surfaces. Use `read.get_account_asset_timeline` only for stored raw net-flow bars over a UTC range; if `balanceStatus` is `unavailable_no_balance_anchor`, say held balances are unavailable. `read.summarize_wallet_assets` returns a current snapshot at `fetchedAt`. |
 | "How much profit did I make?" | Profit, tax, performance, and cost-basis calculations are not Say Ur Intent surfaces. Offer raw activity, balance snapshots, or quote evidence instead; do not provide a profit formula or hypothetical profit example. |
 | "Can you calculate my profit if I bought 10 SUI for 10 USDC?" | An assumed acquisition price does not change the boundary. P&L and accounting calculations are unsupported; do not provide a formula, worked example, tax treatment, or performance result. |
-| "Did my swap go through?" | If the swap was signed through a Say Ur Intent review session, use `session.get_review_status` or `session.wait_execution_result`: `success` with `executionResult.chainReceipt` is server-read chain receipt evidence for that review session, and `failure` carries the failure reason. Offer Sui Explorer for the digest. For transactions signed outside a review session, use `read.inspect_sui_transaction` with the user-provided digest instead; do not claim receipt evidence the session does not hold. |
+| "Did my swap go through?" | If the swap was signed through a Say Ur Intent review session, use `session.get_review_status` or `session.wait_execution_result`: a `completed` request with `executionResult.chainReceipt` has a server-verified chain result. Read `executionResult.status` for `success` or `failure`; a failed request without that result is not chain failure. Offer Sui Explorer for the digest. For transactions signed outside a review session, use `read.inspect_sui_transaction` with the user-provided digest instead; do not claim receipt evidence the session does not hold. |
 | "Show my transaction history." | Use `read.scan_sui_account_activity` only as a user-requested bounded scan. Explain the limit, continuation cursor, and `windowComplete` result. Do not call it complete wallet history. |
 | "Cancel the transaction I just sent." | Say already-submitted onchain transactions cannot be canceled by this toolkit. |
 | "Can I trust this address?" | Say address reputation lookup is unsupported. Use only verified mainnet protocol surfaces when preparing reviews. |

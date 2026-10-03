@@ -40,6 +40,62 @@ function data(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, a
   const payload = result.structuredContent as { ok: boolean; data: Record<string, any> }; expect(payload.ok).toBe(true); return payload.data;
 }
 
+it("carries the same connection conflict through actual MCP schemas, card resources, waits and review status", async () => {
+  const { f, client, call } = await harness();
+  const sessions = ["first", "second"].map((topic) => ({ topic, accounts: [f.account], methods: ["sui_signTransaction"],
+    chain: "sui:mainnet" as const, expiresAt: new Date(f.now().getTime() + 60000).toISOString() }));
+  const connections = sessions.map((session) => f.run(() => f.records.restoreConnection(session, f.now())).connection);
+  vi.spyOn(f.transport, "session").mockImplementation((topic) => sessions.find((session) => session.topic === topic));
+  vi.spyOn(f.transport, "inspectAll").mockImplementation(() => sessions.map((session) => ({ topic: session.topic, status: "present", session })));
+  f.observe();
+  const expected = { reason: "multiple_connections", connectionIds: connections.map((item) => item.connectionId).sort() };
+  const created = await call(TOOL_NAMES.sessionCreateWalletConnection, { intent: "manage" }), card = data(created);
+  const ref = cardReferenceSchema.parse(created._meta?.[CARD_METADATA_KEY]);
+  const responses = [created, await call(TOOL_NAMES.sessionGetWalletConnection, { cardId: card.cardId }),
+    await call(TOOL_NAMES.sessionWaitWalletConnection, { cardId: card.cardId })];
+  for (const response of responses) {
+    const payload = data(response), snapshot = payload.card ?? payload;
+    expect(snapshot.data.connectionConflict).toEqual(expected);
+    expect(snapshot.data.walletAvailability.status).toBe("available");
+    expect(snapshot.data.allowedActions).toContain("disconnect");
+    expect(snapshot.data.allowedActions).not.toContain("use_account");
+    expect(snapshot.data.usableConnectionId).toBeUndefined();
+    expect(snapshot.data.assetReadAccount).toEqual({ status: "address_required" });
+    expect(JSON.parse((response.content as { text: string }[])[0]!.text)).toEqual(response.structuredContent);
+    expect(findForbiddenMcpFields(response.structuredContent)).toEqual([]);
+  }
+  const saved = await f.run(() => client.readResource({ uri: CARD_RESOURCE_PREFIX + card.cardId }));
+  expect(JSON.parse((saved.contents[0] as { text: string }).text).data.connectionConflict).toEqual(expected);
+  const overview = data(await call(TOOL_NAMES.sessionGetInteractionStatus));
+  expect(overview.connectionConflict).toEqual(expected); expect(overview.assetReadAccount.status).toBe("address_required");
+  expect(overview.userAnswerUse.answerFields).toContain("connectionConflict");
+  expect(overview.userAnswerUse.cannotAnswer).toContain("sdk_availability_or_recorded_connection_as_account_use_or_signing_authority");
+  const { session } = await f.run(() => f.sessions.createReviewSession([f.plan], f.now()));
+  expect(data(await call(TOOL_NAMES.sessionGetReviewStatus, { reviewSessionId: session.id })).connectionConflict).toEqual(expected);
+  const tools = await client.listTools();
+  expect(JSON.stringify(tools.tools.find((tool) => tool.name === TOOL_NAMES.sessionGetInteractionStatus)?.outputSchema)).toContain('"connectionConflict"');
+  const refused = await call(CARD_TOOLS.act, { ...ref, revision: card.revision, input: { action: "restart_wallet_service", walletRunId: f.runtime.runId } });
+  expect(refused.isError).toBe(true);
+  expect(f.connect).not.toHaveBeenCalled(); expect(f.transport.disconnect).not.toHaveBeenCalled(); expect(f.sign).not.toHaveBeenCalled();
+});
+
+it("publishes the same source-qualified default in MCP views, waits and saved data", async () => {
+  const { f, client, call } = await harness(), { connection } = await f.approve();
+  await f.run(() => f.activity.setActiveAccount(f.account, "wallet_connection", f.now(), { id: "different-saved-source" }));
+  const created = await call(TOOL_NAMES.sessionCreateWalletConnection, { intent: "manage" }), card = data(created);
+  for (const response of [created, await call(TOOL_NAMES.sessionGetWalletConnection, { cardId: card.cardId }),
+    await call(TOOL_NAMES.sessionWaitWalletConnection, { cardId: card.cardId })]) {
+    const value = data(response), snapshot = value.card ?? value;
+    expect(snapshot.data).toMatchObject({ activeAccount: f.account, usableConnectionId: connection.connectionId, assetReadAccount: { status: "address_required" } });
+    expect(findForbiddenMcpFields(response.structuredContent)).toEqual([]);
+    expect(JSON.parse((response.content as { text: string }[])[0]!.text)).toEqual(response.structuredContent);
+  }
+  const saved = await f.run(() => client.readResource({ uri: CARD_RESOURCE_PREFIX + card.cardId }));
+  expect(JSON.parse((saved.contents[0] as { text: string }).text).data.assetReadAccount).toEqual({ status: "address_required" });
+  expect(data(await call(TOOL_NAMES.sessionGetInteractionStatus)).assetReadAccount).toEqual({ status: "address_required" });
+  expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
+});
+
 describe("wallet cards, ordinary MCP and stored review activity", () => {
   it("keeps ordinary preparation reads available with an initialization reason when the workflow is absent", async () => {
     const { f, call, deps } = await harness();
@@ -82,15 +138,14 @@ describe("wallet cards, ordinary MCP and stored review activity", () => {
     const ref = cardReferenceSchema.parse(created._meta?.[CARD_METADATA_KEY]);
     const admitted = data(await call(CARD_TOOLS.act, { ...ref, revision: snapshot.revision, input: { action: "disconnect", walletRunId: f.runtime.runId, connectionId: connection.connectionId } }));
     expect(admitted).toMatchObject({ state: "running", data: { observe: true, connection: { pendingAction: "disconnect", status: "connected" } } });
-    const guidance = { message: expect.stringContaining("If this request is not responding"),
-      openControls: { tool: TOOL_NAMES.sessionCreateWalletConnection, intent: "manage" } };
-    expect(admitted.data).toMatchObject({ connectionAction: "disconnect", walletRecoveryGuidance: guidance });
-    expect(data(await call(TOOL_NAMES.sessionGetWalletConnection, { cardId: ref.cardId })).data.walletRecoveryGuidance).toMatchObject(guidance);
-    expect(data(await call(TOOL_NAMES.sessionWaitWalletConnection, { cardId: ref.cardId, timeoutMs: 1 })).card.data.walletRecoveryGuidance).toMatchObject(guidance);
+    expect(admitted.data).toMatchObject({ connectionAction: "disconnect" });
+    for (const snapshot of [admitted, data(await call(TOOL_NAMES.sessionGetWalletConnection, { cardId: ref.cardId })),
+      data(await call(TOOL_NAMES.sessionWaitWalletConnection, { cardId: ref.cardId, timeoutMs: 1 })).card]) {
+      expect(snapshot.data).not.toHaveProperty("walletRecoveryGuidance");
+    }
     const overview = data(await call(TOOL_NAMES.sessionGetInteractionStatus));
-    expect(overview.walletRecoveryGuidance).toMatchObject(guidance);
+    expect(overview).not.toHaveProperty("walletRecoveryGuidance");
     expect(overview.userAnswerUse.followUp.tool).toBe(TOOL_NAMES.sessionGetReviewStatus);
-    expect(overview.userAnswerUse.canAnswer).toContain("wallet_recovery_guidance_for_user_confirmation_only_never_act_card_for_the_user");
 
     expect(data(await call(TOOL_NAMES.sessionGetWalletConnection, { cardId: ref.cardId })).data.observe).toBe(true);
     expect(data(await call(TOOL_NAMES.sessionWaitWalletConnection, { cardId: ref.cardId, timeoutMs: 1 })).waitOutcome).toBe("timed_out");

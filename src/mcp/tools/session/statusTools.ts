@@ -1,4 +1,4 @@
-import { walletAvailabilitySchema, workflowProgressSchema, walletUnavailable } from "../../../core/session/walletConnection.js";
+import { walletAvailabilitySchema, workflowProgressSchema, walletUnavailable, connectionConflictSchema } from "../../../core/session/walletConnection.js";
 import { walletObservationSchema } from "../../../core/session/walletRuntime.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -13,8 +13,6 @@ import { userAnswerUseSchema } from "../read/commonSchemas.js";
 import { isReviewInteractionPending, reviewStatusResponse } from "../../../core/session/status.js";
 import { latest, reviewStatusResponseShape, readCurrentReview } from "./shared.js";
 import { pendingConnectionStatusSchema, connectionViewSchema, assetReadAccountSchema } from "../../../core/session/workflowView.js";
-import { walletRecoveryRoute, walletRecoveryGuidanceSchema } from "../../../core/session/workflowView.js";
-import { walletRecoveryGuidance } from "../../walletRecoveryGuidance.js";
 
 export function registerSessionStatusTools(server: McpServer, deps: McpServerDeps): void {
   server.registerTool(TOOL_NAMES.sessionGetInteractionStatus, {
@@ -22,7 +20,7 @@ export function registerSessionStatusTools(server: McpServer, deps: McpServerDep
     inputSchema: noParamsInputSchema,
     outputSchema: successOutputSchema({ walletAvailability: walletAvailabilitySchema, walletObservation: walletObservationSchema.optional(), activeAccount: activeAccountResponseSchema,
       connections: z.array(connectionViewSchema), assetReadAccount: assetReadAccountSchema,
-      walletRecoveryGuidance: walletRecoveryGuidanceSchema.optional(),
+      connectionConflict: connectionConflictSchema.optional(),
       pendingWalletConnections: z.object({ limit: z.number().int().positive(), truncated: z.boolean(),
         items: z.array(z.object({ cardId: z.string(), connectionId: z.string().optional(),
           status: pendingConnectionStatusSchema, progress: workflowProgressSchema, lastActivityAt: z.string() })) }),
@@ -41,13 +39,9 @@ export function registerSessionStatusTools(server: McpServer, deps: McpServerDep
       const connections = deps.workflow?.pendingConnections() ?? [];
       const states = await Promise.all(deps.sessions.reviewSessionIds().map((id) => readCurrentReview(deps, id)));
       const reviews = states.flatMap((state) => state && isReviewInteractionPending(state) ? [reviewStatusResponse(state)] : []);
-      const recoveryGuidance = walletRecoveryGuidance(walletRecoveryRoute({ walletAvailability: context.walletAvailability,
-        waiting: connections.some((item) => item.status === "awaiting_approval" || item.status === "disconnect_pending") ||
-          states.some((state) => state?.request?.requestStatus === "awaiting_signature" || !!state?.session.preparationId) }));
       return okToolResult({ activeAccount: activeAccountResponse(active), pendingWalletConnections: latest(connections),
         pendingReviewSessions: latest(reviews), ...context,
-        ...(recoveryGuidance ? { walletRecoveryGuidance: recoveryGuidance } : {}),
-        userAnswerUse: interactionStatusUserAnswerUse("walletObservation" in context && context.walletObservation !== undefined, !!recoveryGuidance) });
+        userAnswerUse: interactionStatusUserAnswerUse("walletObservation" in context && context.walletObservation !== undefined, "connectionConflict" in context && !!context.connectionConflict) });
     } catch (error) { return sessionStoreToolError(error, deps.logger); }
   });
   server.registerTool(TOOL_NAMES.sessionGetReviewStatus, {
@@ -62,7 +56,7 @@ export function registerSessionStatusTools(server: McpServer, deps: McpServerDep
       const session = state.session;
       return okToolResult({ ...reviewStatusResponse(state),
         userAnswerUse: reviewStatusUserAnswerUse(!!session.reviewState, !!session.reviewState?.adapterLifecycle,
-          !!session.reviewState?.humanReadableReview, !!session.reviewState?.simulation) });
+          !!session.reviewState?.humanReadableReview, !!session.reviewState?.simulation, !!state.connectionConflict) });
     } catch (error) { return sessionStoreToolError(error, deps.logger); }
   });
 }

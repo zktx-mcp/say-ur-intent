@@ -240,7 +240,7 @@ it("accepts only backend initialization, restoration and state failures in the p
   }
 });
 
-it.each(["expired_pairing", "inactive_pairing"] as const)("keeps the real parent MCP usable during actual SDK %s cleanup and recovers through a scoped card", async (kind) => {
+it.each(["expired_pairing", "inactive_pairing"] as const)("keeps the real parent MCP usable during actual SDK %s cleanup without exposing the retired restart input", async (kind) => {
   const directory = mkdtempSync(join(tmpdir(), "say-runtime-sdk-held-")), relay = await walletRelay();
   source.realRelay = relay.url;
   await seedWalletSdk(directory, kind);
@@ -263,24 +263,15 @@ it.each(["expired_pairing", "inactive_pairing"] as const)("keeps the real parent
     const created = await call(TOOL_NAMES.sessionCreateWalletConnection, { intent: "manage" });
     const reference = created._meta![CARD_METADATA_KEY] as Record<string, unknown>;
     const current = payload(await call(CARD_TOOLS.read, reference));
-    expect(current.state).toBe("ready"); expect(current.data.allowedActions).toContain("restart_wallet_service");
+    expect(current.state).toBe("ready"); expect(current.data.allowedActions).not.toContain("restart_wallet_service");
     expect(() => acquireDataDirectoryOwner(join(directory, "activity.sqlite"))).toThrow("runtime owner");
     const priorRunId = current.data.walletAvailability.walletRunId;
-    const admitted = payload(await call(CARD_TOOLS.act, { ...reference, revision: current.revision,
-      input: { action: "restart_wallet_service", walletRunId: priorRunId } }));
-    expect(admitted.state).toBe("running");
-    await vi.waitFor(async () => {
-      const result = payload(await call(CARD_TOOLS.read, reference));
-      expect(result).toMatchObject({ state: "closed", reason: "completed", data: {
-        runtimeRecovery: { outcome: "available", priorRunId }, walletAvailability: { status: "available" }
-      } });
-    }, { timeout: 10000 });
-    expect(source.children).toHaveLength(2); expect(source.children[0]!.signalCode).toBe("SIGKILL");
-    expect(source.children[1]!.exitCode).toBeNull();
+    const refused = await call(CARD_TOOLS.act, { ...reference, revision: current.revision,
+      input: { action: "restart_wallet_service", walletRunId: priorRunId } });
+    expect(refused.isError).toBe(true);
+    expect(source.children).toHaveLength(1); expect(source.children[0]!.exitCode).toBeNull();
+    expect(source.commands).toEqual(["init"]);
     expect(() => acquireDataDirectoryOwner(join(directory, "activity.sqlite"))).toThrow("runtime owner");
-    // Pairing cleanup can publish wc_pairingDelete. It is not a signature or
-    // new pairing command; inspect the actual parent dispatch boundary instead.
-    expect(source.commands).toEqual(["init", "init"]);
     expect(payload(await call(TOOL_NAMES.accountGetActiveAccount))).toBeDefined();
   } finally {
     await app.close(); await relay.close(); rmSync(directory, { recursive: true, force: true });

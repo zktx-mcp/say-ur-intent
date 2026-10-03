@@ -3,16 +3,14 @@ import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction } from "@mysten/sui/transactions";
 import { fork, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
-import Database from "better-sqlite3";
 import { expect, it, vi } from "vitest";
 import { walletWorkflowFixture } from "./fixtures/walletWorkflow.js";
 import { seedWalletSdk, walletRelay, sdkFixtureTopic } from "./fixtures/walletRelay.js";
 import { WalletSdkProcess } from "../src/runtime/walletSdkProcess.js";
 import type { WalletCommand } from "../src/runtime/walletSdkIpc.js";
 import { acquireDataDirectoryOwner } from "../src/runtime/shared/ownerLease.js";
-import { workflowViewSchema } from "../src/core/session/workflowView.js";
 
-it("recovers a real SDK disconnect through SQLite failure repair and a new explicit admission without replay", async () => {
+it("ends a held real SDK disconnect on service loss without replay or a card restart", async () => {
   const relay = await walletRelay(), children: ChildProcess[] = [], commands: WalletCommand["type"][] = [];
   const f = await walletWorkflowFixture({ createRuntime: async (directory) => {
     await seedWalletSdk(directory, "session");
@@ -28,7 +26,6 @@ it("recovers a real SDK disconnect through SQLite failure repair and a new expli
         children.push(child); return child;
       } });
   } });
-  const db = new Database(join(f.directory, "activity.sqlite"));
   try {
     // A previously approved, known product connection is the independent DB
     // prerequisite. The seeded SDK session alone cannot create one.
@@ -39,37 +36,25 @@ it("recovers a real SDK disconnect through SQLite failure repair and a new expli
     expect((await f.act(disconnect, { action: "disconnect", connectionId: connection.connectionId })).error).toBeUndefined();
     await vi.waitFor(() => expect(relay.calls.filter((call) => call.method === "irn_unsubscribe")).toHaveLength(1));
     expect(f.run(() => f.records.connection(connection.connectionId)?.sdkPending)).toBe(true);
-    const recovery = await f.run(() => f.cards.create("connect", { intent: "manage" }));
-    db.exec("CREATE TRIGGER refuse_phase BEFORE UPDATE OF result_json ON live_read_cards WHEN json_extract(NEW.result_json,'$.phase')='starting' BEGIN SELECT RAISE(ABORT,'fixture phase failure'); END");
-    expect((await f.act(recovery, { action: "restart_wallet_service" })).error).toBeUndefined();
+    const controls = await f.run(() => f.cards.create("connect", { intent: "manage" }));
+    expect((await f.act(controls, { action: "restart_wallet_service" })).error?.code).toBe("invalid_card_input");
+    expect(children).toHaveLength(1);
+    f.runtime.fail("wallet_state_unavailable");
     await vi.waitFor(() => expect(children[0]!.signalCode).toBe("SIGKILL"));
-    await vi.waitFor(() => expect(f.runtime.availability().status).toBe("unavailable"));
     await vi.waitFor(() => expect(f.run(() => f.records.connection(connection.connectionId)?.sdkPending)).toBe(false));
-    expect(children).toHaveLength(1);
     expect((await f.read(disconnect)).snapshot.data).toMatchObject({ connection: { status: "failed", reason: expect.stringContaining("could not be confirmed") } });
-    db.exec("DROP TRIGGER refuse_phase");
-    expect((await f.read(recovery)).snapshot.data).toMatchObject({ runtimeRecovery: { outcome: "failed" } });
     const lease = acquireDataDirectoryOwner(join(f.directory, "walletconnect/sessions.sqlite")); lease.close();
+    expect(f.runtime.availability().status).toBe("unavailable");
+    await f.read(controls); await f.read(controls);
     expect(children).toHaveLength(1);
-    const next = await f.run(() => f.cards.create("connect", { intent: "manage" }));
-    expect((await f.act(next, { action: "restart_wallet_service" })).error).toBeUndefined();
-    await vi.waitFor(() => expect(f.runtime.availability().status).toBe("available"), { timeout: 10000 });
-    expect(children).toHaveLength(2);
-    expect(() => acquireDataDirectoryOwner(join(f.directory, "walletconnect/sessions.sqlite"))).toThrow("runtime owner");
-    expect(f.run(() => f.records.connection(connection.connectionId)?.connection.status)).toBe("failed");
-    expect((await f.read(next)).snapshot.data).toMatchObject({ runtimeRecovery: { outcome: "available" } });
-    const connecting = await f.createConnection();
-    const action = workflowViewSchema.parse(connecting.snapshot.data).automaticAction!;
-    expect(action.action).toBe("connect"); expect((await f.act(connecting, action)).error).toBeUndefined();
-    await vi.waitFor(async () => expect((await f.read(connecting)).walletDisplay?.pairingUri).toMatch(/^wc:/), { timeout: 10000 });
     expect(relay.calls.filter((call) => call.method === "irn_unsubscribe")).toHaveLength(1);
     // The ordinary workflow fixture's transport is not used by this real SDK.
     // Count the actual parent-to-child dispatch, not that unused transport spy.
     expect(commands.filter((command) => command === "disconnect")).toHaveLength(1);
-    expect(commands.filter((command) => command === "connect")).toHaveLength(1);
+    expect(commands.filter((command) => command === "connect")).toHaveLength(0);
     expect(commands.filter((command) => command === "sign")).toHaveLength(0);
     expect(f.submit).not.toHaveBeenCalled();
-  } finally { await f.runtime.close(); db.close(); f.close(); await relay.close(); }
+  } finally { await f.runtime.close(); f.close(); await relay.close(); }
 }, 30000);
 
 // The external wallet and chain are fixtures. SDK, IPC, SQLite admission,

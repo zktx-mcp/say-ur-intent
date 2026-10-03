@@ -875,8 +875,9 @@ it("separates automatic pairing intent from management and disconnection", async
   for (const intent of ["manage", "disconnect"]) {
     const card = await f.run(() => f.cards.create("connect", { intent }));
     const view = (await f.read(card)).snapshot.data as { automaticAction?: unknown; allowedActions: string[] };
-    expect(view.automaticAction).toBeUndefined(); expect(view.allowedActions).not.toContain("connect");
-    expect((await f.act(card, { action: "connect" })).error).toBeDefined();
+    expect(view.automaticAction).toBeUndefined();
+    expect(view.allowedActions.includes("connect")).toBe(intent === "manage");
+    if (intent === "disconnect") expect((await f.act(card, { action: "connect" })).error).toBeDefined();
     expect(f.connect).not.toHaveBeenCalled();
   }
   const connecting = await f.createConnection();
@@ -979,7 +980,7 @@ it.each(["disconnected", "failed", "rejected", "stopped", "expired", "previous_o
   expect(f.connect).toHaveBeenCalledOnce(); expect(f.sign).not.toHaveBeenCalled(); expect(f.submit).not.toHaveBeenCalled();
 });
 
-it("preserves account selection and disconnection for multiple stored connections", async () => {
+it("blocks account selection but preserves targeted disconnection for multiple stored connections", async () => {
   const f = await fixture();
   // Existing approved sessions can be restored together. They do not bypass
   // the product's new-pairing admission rule during fixture preparation.
@@ -991,7 +992,7 @@ it("preserves account selection and disconnection for multiple stored connection
   f.observe();
   const card = await f.run(() => f.cards.create("connect", { intent: "manage" }));
   expect(card.snapshot.data).toMatchObject({ connections: expect.arrayContaining(records.map((record) => expect.objectContaining({ connectionId: record.connection.connectionId }))) });
-  expect((await f.act(card, { action: "use_account", connectionId: records[1]!.connection.connectionId, account: sessions[1]!.accounts[0] })).error).toBeUndefined();
+  expect((await f.act(card, { action: "use_account", connectionId: records[1]!.connection.connectionId, account: sessions[1]!.accounts[0] })).error?.code).toBe("card_conflict");
   expect(f.run(() => f.records.connectionViews())).toHaveLength(2);
   const disconnect = await f.run(() => f.cards.create("connect", { intent: "disconnect" }));
   expect((await f.act(disconnect, { action: "disconnect", connectionId: records[0]!.connection.connectionId })).error).toBeUndefined();

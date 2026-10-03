@@ -1,5 +1,4 @@
 import { workflowActionSchema } from "../core/session/workflowView.js";
-import { cardWithRecoveryGuidance } from "../mcp/walletRecoveryGuidance.js";
 import { sessionDomainToolError } from "../mcp/toolErrors.js";
 import { accountInputSchema, receiptInputSchema, chartOpenInputSchema } from "../core/read/readCardInputs.js";
 import { readFile } from "node:fs/promises";
@@ -32,7 +31,7 @@ export function supportsCards(server: McpServer): boolean {
     server.server.getClientVersion()?.name === "codex-mcp-client";
 }
 export function cardToolResult(response: CardResponse, savedLink = false): CallToolResult {
-  const snapshot = cardWithRecoveryGuidance(response.snapshot);
+  const snapshot = response.snapshot;
   const result = response.error
     ? errorToolResult({ kind: response.error.code === "wallet_unavailable" ? "wallet_unavailable" : "input_invalid", details: { code: response.error.code,
         reason: response.error.message, snapshot } })
@@ -56,7 +55,7 @@ export async function createWorkflowCard(server: McpServer, deps: Pick<McpServer
   const created = await deps.cards.store.create(kind, input);
   const result = cardToolResult(created, true);
   if (gateway) {
-    const payload = okToolResult({ ...gateway, card: cardWithRecoveryGuidance(created.snapshot) });
+    const payload = okToolResult({ ...gateway, card: created.snapshot });
     result.structuredContent = payload.structuredContent;
     result.content = [...payload.content, ...result.content.filter((item) => item.type === "resource_link")];
   }
@@ -73,7 +72,7 @@ export function registerReadCards(server: McpServer, deps: Pick<McpServerDeps, "
   server.registerResource("saved-card", new ResourceTemplate(`${CARD_RESOURCE_PREFIX}{cardId}`, { list: undefined }),
     { mimeType: "application/json", description: "Saved data for one card; no input permission." }, async (uri, variables) => {
       if (!deps.cards || typeof variables.cardId !== "string") throw new CardError("Saved card data is unavailable.");
-      return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(cardWithRecoveryGuidance(await deps.cards.store.readSaved(variables.cardId))) }] };
+      return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(await deps.cards.store.readSaved(variables.cardId)) }] };
     });
   async function create(kind: "account" | "receipt" | "chart", input: Record<string, unknown>): Promise<CallToolResult> {
     if (!supportsCards(server)) return errorToolResult({ kind: "ui_unavailable", details: { reason: "This MCP client does not provide an internal card." } });

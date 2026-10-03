@@ -10,26 +10,28 @@ import "./style.css";
 
 declare const __SAY_UR_INTENT_VERSION__: string;
 export type CardDisplayRecovery = { message: string; retry: () => void };
+export type CardConfirmation = "disconnect";
 export type CardContent = {
   node: HTMLElement; mount?: () => void; dispose?: () => void;
   update?: (snapshot: CardSnapshot, context: CardViewContext) => boolean;
   pending?: () => boolean;
   selectionHint?: string;
   displayRecovery?: () => CardDisplayRecovery | undefined;
+  visibleConfirmation?: () => CardConfirmation | undefined;
 };
 export type CardViewContext = { automaticPaused: boolean; onDisplayChange?: () => void };
 export type CardGuidanceContext = {
   confirmed: boolean; readOnly: boolean; recoveryNeeded: boolean;
   approvalUnresolved: boolean; automaticPaused: boolean;
   commandPending?: { phase: "confirming" | "sending"; action: string } | undefined;
+  visibleConfirmation?: CardConfirmation | undefined;
 };
 export function walletCommandGuidance(context: CardGuidanceContext): string | undefined {
   const pending = context.commandPending;
   if (!pending) return undefined;
   if (pending.phase === "confirming") return "Checking the current selection…";
   if (pending.action === "request_signature") return "Waiting for a response… Ask in chat to check the status of this same transaction request. Do not request approval again while its outcome is unknown.";
-  if (pending.action === "restart_wallet_service") return "Waiting for a response… Ask in chat to check this wallet service restart before requesting another restart.";
-  return "Waiting for a response… If this request is not responding, ask in chat to open wallet connection controls. You can restart the wallet service there after confirming the effects.";
+  return "Waiting for a response… You can ask in chat to check this same request.";
 }
 export type CardRenderer = {
   title: string;
@@ -161,7 +163,6 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     const sameConnection = !!connection && connection.connectionId === oldConnection?.connectionId;
     if (!business) return snapshot.state === "running" || snapshot.reason === "completed" ? failedCommand.delivery === "rejected" ? "past" : "observed" :
       snapshot.state === "closed" ? "past" : "active";
-    if (input.action === "restart_wallet_service" && object(data?.runtimeRecovery)?.priorRunId === input.walletRunId) return "observed";
     if (input.walletRunId && input.walletRunId !== object(data?.walletAvailability)?.walletRunId && input.walletRunId !== data?.acceptedWalletRunId) return "past";
     switch (input.action) {
       case "connect":
@@ -207,7 +208,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     if (failedSelectionEnded()) return "past";
     // Ending command authority is not ending an admitted request or lookup.
     if (typeof data?.actionRemainingMs === "number" && data.actionRemainingMs <= 0) return "past";
-    if (["connect", "disconnect", "use_account", "restart_wallet_service", "cancel", "prepare_review", "request_signature"].includes(String(input.action)) &&
+    if (["connect", "disconnect", "use_account", "cancel", "prepare_review", "request_signature"].includes(String(input.action)) &&
         (snapshot.state !== "ready" || review?.status === "expired")) return "past";
     return "active";
   }
@@ -246,7 +247,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
       read_result: "transaction status check", cancel: "cancellation request", stop_connection: "request to stop connecting",
       stop_waiting: object(object(command.basis.data)?.request)?.requestStatus === "awaiting_signature"
         ? "request to stop wallet approval" : "request to stop checking the result",
-      disconnect: "wallet disconnect request", use_account: "account selection", restart_wallet_service: "wallet service restart"
+      disconnect: "wallet disconnect request", use_account: "account selection"
     };
     return business ? labels[String(command.input.action)] ?? "request" : "data request";
   }
@@ -348,6 +349,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
       if (canSubmit(d) && displayedView?.selectionHint) return displayedView.selectionHint;
     }
     return renderer.guidance?.(snapshot, { confirmed: d.current, readOnly: !reference, recoveryNeeded,
+      visibleConfirmation: displayedView?.visibleConfirmation?.(),
       commandPending: business && commandFlight && d.current && !d.errors.some(Boolean) &&
         (commandFlight.phase === "confirming" || snapshot?.state === "ready" && !object(snapshot.data)?.runtimeRecovery &&
           !object(snapshot.data)?.request && !object(object(snapshot.data)?.review)?.preparing)
@@ -638,16 +640,15 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     if (!parsed.success || !parsed.data.allowedActions.some((action) => action === input.action)) return false;
     const data = parsed.data, prior = object(before.data);
     if (input.walletRunId && input.walletRunId !== data.walletAvailability.walletRunId) return false;
-    if (input.action === "restart_wallet_service") return JSON.stringify(data.recoveryImpact) === JSON.stringify(prior?.recoveryImpact);
-    if (input.action === "connect") return data.automaticAction?.action === "connect";
+    if (input.action === "connect") return data.allowedActions.includes("connect") && ["connect", "manage"].includes(String(current.input.intent));
     if (input.action === "prepare_review" || input.action === "request_signature") {
       return data.review?.reviewRevision === input.reviewRevision &&
-        (input.action === "prepare_review" ? data.activeAccount : data.review?.account) === input.account &&
-        reviewWalletChoices(data.connections, String(input.account), input.action === "request_signature").some((item) => item.connectionId === input.connectionId);
+        (input.action === "prepare_review" ? data.assetReadAccount?.status === "available" ? data.assetReadAccount.account : undefined : data.review?.account) === input.account &&
+        reviewWalletChoices(data, String(input.account), input.action === "request_signature").some((item) => item.connectionId === input.connectionId);
     }
     if (input.action === "disconnect" || input.action === "use_account") return data.connections.some((item) =>
       item.connectionId === input.connectionId && item.status === "connected" && !item.pendingAction &&
-      (input.action !== "use_account" || item.accounts.includes(String(input.account))));
+      (input.action !== "use_account" || item.connectionId === data.usableConnectionId && item.accounts.includes(String(input.account))));
     return data.connection?.connectionId === object(prior?.connection)?.connectionId &&
       data.request?.attemptId === object(prior?.request)?.attemptId &&
       data.review?.reviewRevision === object(prior?.review)?.reviewRevision;
@@ -668,20 +669,20 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
     publish();
   }
   async function submit(input: Record<string, unknown>): Promise<void> {
-    if (business && (input.action === "restart_wallet_service" || failedCommand?.disposition === "active" || failedCommand?.retryRequired || automation === "paused")) await confirmAndSubmit(input);
+    if (business && (failedCommand?.disposition === "active" || failedCommand?.retryRequired || automation === "paused")) await confirmAndSubmit(input);
     else await sendCommand(input);
   }
   function recordCommandFailure(flight: CommandFlight, message: string, delivery: FailedCommand["delivery"]): void {
     failedCommand = { input: flight.input, basis: flight.basis, message, delivery, disposition: "active",
       retryRequired: flight.input.action === "connect" || flight.input.action === "prepare_review" };
     reconcileFailedCommand();
-    if (["cancel", "disconnect", "stop_connection", "stop_waiting", "use_account", "restart_wallet_service"].includes(String(flight.input.action))) automation = "paused";
+    if (["cancel", "disconnect", "stop_connection", "stop_waiting", "use_account"].includes(String(flight.input.action))) automation = "paused";
     if (business || delivery === "unknown") requireConfirmation();
   }
   async function sendCommand(input: Record<string, unknown>, origin: "user" | "automatic" = "user"): Promise<void> {
     if (!snapshot || !reference || (business ? !canAct(input) : !canSubmit())) return;
     const flight: CommandFlight = { input, basis: snapshot, phase: "sending" };
-    commandFlight = flight; automation = input.action === "restart_wallet_service" ? "paused" : "continue";
+    commandFlight = flight; automation = "continue";
     if (origin === "user" || failedCommand?.disposition !== "past") failedCommand = undefined;
     selectionNotice = undefined;
     publish();

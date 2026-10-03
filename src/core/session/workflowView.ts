@@ -3,48 +3,26 @@ export type { ConnectionView, WorkflowAction } from "./workflowState.js";
 import { z } from "zod";
 import { suiAddressStringSchema, parseSuiAddress } from "../suiAddress.js";
 import { actionPlanSchema, internalSessionStatusSchema, reviewStateOutputSchema } from "../action/schemas.js";
-import { walletConnectionSchema, walletAvailabilitySchema, workflowProgressSchema, WALLET_CONNECTION_POLL_SECONDS } from "./walletConnection.js";
+import { walletConnectionSchema, walletAvailabilitySchema, workflowProgressSchema, WALLET_CONNECTION_POLL_SECONDS, connectionConflictSchema, assetReadAccountSchema } from "./walletConnection.js";
 import { transactionRequestSchema } from "./transactionRequest.js";
 import { workflowProgress } from "./walletConnection.js";
 import { reviewProgress, EXECUTION_POLLING_INTERVAL_SECONDS } from "./status.js";
-import { walletRunIdSchema, walletRecoverySchema, walletObservationSchema, walletRecoveryImpactSchema } from "./walletRuntime.js";
+import { walletRunIdSchema, walletRecoverySchema, walletObservationSchema } from "./walletRuntime.js";
 
 export const CONNECT_BOUNDARY = "A wallet connection provides account context; it is not a transaction approval or proof of address ownership.";
 export const REVIEW_BOUNDARY = "Review evidence is not a safety guarantee. Only an explicit card action and wallet approval may authorize this exact transaction.";
 // A projection of an admitted card operation, not a new wallet connection state.
 export const connectionViewSchema = walletConnectionSchema.extend({ pendingAction: z.literal("disconnect").optional() });
-export const assetReadAccountSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("available"), account: suiAddressStringSchema }).strict(),
-  z.object({ status: z.literal("address_required") }).strict()
-]);
-export type AssetReadAccount = z.infer<typeof assetReadAccountSchema>;
-export const pendingConnectionStatusSchema = z.enum(["input_required", "awaiting_approval", "disconnect_pending", "wallet_recovery_pending"]);
+export { assetReadAccountSchema, type AssetReadAccount } from "./walletConnection.js";
+export const pendingConnectionStatusSchema = z.enum(["input_required", "awaiting_approval", "disconnect_pending"]);
 export type PendingConnectionStatus = z.infer<typeof pendingConnectionStatusSchema>;
-// The MCP presentation layer supplies the tool name; core only defines the
-// optional display payload and decides whether a recovery route is relevant.
-export const walletRecoveryGuidanceSchema = z.object({ message: z.string(),
-  openControls: z.object({ tool: z.string(), intent: z.literal("manage") }).strict() }).strict();
-export function walletRecoveryRoute(input: {
-  walletAvailability: z.infer<typeof walletAvailabilitySchema>; waiting: boolean;
-  runtimeRecovery?: z.infer<typeof walletRecoverySchema> | undefined;
-}): "conditional" | "unavailable" | undefined {
-  if (input.walletAvailability.status === "recovering" || input.runtimeRecovery && "phase" in input.runtimeRecovery && input.runtimeRecovery.phase === "stopping") return undefined;
-  if (input.walletAvailability.status === "unavailable") return "unavailable";
-  if (input.walletAvailability.status === "initializing" || input.waiting) return "conditional";
-  return undefined;
-}
-export function connectionRecoveryRoute(data: Pick<WorkflowView, "walletAvailability" | "runtimeRecovery" | "connections">) {
-  return walletRecoveryRoute({ ...data, waiting: data.connections.some((item) => item.status === "awaiting_approval" || item.pendingAction === "disconnect") });
-}
-
 const connectAction = z.object({ action: z.literal("connect"), walletRunId: walletRunIdSchema }).strict();
-const restartAction = z.object({ action: z.literal("restart_wallet_service"), walletRunId: walletRunIdSchema }).strict();
 const disconnectAction = z.object({ action: z.literal("disconnect"), walletRunId: walletRunIdSchema, connectionId: z.string().min(1) }).strict();
 const accountAction = z.object({ action: z.literal("use_account"), walletRunId: walletRunIdSchema, connectionId: z.string().min(1), account: suiAddressStringSchema }).strict();
 const reviewAction = z.object({ action: z.enum(["prepare_review", "request_signature"]), connectionId: z.string().min(1),
   walletRunId: walletRunIdSchema, account: suiAddressStringSchema, reviewRevision: z.number().int().nonnegative() }).strict();
 const simpleAction = z.object({ action: z.enum(["cancel", "stop_connection", "stop_waiting", "read_result"]) }).strict();
-export const workflowActionSchema = z.union([connectAction, restartAction, disconnectAction, accountAction, reviewAction, simpleAction]);
+export const workflowActionSchema = z.union([connectAction, disconnectAction, accountAction, reviewAction, simpleAction]);
 export const automaticWorkflowActionSchema = z.union([connectAction, reviewAction.extend({ action: z.literal("prepare_review") })]);
 export function parseWorkflowAction(input: unknown) {
   const action = workflowActionSchema.parse(input);
@@ -63,7 +41,9 @@ export const workflowViewSchema = z.object({
   walletAvailability: walletAvailabilitySchema,
   walletObservation: walletObservationSchema.optional(),
   runtimeRecovery: walletRecoverySchema.optional(),
-  recoveryImpact: walletRecoveryImpactSchema.optional(),
+  connectionConflict: connectionConflictSchema.optional(),
+  usableConnectionId: z.string().min(1).optional(),
+  assetReadAccount: assetReadAccountSchema.optional(),
   acceptedWalletRunId: walletRunIdSchema.optional(),
   progress: workflowProgressSchema,
   boundary: z.enum([CONNECT_BOUNDARY, REVIEW_BOUNDARY]),
@@ -71,7 +51,6 @@ export const workflowViewSchema = z.object({
   activeAccount: z.string().optional(),
   connection: connectionViewSchema.optional(),
   connectionAction: z.enum(["connect", "disconnect"]).optional(),
-  walletRecoveryGuidance: walletRecoveryGuidanceSchema.optional(),
   review: z.object({
     reviewSessionId: z.string(), plan: actionPlanSchema, reviewRevision: z.number().int().nonnegative(),
     status: internalSessionStatusSchema, account: z.string().optional(), preparing: z.boolean(),
@@ -83,7 +62,18 @@ export const workflowViewSchema = z.object({
   receipt: z.unknown().optional(),
   netGasMist: z.string().regex(/^-?[0-9]+$/).optional(),
   observationStopped: z.boolean().optional()
-}).strict();
+}).strict().superRefine((view, context) => {
+  const connection = view.connections.find((item) => item.connectionId === view.usableConnectionId);
+  if (view.usableConnectionId && (!connection || connection.status !== "connected" ||
+      view.walletAvailability.status !== "available" || view.connectionConflict ||
+      view.connections.some((item) => item.pendingAction || item.status === "awaiting_approval"))) {
+    context.addIssue({ code: "custom", path: ["usableConnectionId"], message: "The usable connection must match current connection facts." });
+  }
+  if (view.assetReadAccount?.status === "available" && (!connection ||
+      !connection.accounts.includes(view.assetReadAccount.account) || view.activeAccount !== view.assetReadAccount.account)) {
+    context.addIssue({ code: "custom", path: ["assetReadAccount"], message: "The default address must belong to the usable connection and stored selection." });
+  }
+});
 export type WorkflowView = z.infer<typeof workflowViewSchema>;
 
 // Automatic preparation uses the same current selection and typed admission as
@@ -94,16 +84,17 @@ function automaticReviewAction(input: EvaluatedWorkflowState) {
       !input.allowedActions.includes("prepare_review")) return undefined;
   const needsPreparation = !session.reviewState && session.reviewRevision === 0 ||
     session.reviewState?.status === "refresh_required" && session.reviewState.refreshReason === "review_evidence_stale";
-  if (!needsPreparation || !input.activeAccount) return undefined;
-  const candidates = reviewWalletChoices(input.connections, input.activeAccount);
+  if (!needsPreparation || input.assetReadAccount?.status !== "available") return undefined;
+  const account = input.assetReadAccount.account;
+  const candidates = reviewWalletChoices(input, account);
   if (candidates.length !== 1) return undefined;
   return { action: "prepare_review" as const, walletRunId: input.walletAvailability.walletRunId, connectionId: candidates[0]!.connectionId,
-    account: input.activeAccount, reviewRevision: session.reviewRevision };
+    account, reviewRevision: session.reviewRevision };
 }
 
 // Method support filters wallet choices; it does not authorize a signature.
-export function reviewWalletChoices(connections: WorkflowView["connections"], account: string, requireSigningMethod = false) {
-  return connections.filter((item) => item.status === "connected" && !item.pendingAction && item.accounts.includes(account) &&
+export function reviewWalletChoices(selection: { connections: WorkflowView["connections"]; usableConnectionId?: string | undefined }, account: string, requireSigningMethod = false) {
+  return selection.connections.filter((item) => item.connectionId === selection.usableConnectionId && item.accounts.includes(account) &&
     (!requireSigningMethod || item.methods.includes("sui_signTransaction")));
 }
 
@@ -126,10 +117,10 @@ export function projectConnectionView(input: EvaluatedWorkflowState): WorkflowVi
     workflowProgress(connection?.status === "awaiting_approval" || connection?.pendingAction === "disconnect", true, walletAvailability);
   return workflowViewSchema.parse({ kind: "connect", mode: "connect", allowedActions: input.allowedActions,
     actionRemainingMs: input.actionRemainingMs, observe: progress.status === "waiting", progress, walletAvailability,
-    ...(input.allowedActions.includes("connect")
+    ...(input.record?.state.input.intent === "connect" && input.allowedActions.includes("connect")
       ? { automaticAction: { action: "connect", walletRunId: walletAvailability.walletRunId } } : {}),
     runtimeRecovery: input.runtimeRecovery, walletObservation: input.walletObservation,
-    recoveryImpact: input.recoveryImpact,
+    connectionConflict: input.connectionConflict, usableConnectionId: input.usableConnectionId, assetReadAccount: input.assetReadAccount,
     connectionAction: ["connect", "disconnect"].includes(String(input.record?.acceptedInput?.action)) ? input.record?.acceptedInput?.action : undefined,
     acceptedWalletRunId: input.record?.acceptedInput?.walletRunId,
     ...(readAfter === undefined ? {} : { nextStateReadAfterMs: readAfter }),
@@ -148,7 +139,8 @@ export function projectReviewView(input: EvaluatedWorkflowState): WorkflowView {
   const readAfter = nextStateRead(input);
   return workflowViewSchema.parse({ kind: "review", mode: record.scope === "review_manage" ? "review_manage" : "review",
     allowedActions: input.allowedActions, actionRemainingMs: input.actionRemainingMs, observe: progress.status === "waiting", progress, walletAvailability,
-    connections: input.connections, activeAccount: input.activeAccount, boundary: REVIEW_BOUNDARY, receipt: input.receipt,
+    connections: input.connections, connectionConflict: input.connectionConflict, usableConnectionId: input.usableConnectionId,
+    assetReadAccount: input.assetReadAccount, activeAccount: input.activeAccount, boundary: REVIEW_BOUNDARY, receipt: input.receipt,
     walletObservation: input.walletObservation,
     acceptedWalletRunId: record.acceptedInput?.walletRunId,
     ...(readAfter === undefined ? {} : { nextStateReadAfterMs: readAfter }),

@@ -29,11 +29,6 @@ export const walletRecoverySchema = z.union([
     nextRunId: walletRunIdSchema.optional(), message: z.string().optional() }).strict()
 ]);
 export type WalletRecovery = z.infer<typeof walletRecoverySchema>;
-// Private identity for one admitted recovery, not another source of its state.
-export type WalletRecoveryTarget = { cardId: string; priorRunId: string; nextRunId?: string };
-export const walletRecoveryImpactSchema = z.object({ connectionIds: z.array(z.string()), attemptIds: z.array(z.string()) }).strict();
-export type WalletRecoveryImpact = z.infer<typeof walletRecoveryImpactSchema>;
-
 export class WalletRunInterruptedError extends Error {
   constructor(readonly runId: string) { super("The wallet service run ended. This operation will not be repeated."); }
 }

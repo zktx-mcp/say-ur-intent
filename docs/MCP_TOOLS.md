@@ -206,7 +206,7 @@ pause does not claim that the backend or other frames stopped; new frames use
 the actual saved state.
 
 Connect eligibility and its SQLite admission use the same current-owner
-connection set. A connected wallet, pending approval or pending disconnection
+connection set. An unexpired connected wallet, pending approval or pending disconnection
 removes `connect` from `allowedActions` and prevents a second pairing even when
 different cards race with current revisions. The losing card gets the existing
 conflict response and its own snapshot, without another card's private QR or
@@ -233,7 +233,7 @@ an actual read failure instead requires explicit recovery. A valid current read
 also clears an identified card's earlier opening-projection error. Neither path
 repairs malformed permissions or changes the card's target.
 
-Review displays one current wallet candidate without a dropdown. Its current authenticated View executes the backend-projected `automaticAction` to prepare or renew stale verified conditions. Multiple candidates require selection; a failed computation requires explicit retry. `review_evidence_stale` distinguishes invalidated verified material from a failed quote/computation. Only Request wallet approval authorizes a signature request for the displayed revision. Result cards show the correct PTB, actual chain facts and one Details slide; Review keeps earlier estimates in its Reviewed conditions section.
+Review displays one current wallet candidate without a dropdown. Its current authenticated View executes the backend-projected `automaticAction` to prepare or renew stale verified conditions. Multiple valid connections block preparation and signing until the user resolves them with targeted Disconnect actions. A failed computation requires explicit retry. `review_evidence_stale` distinguishes invalidated verified material from a failed quote/computation. Only Request wallet approval authorizes a signature request for the displayed revision. Result cards show the correct PTB, actual chain facts and one Details slide; Review keeps earlier estimates in its Reviewed conditions section.
 
 Cards provide no clipboard actions or copy buttons. Their text remains readable and selectable. Chart values remain USDC-denominated source candles, not fiat USD, peg guarantees, route advice, portfolio valuation or P&L. Cards do not fetch chain/Indexer endpoints directly or poll completed results.
 
@@ -471,9 +471,7 @@ Live account scans use the pinned GraphQL `last`/`before` connection direction f
 
 Live scan and live-summary responses return `requestedAccountTransactionFacts`. This flattened requested-account row array pairs each digest with account-scoped fields and `requestedAccountEffect`. The response also returns `transactionDetailAvailability`, which counts returned `transactions` rows with and without source details. It includes `transactions[].transactionContext` in `userAnswerUse.answerFields` only when `transactionDetailAvailability.allReturnedTransactionsHaveDetails: true`.
 
-`transactionContext` intentionally excludes transaction-wide balance-change aggregates.
-
-Live scan and live-summary responses return `requestedAccountTransactionFacts` as an account-scoped row surface with `requestedAccountEffect`. When `transactionContext` is present, it omits transaction-wide balance-change aggregates.
+When `transactionContext` is present, it omits transaction-wide balance-change aggregates.
 
 Function activity boundaries:
 
@@ -877,7 +875,7 @@ DeepBook transaction material build uses the derived raw quote policy in the
 account-bound review layer, not `assetFlowPreview.amount` display strings.
 
 Any adapter that returns a signable review contract must keep a separate
-contract before any wallet handoff exists. The source-level contract is
+contract before any wallet request. The source-level contract is
 `src/core/action/signableAdapterContract.ts`; the explanatory contract document
 is `docs/SIGNABLE_ADAPTER_CONTRACT.md`.
 
@@ -920,7 +918,7 @@ It is not a signing readiness signal. Review-state checks are pre-signing review
 
 | Tool | Input and result |
 | --- | --- |
-| `session.create_wallet_connection` | Opens an internal card with `intent: connect`, `disconnect` or `manage` (default). A connect-intent View automatically starts pairing after authenticated state confirmation; manage never pairs. A disconnect-intent card opens confirmation for a unique connected target. Disconnection requires target-specific confirmation and does not revoke onchain permissions. |
+| `session.create_wallet_connection` | Opens an internal card with `intent: connect`, `disconnect` or `manage` (default). A connect-intent View automatically starts pairing after authenticated state confirmation; manage pairs only after the user chooses Connect wallet. A disconnect-intent card opens confirmation for a unique connected target. Disconnection requires target-specific confirmation and does not revoke onchain permissions. |
 | `session.get_wallet_connection` | Reads one `cardId`; public response excludes pairing and permission. |
 | `session.wait_wallet_connection` | Waits on one `cardId`, with an optional timeout up to 55 seconds; stops when user input is needed or the admitted connection/disconnection operation ends. |
 | `session.open_review_management` | Opens management for exact `reviewSessionId` + `attemptId`; no refresh or signing authority. |
@@ -976,7 +974,7 @@ before its response fails remains recorded and is recovered by reading it.
 
 Wallet startup and restoration are asynchronous dependencies of the parent
 service. Connect/manage cards remain available during initialization or failure
-so the user can inspect state and request service recovery. Ordinary evidence
+so the user can inspect state. They do not provide service-restart input. Ordinary evidence
 and saved-result reads do not await the SDK. The package supplies its project
 identifier; these failures do not ask the user for a project ID. SDK error bodies
 and private configuration values are not returned.
@@ -1030,7 +1028,8 @@ from stored review, request and chain facts:
 - `available`: the SDK and required database publication completed;
 - `initializing`: `process_start`, `sdk_start`, `session_restore` or `state_sync`,
   with a neutral message; a failed state write remains in `state_sync` for recovery;
-- `recovering`: the current SDK run is being stopped after explicit recovery;
+- `recovering`: a fenced SDK run is being replaced by the internal supervisor;
+  no current card or model action requests this transition;
 - `unavailable`: a safe `reason` and `message`.
 
 The existing unavailable reasons are `initialization_failed`,
@@ -1055,14 +1054,54 @@ only when that action was admitted on the card. The connection's current status
 is separate from the card's original operation. In particular, failed disconnect
 means remote removal was not confirmed, including after local service recovery.
 
-Connect tool responses and saved resources may include
-`data.walletRecoveryGuidance: { message, openControls: { tool:
-"session.create_wallet_connection", intent: "manage" } }`. Interaction status
-uses the same optional field at its top level. It describes conditional recovery
-for waiting/initializing wallet work or a route after confirmed unavailability;
-current stopping does not invite another restart. It grants no action permission
-and does not diagnose a hung service. The model must not call `ui.act_card` for
-the user. Existing per-review status follow-up remains unchanged.
+`connectionConflict`, when present, is
+`{ reason: "multiple_connections", connectionIds: [...] }`. It contains distinct
+IDs for the multiple live, known connections that prevent selecting a usable
+wallet. It appears in Connect/Review `data`, the connection wait's `card.data`,
+interaction status and relevant review-status responses. Its shared schema and
+backend evaluation own the meaning; the View does not count rows to grant authority.
+`walletAvailability: available` only confirms the SDK dependency, not the absence
+of this conflict. `connections` describes recorded targets, not signing choices.
+In conflict, `assetReadAccount` is `address_required`; explicit-address reads and
+saved transaction results retain their independent access rules.
+
+A valid Connect card can still offer exact-target `disconnect` during conflict.
+`connect`, `use_account`, `prepare_review` and `request_signature` remain blocked.
+Each disconnection uses the same scoped UI permission, current run and revision,
+atomic admission and saved result as an ordinary single-connection disconnect.
+No first/newest/default wallet is silently selected. When one valid connection
+remains and no connection operation is pending, normal account use can resume;
+with none, pairing is available. A failed disconnect does not prove remote removal.
+A failed or stopped product connection is not restored merely because its SDK
+session remains saved.
+
+`connectionConflict` is optional. Its absence alone is not proof of a usable
+connection or permission, especially in a historical result that does not need
+current wallet eligibility. Filling optional context never adds global cleanup
+writes or SDK requests to independent saved-result reads. `allowedActions`
+identifies permitted action types; it is not a list of visible buttons or model
+authority. Only the exact current target, UI permission and final admission
+checks allow a user action.
+
+Current Connect/Review `data` also publishes `usableConnectionId` and
+`assetReadAccount`. The first identifies the single connection eligible for
+account use at the backend's evaluation time; it is absent during conflict,
+pending connection work, unavailable service, or when no unexpired connection
+qualifies. It does not authorize a signature. `assetReadAccount` uses the same
+`available`/`address_required` shape as interaction status. Availability requires
+the stored default's source connection ID to match this connection and its
+address to remain approved. Matching the address in a different connection is
+insufficient. A source-less stored selection requires explicit Use address.
+
+These fields are emitted together for current wallet eligibility. Independent
+historical or completed-result reads may omit them; omission does not establish
+current eligibility. Recorded `connections` and `activeAccount` remain facts,
+including expired records and a stored default that cannot currently be used.
+Views consume the published selection instead of counting recorded rows or
+using their own clock. An expired record may remain a disconnection target;
+expiry alone does not confirm remote removal. Final admission checks current
+backend facts again. Changing a read default never changes an existing review's
+account or grants new authority to an admitted transaction.
 
 Views additionally know whether their own confirmation read or command response
 is pending. They show neutral communication guidance without synthesizing DB
@@ -1075,44 +1114,25 @@ connection expiry do not block recorded results. Current wallet eligibility and
 new chain observation retain their required writes. Target session/card expiry
 errors still fail the read without deleting the stored execution result.
 
-The additional app-only input is
-`{ action: "restart_wallet_service", walletRunId }`. It is allowed only on a
-live, unconsumed Connect card created with `intent: "manage"`, after scoped
-permission, revision, owner and run checks. `recoveryImpact` lists the current
-connection and unsubmitted attempt IDs affected by confirmation. Ordinary tools
-can open or read this card but cannot execute the restart. The parent commits
-revocation of unsubmitted authority before terminating its own SDK child.
-Already dispatched transactions keep their exact digest and observation.
+Connect does not accept `restart_wallet_service`; that input returns
+`invalid_card_input` without consuming the card or changing the SDK run.
+There is no model-facing or Settings replacement command. Operational app
+restart is described in [MCP Setup](MCP_SETUP.md#wallet-connection-boundary).
 
-The card's `runtimeRecovery` identifies `priorRunId`, admission/update times,
-and either a `stopping`/`starting` phase or an `available`, `failed`, `superseded`
-or `server_restarted` outcome. `nextRunId` exists only after a replacement has
-been reserved. Running recovery appears in `pendingWalletConnections` as
-`wallet_recovery_pending`, without a fabricated connection ID. It remains
-`progress: waiting` and observable after input expiry. Terminal recovery is
-`idle` and no longer pending. `waitOutcome: status_reached` describes observation
-ending, not success. Parent restart ends unfinished recovery; it does not replay
-it. A later recovery on another card cannot reopen a completed result.
+A historical `runtimeRecovery` result retains its prior/next run IDs,
+admission/update times and `available`, `failed`, `superseded`, or
+`server_restarted` outcome. It does not grant another input. Parent restart
+terminates unfinished recovery records without replay. `waitOutcome:
+status_reached` means observation ended, not that remote disconnection or chain
+execution succeeded.
 
-If an observed recovery failure cannot be saved, the affected current-state
-read reports a storage error instead of confirming an indefinitely waiting
-operation. Checking that card again retries the database write, not the SDK
-operation. Once saved, the failure is terminal even if the user later starts
-another recovery. A failed attempt is not relabelled as superseded by a newer
-one; superseded describes replacement of a still-running startup. Existing
-transaction results and already dispatched chain observation remain independent
-of recovery-result persistence.
-
-Recovery is not new pairing approval, remote wallet revocation or chain
-cancellation. Identical accepted restart input reads the same result, and a lost
-reply never retries it. A new management card and explicit confirmation may
-restart a replacement that remains unresponsive. A live Connect or internal Review view may use the existing five-second
+A live Connect or internal Review view may use the existing five-second
 `nextStateReadAfterMs` hint to refresh service availability without creating a
-business operation. `review.accountRequestPending: true` means an earlier request
-for the preparation account still has unfinished work. Preparation and signing
-remain unavailable; the existing request-observation interval checks when that
-work finishes. Service readiness alone cannot clear that guard or reset the
-Review input deadline.
+business operation. `review.accountRequestPending: true` means an earlier
+request for the preparation account still has unfinished work. Preparation and
+signing remain unavailable; the existing request-observation interval checks
+when that work finishes. Service readiness alone cannot clear that guard or
+reset the Review input deadline.
 
 Target-specific `progress.status` is `idle`, `waiting`, or `unavailable`. The last
 includes `reason: "wallet_unavailable"` and a safe message. A wait returns
@@ -1120,9 +1140,11 @@ includes `reason: "wallet_unavailable"` and a safe message. A wait returns
 the saved facts. Completed requests return `status_reached` immediately, even
 when the wallet dependency is unavailable. Already submitted requests can still
 be observed by their exact digest independently of WalletConnect. Availability fields alone do not change request states or activity counts.
-Explicit recovery or actual service loss separately commits the required
-request transitions: unsubmitted requests stop for a user restart or fail for
-service loss, while verified chain outcomes remain unchanged.
+Actual service loss separately records failure of unsubmitted approval requests;
+already dispatched transactions retain their digest and chain observation.
+Backend restart revokes submission authority and reconciles in-flight requests
+as uncertain without resending them. Neither event establishes cancellation or
+chain failure, and verified chain outcomes remain unchanged.
 
 Wallet-dependent commands rejected for dependency failure use the error kind
 `wallet_unavailable`, with a safe reason and message. Invalid input and domain
@@ -1256,7 +1278,7 @@ choose (optional `protocol` argument with completion), so it never silently
 picks a venue. Each surface takes exactly one
 free-text `intent` argument so MCP clients can pass the whole request in one
 line; the model parses the intent, the server never does. Platform boundary
-language (no signing data, no transaction bytes, local-review-only signing) is
+language (no signing data or transaction bytes in MCP responses, and user-controlled wallet approval) is
 appended at registration time and cannot be weakened by an adapter. Prompts
 are standard MCP `prompts/list` entries, so any MCP client that surfaces
 prompts (Claude Desktop, Claude Code, and others) exposes them without extra
