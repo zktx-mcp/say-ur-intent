@@ -13,7 +13,7 @@ export const MAX_OBJECT_IDS = 20;
 export const SNIPPET_LIMIT = 500;
 export const DECLARED_NETWORK = "mainnet";
 export const SOURCE_CHECKED_SUI_CLI_VERSION = "1.71.1";
-export const TEMP_ARTIFACT_DIR_PREFIX = "say-ur-intent-sui-cli-diagnostics-";
+export const TEMP_ARTIFACT_DIR_PREFIX = "sui-mcp-sui-cli-diagnostics-";
 export const UNSAFE_OUTPUT_DIR_MARKER = "[UNAVAILABLE_UNSAFE_PATH]";
 export const INVALID_CLIENT_ENV_MARKER = "[UNAVAILABLE_INVALID_ALIAS]";
 // Verified against Sui CLI 1.71.1 source: replay writes this trace inside the digest-specific replay output directory.

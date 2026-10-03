@@ -11,7 +11,7 @@ export function runtimeFailureReason(error: unknown, stage: string): string {
   if (code === "DATA_DIRECTORY_OWNED") return "The private data directory is already owned by another wallet runtime.";
   if (code === "REVIEW_PORT_CONFLICT") return "The review port is held by a foreign or incompatible runtime. Use the same runtime, data directory and port for every client.";
   if (code && /^(SQLITE_[A-Z_]+|EACCES|EPERM|ENOENT|ENOSPC|EADDRINUSE)$/.test(code)) return `Local runtime resource access failed (${code}). Check the data directory and listener configuration.`;
-  if (stage === "configuration") return "Invalid runtime configuration. Check mainnet, endpoint settings and SAY_UR_INTENT_REVIEW_PORT.";
+  if (stage === "configuration") return "Invalid runtime configuration. Check mainnet, endpoint settings and SUI_MCP_REVIEW_PORT.";
   if (stage === "control_identity") return "The private runtime control identity could not be loaded. Check data directory ownership and permissions.";
   return "The local runtime could not complete this stage. Check local data permissions and runtime configuration.";
 }

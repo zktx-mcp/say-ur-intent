@@ -15,7 +15,7 @@ import {
   prepareActionReviewUserAnswerUse,
   prepareExternalProposalReviewUserAnswerUse
 } from "../../responseGuidance.js";
-import { registerSayUrIntentTool } from "../../registerTool.js";
+import { registerSuiMcpTool } from "../../registerTool.js";
 import type { McpServerDeps } from "../../server.js";
 import { successOutputSchema } from "../../schemas.js";
 import { errorToolResult } from "../../result.js";
@@ -103,7 +103,7 @@ export function registerActionTools(server: McpServer, deps: Pick<McpServerDeps,
     }
   );
 
-  registerSayUrIntentTool(
+  registerSuiMcpTool(
     server,
     TOOL_NAMES.actionPrepareExternalProposalReview,
     {

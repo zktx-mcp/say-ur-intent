@@ -2,7 +2,7 @@
 // it is never a query parameter, which would leak into server logs and browser
 // history. Every request to a token-gated endpoint carries the token in the
 // header below, which the server checks with a constant-time compare.
-const TOKEN_HEADER = "x-say-ur-intent-token";
+const TOKEN_HEADER = "x-sui-mcp-token";
 
 export function readPageToken(): string {
   const hash = window.location.hash;

@@ -97,14 +97,14 @@ Do not set target provenance for an AI-inferred target. Do not auto-pick assets 
 
 `What is 1 SUI worth?`
 Class: `answer_only`.
-Call `read.get_deepbook_mid_price` with `poolKey: "SUI_USDC"` for Say Ur Intent verified context.
+Call `read.get_deepbook_mid_price` with `poolKey: "SUI_USDC"` for Sui MCP verified context.
 Answer as DeepBook SUI/USDC mid price at `fetchedAt`, not as the global market price.
 Do not use external web data unless the user explicitly asks for non-product market context.
 Do not ask for a wallet or push a review session.
 
 `If I sell 10 SUI, how many dollars do I get?`
 Class: `clarify_or_intent_evidence`.
-Say Say Ur Intent cannot turn "dollars" into fiat USD or silently choose USDC/USDT.
+Say Sui MCP cannot turn "dollars" into fiat USD or silently choose USDC/USDT.
 Ask whether the user wants a specific DeepBook USD-denominated quote token/pool or wallet-scoped settlement-asset-group evidence.
 If the user chooses SUI/USDC, answer as a DeepBook SUI/USDC quote at `fetchedAt`.
 Do not convert USDC to fiat USD cash-out, assume the USDC/USD peg, or use web/finance lookup unless the user explicitly asks for outside product market context.

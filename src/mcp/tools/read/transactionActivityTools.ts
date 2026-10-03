@@ -463,7 +463,7 @@ const accountAssetTimelineUsdcReferenceSummarySchema = z.object({
   usdcIsFiatUsd: z.literal(DEEPBOOK_OFFICIAL_INDEXER_USDC_REFERENCE.usdcIsFiatUsd),
   usdPegGuaranteeAvailable: z.literal(DEEPBOOK_OFFICIAL_INDEXER_USDC_REFERENCE.usdPegGuaranteeAvailable),
   source: z.literal(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.kind),
-  chainRecomputedBySayUrIntent: z.literal(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent),
+  chainRecomputedBySuiMcp: z.literal(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp),
   quantitySemantics: z.object({
     kind: z.literal("deepbook_official_indexer_candles"),
     allowedUse: z.literal(DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.allowedUse),
@@ -472,7 +472,7 @@ const accountAssetTimelineUsdcReferenceSummarySchema = z.object({
     priceConvention: z.literal(DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.priceConvention),
     usdcIsFiatUsd: z.literal(DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.usdcIsFiatUsd),
     usdPegGuaranteeAvailable: z.literal(DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.usdPegGuaranteeAvailable),
-    chainRecomputedBySayUrIntent: z.literal(DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.chainRecomputedBySayUrIntent),
+    chainRecomputedBySuiMcp: z.literal(DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.chainRecomputedBySuiMcp),
     liveQuoteAvailable: z.literal(false),
     historicalMidPriceAvailable: z.literal(false),
     globalMarketPriceAvailable: z.literal(false),
@@ -530,7 +530,7 @@ const accountAssetTimelineUsdcReferenceSummarySchema = z.object({
           endTimeMs: z.number().int().nonnegative(),
           limit: z.number().int().positive()
         }).strict(),
-        chainRecomputedBySayUrIntent: z.literal(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent)
+        chainRecomputedBySuiMcp: z.literal(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp)
       }).strict(),
       barReferences: z.array(z.union([
         z.object({

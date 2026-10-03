@@ -41,7 +41,7 @@ describe("DeepBook USDC chart service", () => {
       quantitySemantics: {
         source: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.kind,
         usdcIsFiatUsd: false,
-        chainRecomputedBySayUrIntent: false
+        chainRecomputedBySuiMcp: false
       },
       unsupportedClaims: expect.arrayContaining(["fiat_usd_cash_out", "profit_or_pnl", "signing_readiness"]),
       source: {

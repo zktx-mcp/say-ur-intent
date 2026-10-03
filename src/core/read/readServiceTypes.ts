@@ -1037,7 +1037,7 @@ export type DeepbookUsdcPriceHistoryQuantitySemantics = {
   priceConvention: typeof DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.priceConvention;
   usdcIsFiatUsd: typeof DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.usdcIsFiatUsd;
   usdPegGuaranteeAvailable: typeof DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.usdPegGuaranteeAvailable;
-  chainRecomputedBySayUrIntent: typeof DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.chainRecomputedBySayUrIntent;
+  chainRecomputedBySuiMcp: typeof DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.chainRecomputedBySuiMcp;
   liveQuoteAvailable: false;
   historicalMidPriceAvailable: false;
   globalMarketPriceAvailable: false;
@@ -1098,7 +1098,7 @@ export type DeepbookUsdcPriceHistorySource = {
     endTimeMs: number;
     limit: number;
   };
-  chainRecomputedBySayUrIntent: typeof DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent;
+  chainRecomputedBySuiMcp: typeof DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp;
 };
 
 export type DeepbookUsdcPriceHistoryBar = DeepbookOfficialIndexerCandle;

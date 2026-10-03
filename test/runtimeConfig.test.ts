@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_REVIEW_PORT,
@@ -20,7 +21,7 @@ describe("runtime config", () => {
     const config = loadBootConfig({});
     expect(config.network).toBe("mainnet");
     expect(config.expectedChainIdentifier).toBe(SUI_MAINNET_CHAIN_IDENTIFIER);
-    expect(config.activityDatabasePath).toContain("say-ur-intent.sqlite");
+    expect(config.activityDatabasePath).toContain("sui-mcp.sqlite");
   });
 
   it("does not allow overriding the expected mainnet chain identifier", () => {
@@ -33,10 +34,21 @@ describe("runtime config", () => {
     expect(loadBootConfig({}).reviewPort).toBe(DEFAULT_REVIEW_PORT);
   });
 
-  it("overrides the review port from SAY_UR_INTENT_REVIEW_PORT", () => {
-    expect(loadBootConfig({ SAY_UR_INTENT_REVIEW_PORT: "9123" }).reviewPort).toBe(9123);
-    expect(() => loadBootConfig({ SAY_UR_INTENT_REVIEW_PORT: "0" })).toThrow("between 1 and 65535");
-    expect(() => loadBootConfig({ SAY_UR_INTENT_REVIEW_PORT: "notaport" })).toThrow("between 1 and 65535");
+  it("overrides the review port from SUI_MCP_REVIEW_PORT", () => {
+    expect(loadBootConfig({ SUI_MCP_REVIEW_PORT: "9123" }).reviewPort).toBe(9123);
+    expect(() => loadBootConfig({ SUI_MCP_REVIEW_PORT: "0" })).toThrow("between 1 and 65535");
+    expect(() => loadBootConfig({ SUI_MCP_REVIEW_PORT: "notaport" })).toThrow("between 1 and 65535");
+  });
+
+  it("uses only the current package environment and data identity", () => {
+    const defaults = loadBootConfig({});
+    expect(loadBootConfig({
+      SAY_UR_INTENT_DATA_DIR: "/previous-package-data",
+      SAY_UR_INTENT_REVIEW_PORT: "9123"
+    })).toEqual(defaults);
+    const selected = loadBootConfig({ SUI_MCP_DATA_DIR: "/new-package-data", SUI_MCP_REVIEW_PORT: "9124" });
+    expect(selected.activityDatabasePath).toBe(resolve("/new-package-data", "sui-mcp.sqlite"));
+    expect(selected.reviewPort).toBe(9124);
   });
 
   it("rejects JSON-RPC configuration", () => {

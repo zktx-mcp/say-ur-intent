@@ -9,7 +9,7 @@ primary detailed policy is `docs/AGENT_DEVELOPMENT_POLICY.md`.
 
 ## Product Purpose
 
-Say Ur Intent is a local-first toolkit that turns natural-language Sui DeFi
+Sui MCP is a local-first toolkit that turns natural-language Sui DeFi
 intent and structured Sui payment/action proposals into verified, AI-readable
 evidence. Users inspect independently built or verified transaction material
 and approve each transaction in their own wallet. The current backend builds
@@ -43,7 +43,7 @@ assets and request, and which choices or claims remain unsupported. A reviewed
 transaction is not a safety guarantee. Implementation or a unit's verification
 must not be reported as completion of the entire product goal.
 
-Say Ur Intent uses protocol-agnostic adapter contracts. Extensibility across Sui
+Sui MCP uses protocol-agnostic adapter contracts. Extensibility across Sui
 DeFi protocols remains a core product boundary. DeepBook is the current concrete
 protocol surface: it provides scoped conversion, price, orderbook,
 account-inventory, and swap-review evidence. Concrete tools, SDK calls, registry
@@ -93,7 +93,7 @@ a task easier.
   execution, wallet signing, signing readiness, or trusted transaction material.
 - Future external proposal execution or signing support must resolve mainnet
   facts independently and either build or verify review-time transaction
-  material inside Say Ur Intent before wallet signing is offered.
+  material inside Sui MCP before wallet signing is offered.
 - External MCP or AI-client proposals must be treated as untrusted structured
   inputs, not executable authority.
 - The product must not treat USDC, USDT, or any USD-denominated settlement asset
@@ -101,9 +101,9 @@ a task easier.
 - The product must not provide fiat cash-out, P&L, tax, or cost-basis support in
   the current release or immediate review roadmap unless a separate product
   decision changes that scope.
-- Say Ur Intent must not silently choose USDC, USDT, or another settlement token
+- Sui MCP must not silently choose USDC, USDT, or another settlement token
   for a user.
-- Say Ur Intent must not rank venues, choose routes, or make best-price
+- Sui MCP must not rank venues, choose routes, or make best-price
   recommendations for users.
 - Quote-only conversion candidates must not become payment coverage, shortfall
   evidence, funding readiness, route support, final min-out, price impact,

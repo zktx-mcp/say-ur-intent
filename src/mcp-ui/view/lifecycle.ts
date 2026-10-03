@@ -8,7 +8,7 @@ import { CARD_METADATA_KEY, CARD_DISPLAY_METADATA_KEY, WALLET_DISPLAY_METADATA_K
 import "../../../review-app/public/ui.css";
 import "./style.css";
 
-declare const __SAY_UR_INTENT_VERSION__: string;
+declare const __SUI_MCP_VERSION__: string;
 export type CardDisplayRecovery = { message: string; retry: () => void };
 export type CardConfirmation = "disconnect";
 export type CardContent = {
@@ -72,7 +72,7 @@ function linkedCardId(result: Record<string, unknown>, host: string | undefined)
     let uri: string | undefined;
     if (link?.type === "resource_link" && typeof link.uri === "string" && link.uri.startsWith(CARD_RESOURCE_PREFIX)) uri = link.uri;
     if (host === "Claude" && link?.type === "text" && typeof link.text === "string") {
-      const match = /^\[Resource link: card_([A-Za-z0-9_-]+)\] (sayurintent:\/\/cards\/([A-Za-z0-9_-]+)) \(Saved data for this exact card\.\)$/.exec(link.text);
+      const match = /^\[Resource link: card_([A-Za-z0-9_-]+)\] (suimcp:\/\/cards\/([A-Za-z0-9_-]+)) \(Saved data for this exact card\.\)$/.exec(link.text);
       if (match) {
         if (match[1] !== match[3]) throw new Error("The saved card links could not be matched to one card.");
         uri = match[2];
@@ -118,7 +118,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
   const actions = document.createElement("div"); actions.className = "card-actions";
   const progressHint = document.createElement("div"); progressHint.className = "card-progress-hint"; progressHint.hidden = true;
   root.replaceChildren(heading, status, issue, content, notice, progressHint, actions);
-  const app = new App({ name: "say-ur-intent-card", version: __SAY_UR_INTENT_VERSION__ }, {}, { autoResize: true, strict: true });
+  const app = new App({ name: "sui-mcp-card", version: __SUI_MCP_VERSION__ }, {}, { autoResize: true, strict: true });
   const lifetime = new AbortController();
   const business = kind === "connect" || kind === "review";
 
@@ -385,7 +385,7 @@ export function startCard(kind: CardKind, renderer: CardRenderer): void {
             ? "This card no longer accepts actions." : "") :
         snapshot.state === "running" ? "Reading the requested data…" : snapshot.reason === "completed" ? "" : snapshot.error ??
         (snapshot.reason === "expired" ? "The time to make a selection has ended." :
-          snapshot.reason === "server_restarted" ? "This request ended when Say Ur Intent restarted." : "");
+          snapshot.reason === "server_restarted" ? "This request ended when Sui MCP restarted." : "");
     } else status.textContent = inputRequest ? "" : confirmation.status === "read_failed" ? "Card status unavailable" : openingError || confirmation.status === "rejected" ? "Card unavailable" : "Opening card…";
     status.hidden = !status.textContent;
     issue.textContent = [...new Set(d.errors.filter(Boolean))].join(" ");

@@ -1,12 +1,12 @@
 {
-  "name": "@zktx.io/say-ur-intent",
-  "version": "0.4.4",
-  "mcpName": "io.github.zktx-mcp/say-ur-intent",
-  "description": "Say Ur Intent is a local-first toolkit for helping AI applications and users inspect Sui DeFi actions before execution.",
+  "name": "@zktx.io/sui-mcp",
+  "version": "0.5.0",
+  "mcpName": "io.github.zktx-mcp/sui-mcp",
+  "description": "Sui MCP is a local-first toolkit for helping AI applications and users inspect Sui DeFi actions before execution.",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "say-ur-intent": "./dist/runtime/start.js"
+    "sui-mcp": "./dist/runtime/start.js"
   },
   "files": [
     "dist/",
@@ -22,17 +22,17 @@
     "model-context-protocol",
     "sui",
     "deepbook",
-    "sui-defi-review",
+    "transaction-review",
     "wallet-review"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zktx-mcp/say-ur-intent.git"
+    "url": "git+https://github.com/zktx-mcp/sui-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/zktx-mcp/say-ur-intent/issues"
+    "url": "https://github.com/zktx-mcp/sui-mcp/issues"
   },
-  "homepage": "https://github.com/zktx-mcp/say-ur-intent#readme",
+  "homepage": "https://github.com/zktx-mcp/sui-mcp#readme",
   "publishConfig": {
     "access": "public",
     "tag": "latest"

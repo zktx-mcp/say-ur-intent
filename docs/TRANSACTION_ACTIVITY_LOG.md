@@ -4,9 +4,9 @@ This document owns local transaction activity storage boundaries: what is stored
 
 It does not define setup steps, tool schemas, complete-history support, P&L, route recommendations, transaction-building input, signing data, or signing readiness.
 
-Say Ur Intent stores two kinds of local activity evidence:
+Sui MCP stores two kinds of local activity evidence:
 
-- Say Ur Intent review evidence from local review sessions.
+- Sui MCP review evidence from local review sessions.
 - User-requested bounded Sui activity facts that were looked up through GraphQL and matched a known local wallet.
 
 It does not run a background indexer and does not claim complete wallet history.
@@ -39,7 +39,7 @@ Current-format public backups retain these facts and validate account, plan,
 review revision, attempt, digest, time and result relationships. They exclude
 private card permissions, SDK secrets, submission authority, raw bytes and
 signatures. Imported history is never a live request or management capability.
-This is evidence about local Say Ur Intent reviews, not complete wallet history.
+This is evidence about local Sui MCP reviews, not complete wallet history.
 
 ## Stored When Requested
 
@@ -181,7 +181,7 @@ Timeline output uses account-scoped raw balance-change facts only. `netFlowBars`
 
 Optional `usdcReferences` read DeepBookV3 official Indexer USDC candle evidence for supported USDC-quoted assets. Those references are token-denominated USDC evidence only. They are not fiat USD value, a USDC/USD peg guarantee, P&L, tax, cost basis, route advice, transaction-building input, signing data, or signing readiness.
 
-Provider retention and rate-limit behavior are endpoint/operator properties, not guarantees made by Say Ur Intent.
+Provider retention and rate-limit behavior are endpoint/operator properties, not guarantees made by Sui MCP.
 
 Empty pages, bounded pages, and stored local summaries must not be treated as complete history.
 

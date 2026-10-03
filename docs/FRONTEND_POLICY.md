@@ -308,7 +308,7 @@ cannot alter its replacement. Normal display changes do not postpone required
 backend state reads.
 
 For a stopped/unresponsive connection service, explain the actual operational
-path: fully quit all apps using Say Ur Intent, then reopen them. Closing a peer
+path: fully quit all apps using Sui MCP, then reopen them. Closing a peer
 or window alone may not stop the shared owner. Do not promise that restart
 removes remote sessions or confirms an interrupted disconnect. Normal QR or
 initialization is not diagnosed as failure by a timer. An uncertain command

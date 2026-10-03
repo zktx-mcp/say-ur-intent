@@ -48,7 +48,7 @@ describe("DeepBook source owner contract", () => {
     });
     expect(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE).toEqual({
       kind: DEEPBOOK_SOURCE_FIELD_VALUES.officialIndexer,
-      chainRecomputedBySayUrIntent: false
+      chainRecomputedBySuiMcp: false
     });
     expect(DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE).toMatchObject({
       allowedUse: DEEPBOOK_ANSWER_USE.officialUsdcCandleHistory,
@@ -57,7 +57,7 @@ describe("DeepBook source owner contract", () => {
       priceConvention: "USDC_PER_BASE",
       usdcIsFiatUsd: false,
       usdPegGuaranteeAvailable: false,
-      chainRecomputedBySayUrIntent: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent
+      chainRecomputedBySuiMcp: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp
     });
     expect(DEEPBOOK_SDK_SIMULATION_SOURCE_BASE).toEqual({
       sdk: "@mysten/deepbook-v3",

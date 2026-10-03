@@ -59,7 +59,7 @@ export const DEEPBOOK_PINNED_SDK_METADATA_SOURCE = {
 
 export const DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE = {
   kind: DEEPBOOK_SOURCE_FIELD_VALUES.officialIndexer,
-  chainRecomputedBySayUrIntent: false
+  chainRecomputedBySuiMcp: false
 } as const;
 
 export const DEEPBOOK_OFFICIAL_INDEXER_USDC_REFERENCE = {
@@ -73,7 +73,7 @@ export const DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE = {
   allowedUse: DEEPBOOK_ANSWER_USE.officialUsdcCandleHistory,
   source: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.kind,
   ...DEEPBOOK_OFFICIAL_INDEXER_USDC_REFERENCE,
-  chainRecomputedBySayUrIntent: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent
+  chainRecomputedBySuiMcp: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp
 } as const;
 
 export const DEEPBOOK_SOURCE_OWNER_RUNTIME_WORDING = {

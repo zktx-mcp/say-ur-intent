@@ -7,7 +7,7 @@
 
 export type Theme = "light" | "dark";
 
-const STORAGE_KEY = "say-ur-intent-theme";
+const STORAGE_KEY = "sui-mcp-theme";
 
 export function readStoredTheme(): Theme | undefined {
   try {

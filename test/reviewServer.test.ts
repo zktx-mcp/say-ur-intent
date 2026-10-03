@@ -72,7 +72,7 @@ async function createSettingsServer(options: { localSettings?: InMemoryLocalSett
     activityStore,
     localSettings,
     localData,
-    serverInfo: { name: "say-ur-intent", version: "0.0.0-test", network: "mainnet" }
+    serverInfo: { name: "sui-mcp", version: "0.0.0-test", network: "mainnet" }
   }).start(0);
   const close = server.close;
   server.close = async () => { try { await close(); } finally { activityStore.close(); rmSync(directory, { recursive: true, force: true }); } };
@@ -85,11 +85,11 @@ it("serves local settings status and no longer exposes a settings wallet-identit
     try {
       const base = `http://${server.host}:${server.port}`;
       const status = await fetch(`${base}/api/settings/${created.session.id}`, {
-        headers: { "x-say-ur-intent-token": created.token, origin: base }
+        headers: { "x-sui-mcp-token": created.token, origin: base }
       });
       expect(status.status).toBe(200);
       expect(await status.json()).toMatchObject({
-        server: { name: "say-ur-intent", network: "mainnet" },
+        server: { name: "sui-mcp", network: "mainnet" },
         localSettings: {
           suiGrpcUrl: {
             storedValue: DEFAULT_SUI_GRPC_URL,
@@ -106,7 +106,7 @@ it("serves local settings status and no longer exposes a settings wallet-identit
       // Settings has no second account-binding path.
       const wallet = await fetch(`${base}/api/settings/${created.session.id}/wallet-identity`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-say-ur-intent-token": created.token, origin: base },
+        headers: { "content-type": "application/json", "x-sui-mcp-token": created.token, origin: base },
         body: "{}"
       });
       expect(wallet.status).toBe(404);
@@ -121,7 +121,7 @@ it("updates and restores the GraphQL endpoint through settings APIs", async () =
       const base = `http://${server.host}:${server.port}`;
       const save = await fetch(`${base}/api/settings/${created.session.id}/sui-graphql-url`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-say-ur-intent-token": created.token, origin: base },
+        headers: { "content-type": "application/json", "x-sui-mcp-token": created.token, origin: base },
         body: JSON.stringify({ url: "https://example.graphql.provider/graphql" })
       });
       expect(save.status).toBe(200);
@@ -132,7 +132,7 @@ it("updates and restores the GraphQL endpoint through settings APIs", async () =
       });
 
       const status = await fetch(`${base}/api/settings/${created.session.id}`, {
-        headers: { "x-say-ur-intent-token": created.token, origin: base }
+        headers: { "x-sui-mcp-token": created.token, origin: base }
       });
       expect(status.status).toBe(200);
       await expect(status.json()).resolves.toMatchObject({
@@ -149,7 +149,7 @@ it("updates and restores the GraphQL endpoint through settings APIs", async () =
 
       const missingUrl = await fetch(`${base}/api/settings/${created.session.id}/sui-graphql-url`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-say-ur-intent-token": created.token, origin: base },
+        headers: { "content-type": "application/json", "x-sui-mcp-token": created.token, origin: base },
         body: "{}"
       });
       expect(missingUrl.status).toBe(400);
@@ -157,7 +157,7 @@ it("updates and restores the GraphQL endpoint through settings APIs", async () =
 
       const invalidUrl = await fetch(`${base}/api/settings/${created.session.id}/sui-graphql-url`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-say-ur-intent-token": created.token, origin: base },
+        headers: { "content-type": "application/json", "x-sui-mcp-token": created.token, origin: base },
         body: JSON.stringify({ url: "http://example.graphql.provider/graphql" })
       });
       expect(invalidUrl.status).toBe(400);
@@ -165,7 +165,7 @@ it("updates and restores the GraphQL endpoint through settings APIs", async () =
 
       const restore = await fetch(`${base}/api/settings/${created.session.id}/sui-graphql-url/restore-default`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-say-ur-intent-token": created.token, origin: base },
+        headers: { "content-type": "application/json", "x-sui-mcp-token": created.token, origin: base },
         body: "{}"
       });
       expect(restore.status).toBe(200);
@@ -195,7 +195,7 @@ it("maps GraphQL endpoint validation errors through settings APIs", async () => 
       const base = `http://${server.host}:${server.port}`;
       const response = await fetch(`${base}/api/settings/${created.session.id}/sui-graphql-url`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-say-ur-intent-token": created.token, origin: base },
+        headers: { "content-type": "application/json", "x-sui-mcp-token": created.token, origin: base },
         body: JSON.stringify({ url: "https://example.graphql.provider/graphql" })
       });
       expect(response.status).toBe(500);
@@ -211,7 +211,7 @@ it("validates settings API token before parsing request bodies", async () => {
       const base = `http://${server.host}:${server.port}`;
       const badOrigin = await fetch(`${base}/api/settings/${created.session.id}`, {
         headers: {
-          "x-say-ur-intent-token": created.token,
+          "x-sui-mcp-token": created.token,
           origin: "http://evil.example"
         }
       });
@@ -221,7 +221,7 @@ it("validates settings API token before parsing request bodies", async () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-say-ur-intent-token": "wrong",
+          "x-sui-mcp-token": "wrong",
           origin: base
         },
         body: "{"
@@ -241,7 +241,7 @@ it("validates settings API token before parsing request bodies", async () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-say-ur-intent-token": created.token,
+          "x-sui-mcp-token": created.token,
           origin: base
         },
         body: JSON.stringify({ padding: "x".repeat(64 * 1024) })
@@ -261,7 +261,7 @@ it("enforces the local data import body limit", async () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-say-ur-intent-token": created.token,
+          "x-sui-mcp-token": created.token,
           origin: base
         },
         body: JSON.stringify({ padding: "x".repeat(16 * 1024 * 1024) })
@@ -282,7 +282,7 @@ it("invalidates local sessions after reset through settings APIs", async () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-say-ur-intent-token": created.token,
+          "x-sui-mcp-token": created.token,
           origin: base
         },
         body: "{}"

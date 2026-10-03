@@ -160,7 +160,7 @@ beforeEach(() => {
   vi.stubGlobal("Option", class extends Element {
     constructor(text: string, value: string) { super("option"); this.textContent = text; this.value = value; }
   });
-  vi.stubGlobal("__SAY_UR_INTENT_VERSION__", "fixture");
+  vi.stubGlobal("__SUI_MCP_VERSION__", "fixture");
   vi.stubGlobal("getComputedStyle", () => ({ getPropertyValue: () => "#222222" }));
   vi.stubGlobal("MutationObserver", class { observe() {} disconnect() {} });
 });
@@ -1122,13 +1122,13 @@ it.each(["different_link", "different_name", "query_in_link", "different_kind", 
   expect(app.readServerResource).not.toHaveBeenCalled(); expect(app.callServerTool).not.toHaveBeenCalled();
 });
 
-it.each(["card", "kind", "input", "uri", "json", "schema"] as const)("rejects a public saved response with invalid %s", async (failure) => {
+it.each(["card", "kind", "input", "uri", "previous_uri", "json", "schema"] as const)("rejects a public saved response with invalid %s", async (failure) => {
   const initial = state("receipt", { state: "closed", reason: "completed", revision: 2, input: { digest: chainReceiptDigest }, data: {} });
   const reply = structuredClone(initial);
   if (failure === "card") reply.cardId = "other-card";
   if (failure === "kind") reply.kind = "account";
   if (failure === "input") reply.input.digest = "other-digest";
-  const resource = savedResource(reply, failure === "uri" ? "sayurintent://cards/other-card" : CARD_RESOURCE_PREFIX + initial.cardId);
+  const resource = savedResource(reply, failure === "uri" ? "suimcp://cards/other-card" : failure === "previous_uri" ? "sayurintent://cards/" + initial.cardId : CARD_RESOURCE_PREFIX + initial.cardId);
   if (failure === "json") resource.contents[0]!.text = "not json";
   if (failure === "schema") resource.contents[0]!.text = JSON.stringify({ cardId: initial.cardId });
   const app = host(async () => { throw new Error("No input authority"); });
@@ -2991,7 +2991,7 @@ it.each(["ended", "unavailable"] as const)("uses confirmed connection facts for 
       expect(root.textContent).not.toContain("Ask in chat to check your wallet connection.");
       expect(recoveryButton("Retry connection")).toBeUndefined();
     } else {
-      await vi.waitFor(() => expect(visibleGuidance()).toBe("To restart the connection service, fully quit all apps using Say Ur Intent, then reopen them. This does not confirm removal of a connection in your wallet app."));
+      await vi.waitFor(() => expect(visibleGuidance()).toBe("To restart the connection service, fully quit all apps using Sui MCP, then reopen them. This does not confirm removal of a connection in your wallet app."));
       expect(workflowViewSchema.parse((await f.read(card)).snapshot.data)).toMatchObject({ walletAvailability: { status: "unavailable" }, connections: [], allowedActions: ["cancel"] });
       expect(root.textContent).toContain("Connection not confirmed");
       expect(root.textContent).not.toContain("Ask in chat to connect");

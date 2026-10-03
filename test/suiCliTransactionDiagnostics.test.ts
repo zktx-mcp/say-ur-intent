@@ -35,7 +35,7 @@ const MAINNET_CLI_CHAIN_ID = "35834a8a";
 const OBJECT_DIGEST = "33Ny3AZ3q169QD2uvrso6QtfigyFqN8DccZ1cUJR7v2y";
 const PREVIOUS_TX = "4qYbEkvQWWshcgyg93NVtHt4hAMqnU9CMt86HJentZ4B";
 const ADDRESS = `0x${"2".padStart(64, "0")}`;
-const TEMP_DIR_PREFIX = "say-ur-intent-sui-cli-diagnostics-";
+const TEMP_DIR_PREFIX = "sui-mcp-sui-cli-diagnostics-";
 
 // Fixture subset verified against Sui CLI v1.71.1 source `crates/sui/src/client_commands.rs`:
 // `SuiClientCommandResult::TransactionBlock` serializes `to_legacy_transaction_block_response`.
@@ -1674,7 +1674,7 @@ describe("Sui CLI transaction diagnostics utility", () => {
   });
 
   it("allowlists default replay output directories relative to the supplied checkout cwd", () => {
-    const checkoutDir = mkdtempSync(resolve(tmpdir(), "say-ur-intent-checkout-"));
+    const checkoutDir = mkdtempSync(resolve(tmpdir(), "sui-mcp-checkout-"));
     try {
       const { runner } = runnerWith([
         ok("sui 1.71.1-homebrew\n"),

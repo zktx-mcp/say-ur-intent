@@ -1,5 +1,5 @@
 import { DB_USER_VERSION } from "./schemaVersion.js";
-export const LOCAL_DATA_EXPORT_FORMAT = "say-ur-intent.local-data" as const;
+export const LOCAL_DATA_EXPORT_FORMAT = "sui-mcp.local-data" as const;
 export const LOCAL_DATA_NETWORK = "mainnet" as const;
 
 export type LocalDataCounts = {

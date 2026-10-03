@@ -64,7 +64,7 @@ async function main(): Promise<void> {
         try { return await probeAuthenticatedServer(port, control); } catch { return null; }
       },
       delay: (ms) => new Promise((resolve) => { const timer = setTimeout(resolve, ms); timer.unref(); }),
-      currentPid: process.pid, serviceName: "say-ur-intent", logger,
+      currentPid: process.pid, serviceName: "sui-mcp", logger,
       onFailure: (error) => { void termination.request({ kind: "failure", stage: "owner_acquisition", error }); }
     });
     if (termination.requested) { await shared.close(); return; }

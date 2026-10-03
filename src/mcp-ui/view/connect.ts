@@ -188,7 +188,7 @@ export const connectRenderer = {
     }
     if (data.walletAvailability.status === "unavailable") return t.common.walletStatusRecovery;
     if (data.connection?.pendingAction === "disconnect" || !data.connection && data.connections.some((item) => item.pendingAction === "disconnect")) return "If this disconnection is not responding, " +
-      "fully quit all apps using Say Ur Intent, then reopen them. Check any retained connection in your wallet app.";
+      "fully quit all apps using Sui MCP, then reopen them. Check any retained connection in your wallet app.";
     if (data.connectionConflict) return context.readOnly || !data.allowedActions.includes("disconnect")
       ? "Ask in chat to open wallet connection controls, then disconnect the connections you no longer need." : undefined;
     if (!data.connection && data.connections.some((connection) => connection.status === "awaiting_approval")) {

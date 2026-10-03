@@ -25,8 +25,8 @@ describe("npm release metadata", () => {
     expect(packageJson.private).toBeUndefined();
     // Validate the semver shape, not an exact value — pinning the version drifts every release.
     expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
-    expect(PACKAGE_NAME).toBe("@zktx.io/say-ur-intent");
-    expect(SERVER_NAME).toBe("say-ur-intent");
+    expect(PACKAGE_NAME).toBe("@zktx.io/sui-mcp");
+    expect(SERVER_NAME).toBe("sui-mcp");
     expect(SERVER_VERSION).toBe(packageJson.version);
     expect(packageJson.license).toBe("MIT");
     expect(packageJson.publishConfig).toEqual({ access: "public", tag: "latest" });
@@ -46,8 +46,9 @@ describe("npm release metadata", () => {
     expect([lock.name, lock.packages[""].name, server.packages[0].identifier]).toEqual([pkg.name, pkg.name, pkg.name]);
     expect([lock.version, lock.packages[""].version, server.version, server.packages[0].version]).toEqual(Array(4).fill(pkg.version));
     expect(server.name).toBe(pkg.mcpName);
-    expect(pkg.mcpName).toBe("io.github.zktx-mcp/say-ur-intent");
-    expect(pkg.bin).toEqual({ "say-ur-intent": "./dist/runtime/start.js" });
+    expect(pkg.mcpName).toBe("io.github.zktx-mcp/sui-mcp");
+    expect(pkg.bin).toEqual({ "sui-mcp": "./dist/runtime/start.js" });
+    expect(lock.packages[""].bin).toEqual({ "sui-mcp": "dist/runtime/start.js" });
     expect(pkg.files).toContain("LICENSES/");
     expect(pkg.files.some((file: string) => file.startsWith("submission"))).toBe(false);
     expect(MCP_RESOURCES.some((resource) => resource.path.startsWith("submission/"))).toBe(false);
@@ -77,7 +78,7 @@ it.each(["submission/ethglobal-tokyo-2026/plan.md", ".WORK/session.sqlite", "dis
 // Only the external MCP process is synthetic. The release helper, Client and
 // StdioClientTransport are real; no SDK close/start/pid method is replaced.
 function runtimePeer(mode: "initialize_error" | "version_mismatch" | "name_mismatch" | "package_mismatch" | "early_exit") {
-  const root = mkdtempSync(join(tmpdir(), "say-release-close-"));
+  const root = mkdtempSync(join(tmpdir(), "sui-mcp-release-close-"));
   const installDir = join(root, "installed"), binPath = join(installDir, "peer.mjs");
   const pidFile = join(root, "pid"), closingFile = join(root, "closing"), releaseFile = join(root, "release");
   mkdirSync(installDir);
@@ -104,12 +105,12 @@ process.stdin.on("data", chunk => {
       response = mode === "initialize_error"
         ? { error: { code: -32000, message: "Fixture initialization refused" } }
         : { result: { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: {
-          name: mode === "name_mismatch" ? "fixture" : "say-ur-intent",
+          name: mode === "name_mismatch" ? "fixture" : "sui-mcp",
           version: mode === "version_mismatch" ? "unexpected-fixture-version" : version
         } } };
     } else if (request.method === "tools/call" && request.params.name === "read.get_server_status") {
       response = { result: { content: [], structuredContent: { ok: true, data: {
-        packageName: "@fixture/other-package", version, serverName: "say-ur-intent", network: "mainnet"
+        packageName: "@fixture/other-package", version, serverName: "sui-mcp", network: "mainnet"
       } } } };
     } else continue;
     process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, ...response }) + "\\n");
@@ -172,7 +173,7 @@ it("remembers a child that closes before initialization finishes", async () => {
 });
 
 it("settles a spawn failure without waiting for a nonexistent process", async () => {
-  const root = mkdtempSync(join(tmpdir(), "say-release-spawn-"));
+  const root = mkdtempSync(join(tmpdir(), "sui-mcp-release-spawn-"));
   try {
     // A nonexistent cwd makes real Node spawn fail with ENOENT. The transport's
     // error and close are different events; the latter must still be handled.

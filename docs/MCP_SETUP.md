@@ -1,21 +1,17 @@
 # MCP Setup
 
-This is the setup guide for Say Ur Intent MCP clients. It owns installation, MCP client connection, first-use flow, local settings, and troubleshooting.
+This is the setup guide for Sui MCP clients. It owns installation, MCP client connection, first-use flow, local settings, and troubleshooting.
 
 It does not define tool field contracts or response wording. Use `docs/MCP_TOOLS.md` for the MCP API reference and `docs/AGENT_BEHAVIOR.md` for the answer playbook.
 
 The README keeps only the short entry path; client-specific setup, restart behavior, and troubleshooting live here.
 
-Say Ur Intent is tested from a local checkout in this repository state.
-
-The card and connection behavior described here includes unpublished checkout changes.
-Installing `@zktx.io/say-ur-intent@0.4.4` does not select this checkout. Use the
-local build configuration below to run these changes, or the documentation
-bundled with your installed package to follow its supported flow. A development
-build can retain the published version number; that number alone does not
-identify the running build. Changing client settings or rebuilding local files
-also does not replace an already running shared server. Restart the clients and
-check the server's executable path when switching builds.
+These instructions target `@zktx.io/sui-mcp@0.5.0`. Package installation requires
+that exact version to be published; use the developer checkout instructions when
+it is not available. A repository rename or local build does not publish the
+package. Changing client settings or rebuilding files does not replace an
+already running shared server. Restart all clients using the service and verify
+the package identity when switching installations.
 
 ## Key terms
 
@@ -26,7 +22,7 @@ check the server's executable path when switching builds.
 - gRPC and GraphQL: Sui SDK transports used by this runtime for mainnet reads.
 - WalletConnect: the backend's transport for wallet-approved connections and individual transaction requests.
 - stdio: standard input/output, the local transport used by MCP clients to talk to this server.
-- `@zktx.io`: the npm package scope. `zktx-mcp` is the GitHub organization. Say Ur Intent is the product; `say-ur-intent` is the MCP server name and executable command.
+- `@zktx.io`: the npm package scope. `zktx-mcp` is the GitHub organization. Sui MCP is the product; `sui-mcp` is the MCP server name and executable command.
 
 ## Requirements
 
@@ -40,8 +36,8 @@ No Sui endpoint setup is required for the default path. The runtime creates a lo
 
 If you want a custom Sui gRPC or GraphQL provider, or local data controls, configure them after the MCP server is connected by asking your AI client to create a local settings session:
 
-- "Show my Say Ur Intent local settings."
-- "Open my Say Ur Intent local settings page."
+- "Show my Sui MCP local settings."
+- "Open my Sui MCP local settings page."
 
 Open the returned settings URL in the same machine's system browser. Custom endpoint changes apply after the MCP server restarts. Advanced temporary environment overrides are documented in [Advanced Runtime Settings](#advanced-runtime-settings).
 
@@ -58,8 +54,8 @@ Reads that require a connected default account use `session.create_wallet_connec
 Use this path when you download the repository from GitHub and want to test the local build:
 
 ```bash
-git clone https://github.com/zktx-mcp/say-ur-intent.git
-cd say-ur-intent
+git clone https://github.com/zktx-mcp/sui-mcp.git
+cd sui-mcp
 npm install
 npm run build
 ```
@@ -69,7 +65,7 @@ Generic stdio MCP configuration:
 ```json
 {
   "command": "node",
-  "args": ["/absolute/path/to/say-ur-intent/dist/runtime/start.js"]
+  "args": ["/absolute/path/to/sui-mcp/dist/runtime/start.js"]
 }
 ```
 
@@ -80,14 +76,14 @@ On native Windows clients that need `cmd`, use the same command through `cmd /c`
 ```json
 {
   "command": "cmd",
-  "args": ["/c", "node", "C:\\absolute\\path\\to\\say-ur-intent\\dist\\runtime\\start.js"]
+  "args": ["/c", "node", "C:\\absolute\\path\\to\\sui-mcp\\dist\\runtime\\start.js"]
 }
 ```
 
 To delegate local setup to an AI coding agent, tell it:
 
 ```text
-Register this repository as a local stdio MCP server using the built /absolute/path/to/say-ur-intent/dist/runtime/start.js file.
+Register this repository as a local stdio MCP server using the built /absolute/path/to/sui-mcp/dist/runtime/start.js file.
 Use the default Sui mainnet endpoint unless I explicitly ask for a custom provider.
 ```
 
@@ -110,12 +106,12 @@ npm run smoke:mainnet
 ## Install from the MCP Registry
 
 If your MCP client can install servers from the
-[MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=say-ur-intent),
-find the `io.github.zktx-mcp/say-ur-intent` entry and install it through your
+[MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=sui-mcp),
+find the `io.github.zktx-mcp/sui-mcp` entry and install it through your
 client. The resulting stdio server command is equivalent to:
 
 ```sh
-npx -y @zktx.io/say-ur-intent
+npx -y @zktx.io/sui-mcp
 ```
 
 Clients that do not install from the registry use the published-package and
@@ -123,10 +119,10 @@ per-client configuration below, which give the exact `command` and `args`.
 
 ## Published Package Setup
 
-The npm package for this release is `@zktx.io/say-ur-intent`. The commands below
+The npm package for this release is `@zktx.io/sui-mcp`. The commands below
 require the requested version to be published; confirm it with
-`npm view @zktx.io/say-ur-intent@0.4.4 version` before switching. Both installation
-methods start the same `say-ur-intent` stdio MCP server. Use a local checkout when
+`npm view @zktx.io/sui-mcp@0.5.0 version` before switching. Both installation
+methods start the same `sui-mcp` stdio MCP server. Use a local checkout when
 working on a version that has not been published.
 
 ### Download on demand (npx, tracks the latest release)
@@ -134,7 +130,7 @@ working on a version that has not been published.
 ```json
 {
   "command": "npx",
-  "args": ["-y", "@zktx.io/say-ur-intent"]
+  "args": ["-y", "@zktx.io/sui-mcp"]
 }
 ```
 
@@ -146,80 +142,100 @@ server before it connects. If that happens, warm the cache once in a terminal an
 then restart the client:
 
 ```bash
-npx -y @zktx.io/say-ur-intent
+npx -y @zktx.io/sui-mcp
 # wait until it logs "review server started", then stop it with Ctrl-C
 ```
 
 ### Install once (global, fastest startup, pinned version)
 
 ```bash
-npm install -g @zktx.io/say-ur-intent
+npm install -g @zktx.io/sui-mcp
 ```
 
 ```json
 {
-  "command": "say-ur-intent"
+  "command": "sui-mcp"
 }
 ```
 
-The global `say-ur-intent` command starts with no per-launch download, so it
+The global `sui-mcp` command starts with no per-launch download, so it
 avoids the cold-start timeout, and it stays on the installed version until you
 update it explicitly:
 
 ```bash
-npm install -g @zktx.io/say-ur-intent@latest
+npm install -g @zktx.io/sui-mcp@latest
 ```
 
+The unscoped npm package `sui-mcp` is unrelated and can provide the same global
+command name. Always install the full `@zktx.io/sui-mcp` package and verify
+`read.get_server_status.packageName` after starting it. If another installation
+owns the global command, use the scoped `npx` configuration instead.
+
 The per-client sections below use the `npx` form. To use a global install
-instead, replace the published-package command with `"command": "say-ur-intent"`
+instead, replace the published-package command with `"command": "sui-mcp"`
 and drop the `args`. On native Windows clients that need `cmd`, wrap either
-command, for example `"command": "cmd", "args": ["/c", "npx", "-y", "@zktx.io/say-ur-intent"]`.
+command, for example `"command": "cmd", "args": ["/c", "npx", "-y", "@zktx.io/sui-mcp"]`.
 
 ## Switching the Installed Package
 
-These steps cover switching to 0.4.4 from 0.4.0–0.4.3, which use the same database
-format. Confirm the new package version is available before changing
-your client configuration. Keep the same data directory and shared review port
-so the existing settings, wallet connection and stored results remain accessible.
-This package update does not require deleting the database or repeating a
-financial request.
+Use these steps when selecting a different package installation. Confirm the
+requested version is available before changing your client configuration.
+Sui MCP starts with a new database and private WalletConnect store in its own
+data directory. It does not discover, read, import or convert a previous
+package's database or backup. Existing connections, saved cards, transaction
+history and endpoint settings are not transferred. Configure endpoints if needed
+and connect your wallet through a new card. Existing blockchain transactions
+are unaffected and must never be resubmitted as an installation step.
 
-Stop the old Say Ur Intent MCP processes in all connected clients and wait for
-the shared backend to exit before starting the new package. Clients with the same runtime
-configuration can otherwise attach to an older backend that is still running.
+Fully quit every app using the service and wait for its shared backend to exit
+before starting the new package. A client using a different service identity,
+API version or data directory is refused while that backend owns the port.
 If a transaction request is in progress, inspect its state and coordinate a safe
-restart first.
+restart first. A previous wallet pairing can remain in the wallet app; remove
+an unwanted pairing there rather than assuming new local storage disconnected it.
 
 Replace the old registration instead of adding a second one. Use exactly
-`say-ur-intent` for the registration name, and select the intended package version
-in its command arguments, such as `@zktx.io/say-ur-intent@0.4.4`. Do not append an
-environment label, version or numeric suffix. With a global install, verify that
-`say-ur-intent` resolves to the intended installation.
+`sui-mcp` for the registration name and select `@zktx.io/sui-mcp@0.5.0` in its
+command arguments. Do not append an environment label, version or numeric
+suffix. Remove obsolete runtime environment overrides. If you set
+`SUI_MCP_DATA_DIR`, choose a new empty directory; never point it at another
+package's database or private WalletConnect store. Keep the same new directory
+and `SUI_MCP_REVIEW_PORT` in every participating client.
 
 After restarting the clients, call `read.get_server_status` in each. Check
 `packageName`, `version` and `serverName`: they must identify the intended npm
-package and version, with `serverName` equal to `say-ur-intent`. Then inspect the
-existing connection and stored results. This check does not require signing or
-submitting another transaction.
+package and version, with `serverName` equal to `sui-mcp`. Open a new management
+card and confirm the new empty wallet state. This check does not require signing
+or submitting a transaction. Prior conversation cards are not current controls;
+open cards through the new registration.
+
+### Data and resource identifiers
+
+Sui MCP uses `SUI_MCP_DATA_DIR` and `SUI_MCP_REVIEW_PORT` for local configuration.
+The default application directory is `sui-mcp`, the database is `sui-mcp.sqlite`,
+and the private WalletConnect store is in that same data directory. These values
+select the current installation; no previous-package aliases are supported.
+Card addresses use `suimcp://` and `ui://sui-mcp/`; see
+[MCP Tools](MCP_TOOLS.md#resources).
 
 ## Claude Code
 
-Claude Code supports local stdio MCP servers through `claude mcp add`. Put Claude CLI options such as `--transport` and `--scope` before the server name; the `--` separator starts the command that runs Say Ur Intent.
+Claude Code supports local stdio MCP servers through `claude mcp add`. Put Claude CLI options such as `--transport` and `--scope` before the server name; the `--` separator starts the command that runs Sui MCP.
 
 Developer checkout:
 
 ```bash
 claude mcp add --transport stdio \
-  say-ur-intent \
-  -- node /absolute/path/to/say-ur-intent/dist/runtime/start.js
+  sui-mcp \
+  -- node /absolute/path/to/sui-mcp/dist/runtime/start.js
 ```
 
 Published npm package:
 
 ```bash
 claude mcp add --transport stdio \
-  say-ur-intent \
-  -- npx -y @zktx.io/say-ur-intent
+  sui-mcp \
+  -- npx -y @zktx.io/sui-mcp
 ```
 
 Claude Code scopes:
@@ -233,10 +249,10 @@ Project-scope `.mcp.json` example:
 ```json
 {
   "mcpServers": {
-    "say-ur-intent": {
+    "sui-mcp": {
       "type": "stdio",
       "command": "node",
-      "args": ["/absolute/path/to/say-ur-intent/dist/runtime/start.js"]
+      "args": ["/absolute/path/to/sui-mcp/dist/runtime/start.js"]
     }
   }
 }
@@ -246,7 +262,7 @@ Verify the server and tool list:
 
 ```bash
 claude mcp list
-claude mcp get say-ur-intent
+claude mcp get sui-mcp
 ```
 
 Inside Claude Code, use `/mcp` to inspect connected servers. After changing MCP configuration or rebuilding the local runtime, restart the Claude Code session so the stdio process is started from the new command. If startup is slow, launch Claude Code with a larger startup timeout such as `MCP_TIMEOUT=10000 claude`.
@@ -267,9 +283,9 @@ Developer checkout:
 ```json
 {
   "mcpServers": {
-    "say-ur-intent": {
+    "sui-mcp": {
       "command": "node",
-      "args": ["/absolute/path/to/say-ur-intent/dist/runtime/start.js"]
+      "args": ["/absolute/path/to/sui-mcp/dist/runtime/start.js"]
     }
   }
 }
@@ -280,9 +296,9 @@ Published npm package:
 ```json
 {
   "mcpServers": {
-    "say-ur-intent": {
+    "sui-mcp": {
       "command": "npx",
-      "args": ["-y", "@zktx.io/say-ur-intent"]
+      "args": ["-y", "@zktx.io/sui-mcp"]
     }
   }
 }
@@ -293,9 +309,9 @@ On native Windows, use `cmd /c` if direct `npx` or `node` resolution fails:
 ```json
 {
   "mcpServers": {
-    "say-ur-intent": {
+    "sui-mcp": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "@zktx.io/say-ur-intent"]
+      "args": ["/c", "npx", "-y", "@zktx.io/sui-mcp"]
     }
   }
 }
@@ -306,7 +322,7 @@ Save the file and fully restart Claude Desktop. If the server does not appear, c
 - macOS: `~/Library/Logs/Claude`
 - Windows: `%APPDATA%\Claude\logs`
 
-Claude Desktop writes general MCP connection logs to `mcp.log` and named server stderr logs to files such as `mcp-server-say-ur-intent.log`.
+Claude Desktop writes general MCP connection logs to `mcp.log` and named server stderr logs to files such as `mcp-server-sui-mcp.log`.
 
 ## Codex
 
@@ -315,15 +331,15 @@ Codex CLI supports stdio MCP servers and stores MCP settings in `config.toml`; b
 Developer checkout:
 
 ```bash
-codex mcp add say-ur-intent \
-  -- node /absolute/path/to/say-ur-intent/dist/runtime/start.js
+codex mcp add sui-mcp \
+  -- node /absolute/path/to/sui-mcp/dist/runtime/start.js
 ```
 
 Published npm package:
 
 ```bash
-codex mcp add say-ur-intent \
-  -- npx -y @zktx.io/say-ur-intent
+codex mcp add sui-mcp \
+  -- npx -y @zktx.io/sui-mcp
 ```
 
 Verify with:
@@ -337,9 +353,9 @@ Inside the Codex TUI, use `/mcp` to see active MCP servers.
 Equivalent `~/.codex/config.toml` entry for a developer checkout:
 
 ```toml
-[mcp_servers.say-ur-intent]
+[mcp_servers.sui-mcp]
 command = "node"
-args = ["/absolute/path/to/say-ur-intent/dist/runtime/start.js"]
+args = ["/absolute/path/to/sui-mcp/dist/runtime/start.js"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 ```
@@ -347,9 +363,9 @@ tool_timeout_sec = 60
 Equivalent `~/.codex/config.toml` entry after npm publication:
 
 ```toml
-[mcp_servers.say-ur-intent]
+[mcp_servers.sui-mcp]
 command = "npx"
-args = ["-y", "@zktx.io/say-ur-intent"]
+args = ["-y", "@zktx.io/sui-mcp"]
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 ```
@@ -370,9 +386,9 @@ Developer checkout:
 ```json
 {
   "mcpServers": {
-    "say-ur-intent": {
+    "sui-mcp": {
       "command": "node",
-      "args": ["/absolute/path/to/say-ur-intent/dist/runtime/start.js"]
+      "args": ["/absolute/path/to/sui-mcp/dist/runtime/start.js"]
     }
   }
 }
@@ -383,9 +399,9 @@ Published npm package:
 ```json
 {
   "mcpServers": {
-    "say-ur-intent": {
+    "sui-mcp": {
       "command": "npx",
-      "args": ["-y", "@zktx.io/say-ur-intent"]
+      "args": ["-y", "@zktx.io/sui-mcp"]
     }
   }
 }
@@ -429,7 +445,7 @@ internal MCP Apps views; there is no external wallet/review page or browser
 signer. A client without a card surface can use ordinary reads but cannot start
 these UI workflows. See [Wallet Connection](WALLET_CONNECTION.md).
 
-The package includes Say Ur Intent's WalletConnect project identifier. Wallet
+The package includes Sui MCP's WalletConnect project identifier. Wallet
 connection requires no project ID setting and offers no project ID override.
 The identifier is public, not a wallet credential. Installations share that
 project's Relay service limits; service availability is not guaranteed by a
@@ -437,7 +453,7 @@ local configuration value. Only the backend owner starts its isolated SDK child,
 clients use the same product identifier when identifying that shared backend.
 Do not paste pairing URIs or UI permission values into chat.
 
-Say Ur Intent allows one usable wallet connection across the shared data folder,
+Sui MCP allows one usable wallet connection across the shared data folder,
 with one or more wallet-approved Sui mainnet addresses. If several valid
 connections are saved, the Connect card lists them for target-specific
 Disconnect confirmation. Account use and signing remain blocked until the
@@ -445,7 +461,7 @@ conflict is resolved. No connection is silently chosen or remotely removed.
 
 There is no Restart wallet service button in Connect or Settings. If the
 connection service is unavailable or a disconnection remains unresponsive,
-fully quit all apps using Say Ur Intent and reopen them. Closing only a window
+fully quit all apps using Sui MCP and reopen them. Closing only a window
 or a client that does not own the shared backend is insufficient. Another open
 client may take ownership. Verify that the old backend and SDK child exited
 and that the new service becomes available; editing a config file is not a
@@ -458,7 +474,7 @@ digests of submitted transactions remain available after restart. An
 unsubmitted approval needs a fresh review and explicit wallet approval; nothing
 is resent automatically. Normal initialization is not a failure warning.
 
-The shared backend uses internal API version 6. All clients sharing a data
+The shared backend uses internal API version 7. All clients sharing a data
 folder must use a compatible installation. Fully quit the old clients before
 starting the same updated installation; an incompatible owner is refused.
 Product schema 9 and private SDK format 1 are retained.
@@ -477,7 +493,7 @@ A card accepts one read selection. Moving between chats or recreating its frame 
 
 ## Local data format
 
-Start this runtime with an empty `SAY_UR_INTENT_DATA_DIR` or a database already in its current format. A mismatched existing database is refused before writes. There is no older DB or backup migration. The current database and public backup use schema 9; a development checkout replacing schema 8 needs a new empty data folder, preserving the previous folder. Older local records, known/active accounts and stored endpoints are not inherited; set the needed account context and endpoints again. Existing files are left in place, and environment overrides keep their existing precedence. See [Local DB Architecture](LOCAL_DB_ARCHITECTURE.md) for the current format, backup scope and card-result retention. Card results do not expire with the input period and can increase DB size. Reset/import removes them along with the affected local data; it is not a card-only space cleanup operation.
+Start this runtime with an empty `SUI_MCP_DATA_DIR` or a database already in its current format. A mismatched existing database is refused before writes. There is no older DB or backup migration. The current database and public backup use schema 9; a development checkout replacing schema 8 needs a new empty data folder, preserving the previous folder. Older local records, known/active accounts and stored endpoints are not inherited; set the needed account context and endpoints again. Existing files are left in place, and environment overrides keep their existing precedence. See [Local DB Architecture](LOCAL_DB_ARCHITECTURE.md) for the current format, backup scope and card-result retention. Card results do not expire with the input period and can increase DB size. Reset/import removes them along with the affected local data; it is not a card-only space cleanup operation.
 
 ## Local Settings
 
@@ -485,8 +501,8 @@ Beginner setup uses the built-in Sui mainnet gRPC and GraphQL endpoints. You do 
 
 To inspect settings or change stored endpoints, ask your AI client:
 
-- "Show my Say Ur Intent local settings."
-- "Open my Say Ur Intent local settings page."
+- "Show my Sui MCP local settings."
+- "Open my Sui MCP local settings page."
 
 The settings page lets the user:
 
@@ -513,11 +529,11 @@ Settings validation rules:
 `SUI_GRPC_URL` and `SUI_GRAPHQL_URL` are advanced temporary overrides for operators and smoke tests. They win over the stored local setting for the current process and do not mutate SQLite:
 
 ```bash
-SUI_GRPC_URL="https://fullnode.mainnet.sui.io:443" node /absolute/path/to/say-ur-intent/dist/runtime/start.js
+SUI_GRPC_URL="https://fullnode.mainnet.sui.io:443" node /absolute/path/to/sui-mcp/dist/runtime/start.js
 ```
 
 ```bash
-SUI_GRAPHQL_URL="https://graphql.mainnet.sui.io/graphql" node /absolute/path/to/say-ur-intent/dist/runtime/start.js
+SUI_GRAPHQL_URL="https://graphql.mainnet.sui.io/graphql" node /absolute/path/to/sui-mcp/dist/runtime/start.js
 ```
 
 Use this only when you need a one-run override or need to recover from a stored custom endpoint that no longer starts.
@@ -533,23 +549,23 @@ Restoring default returns the stored endpoint to the built-in default.
 
 If the custom provider is only temporarily unavailable, keep using the environment override or save a new custom endpoint instead.
 
-`SAY_UR_INTENT_DATA_DIR` stays outside SQLite because the database path must be known before the database opens:
+`SUI_MCP_DATA_DIR` stays outside SQLite because the database path must be known before the database opens:
 
 ```bash
-SAY_UR_INTENT_DATA_DIR="/path/to/local/app-data" node /absolute/path/to/say-ur-intent/dist/runtime/start.js
+SUI_MCP_DATA_DIR="/path/to/local/app-data" node /absolute/path/to/sui-mcp/dist/runtime/start.js
 ```
 
-To reset local product data files, stop the MCP server and delete `say-ur-intent.sqlite`, `say-ur-intent.sqlite-wal`, and `say-ur-intent.sqlite-shm`, or use a new `SAY_UR_INTENT_DATA_DIR`.
+To reset local product data files, stop the MCP server and delete `sui-mcp.sqlite`, `sui-mcp.sqlite-wal`, and `sui-mcp.sqlite-shm`, or use a new `SUI_MCP_DATA_DIR`.
 
 Resetting, importing or replacing that database does not disconnect approvals
 in your wallet app. Private SDK sessions are stored separately, and the backend
 does not restore a connection without its product database record. If an old
-connection is no longer listed in Say Ur Intent, remove it from the connected-app
+connection is no longer listed in Sui MCP, remove it from the connected-app
 list in your wallet app. Removing local data cannot cancel a transaction on Sui.
 
 ### Fixed review server port
 
-`SAY_UR_INTENT_REVIEW_PORT` selects the authenticated shared backend port
+`SUI_MCP_REVIEW_PORT` selects the authenticated shared backend port
 (1–65535, default 8765). Clients for the same data folder must use the same port
 and configuration. A second runtime owner for that folder is refused even on a
 different port. No client forces a peer backend to stop. The parent can end only
@@ -581,7 +597,7 @@ See [Utility Index](UTILITY_INDEX.md#release-package-check) for prerequisites.
 - External proposals remain non-signable. `blocked` refers to that review's
   unmet evidence requirements, not to a hidden fallback signing path.
 - The `npx` and global-install client configs require a published version of
-  `@zktx.io/say-ur-intent`. A developer checkout or packed tarball tests local
+  `@zktx.io/sui-mcp`. A developer checkout or packed tarball tests local
   changes; its existence does not establish public package availability.
 
 ## Mainnet Read Smoke
@@ -700,7 +716,7 @@ If the user supplied a specific Sui address for `read.summarize_wallet_assets` o
 
 A 404 means the requested package or version could not be retrieved from the
 selected registry. Confirm the exact name and version, for example with
-`npm view @zktx.io/say-ur-intent@0.4.4 version --registry=https://registry.npmjs.org`.
+`npm view @zktx.io/sui-mcp@0.5.0 version --registry=https://registry.npmjs.org`.
 A new version may not have been published or become visible yet; a mistyped name
 or an alternate/private registry can also explain the response. Check the
 publication result and registry configuration before retrying. Do not assume

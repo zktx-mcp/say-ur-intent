@@ -83,15 +83,15 @@ async function main(): Promise<void> {
   const inspectRandomLatest = truthyEnv("SMOKE_INSPECT_RANDOM_LATEST");
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "say-ur-intent-smoke", version: "0.0.0" });
+  const client = new Client({ name: "sui-mcp-smoke", version: "0.0.0" });
   let smokeDbDir: string | undefined;
   let activityStore: SqliteActivityStore | undefined;
   let server: ReturnType<typeof createMcpServer> | undefined;
 
   try {
-    smokeDbDir = mkdtempSync(join(tmpdir(), "say-ur-intent-smoke-db-"));
+    smokeDbDir = mkdtempSync(join(tmpdir(), "sui-mcp-smoke-db-"));
     activityStore = new SqliteActivityStore({
-      databasePath: join(smokeDbDir, "say-ur-intent.sqlite"),
+      databasePath: join(smokeDbDir, "sui-mcp.sqlite"),
       validateAdapterLifecycle: validateSupportedAdapterLifecycle
     });
     const preferencesRepository = activityStore.createPreferencesRepository();
@@ -345,7 +345,7 @@ async function pickRandomLatestTransactionDigest(input: {
     } | null;
   }>({
     query: `
-      query SayUrIntentSmokeLatestTransactionSample($last: Int!) {
+      query SuiMcpSmokeLatestTransactionSample($last: Int!) {
         transactions(last: $last) {
           nodes { digest }
         }

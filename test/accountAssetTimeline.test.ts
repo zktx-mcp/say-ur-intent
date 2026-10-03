@@ -466,7 +466,7 @@ function okHistory(bars: Extract<DeepbookUsdcPriceHistorySummary, { status: "ok"
         endTimeMs: Date.parse("2026-05-11T00:30:00.000Z"),
         limit: 1008
       },
-      chainRecomputedBySayUrIntent: false
+      chainRecomputedBySuiMcp: false
     },
     userAnswerUse: deepbookUsdcPriceHistoryUserAnswerUse(),
     quantitySemantics: deepbookUsdcPriceHistoryQuantitySemantics(),

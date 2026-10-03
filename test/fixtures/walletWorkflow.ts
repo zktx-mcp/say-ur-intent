@@ -43,7 +43,7 @@ export async function walletWorkflowFixture(options: { receiptDetails?: boolean;
   createRuntime?: (directory: string, context: { account: string }) => WalletRuntime | Promise<WalletRuntime>;
   accountReader?: Parameters<typeof createReadCardStore>[0]["readService"]["summarizeAccountInventory"] } = {}) {
   const chainIdentifier = options.addressBalance ? BUILD_CHAIN : "mainnet-chain";
-  const directory = mkdtempSync(join(tmpdir(), "say-wallet-workflow-"));
+  const directory = mkdtempSync(join(tmpdir(), "sui-mcp-wallet-workflow-"));
   const access = new RuntimeDataAccess();
   let clock = Date.now();
   const now = () => new Date(clock);

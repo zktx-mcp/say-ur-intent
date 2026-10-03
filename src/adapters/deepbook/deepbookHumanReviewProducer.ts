@@ -155,7 +155,7 @@ function buildDeepbookHumanReadableReview(
         id: "transaction_material_digest",
         label: "Transaction identity (digest)",
         source: "digest_commitment",
-        summary: "This review is tied to the exact unsigned transaction stored by Say Ur Intent through its verification digest. The private transaction bytes are not included in the card."
+        summary: "This review is tied to the exact unsigned transaction stored by Sui MCP through its verification digest. The private transaction bytes are not included in the card."
       },
       {
         id: "transaction_object_ownership",

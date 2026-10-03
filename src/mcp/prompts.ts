@@ -13,7 +13,7 @@ export const MCP_PROMPTS = [
     title: "Inspect Supported Sui Actions",
     description: "Review current supported mainnet surfaces and tool status.",
     text: [
-      "Inspect the Say Ur Intent MCP server status and supported mainnet Sui protocol surfaces.",
+      "Inspect the Sui MCP server status and supported mainnet Sui protocol surfaces.",
       "Use read.get_server_status first, then read.list_supported_protocols.",
       "Report implemented tools separately from unavailable or blocked surfaces."
     ].join("\n")
@@ -23,7 +23,7 @@ export const MCP_PROMPTS = [
     title: "Prepare Reviewable Sui Action",
     description: "Prepare a local review session for a supported action proposal.",
     text: [
-      "Prepare a reviewable Sui action only through Say Ur Intent's review-session flow.",
+      "Prepare a reviewable Sui action only through Sui MCP's review-session flow.",
       "Use action.prepare_external_proposal_review when the input is a structured external payment or Sui action proposal.",
       "External proposals get read-only local review and never become signing material. Use action.prepare_sui_action_review for a natural-language swap intent; after a wallet account is connected, account-bound review can reach ready_for_wallet_review, where an explicit Review card action can request approval in the user’s wallet through the backend.",
       "Present the internal Review card and summarize the returned review checks. This MCP response never contains signing data, transaction bytes, or signing readiness; only an explicit UI action and wallet approval authorize the backend request; request status is separate from server-verified chain execution facts."
@@ -102,7 +102,7 @@ export function registerMcpPrompts(server: McpServer, surfaces: readonly Adapter
 
   // Adapter prompt surfaces: action-first names (`swap-deep`) with one
   // free-text intent argument so clients can pass the whole request in one
-  // line (Claude Code: /mcp__say-ur-intent__swap-deep 10 sui to usdc;
+  // line (Claude Code: /mcp__sui-mcp__swap-deep 10 sui to usdc;
   // Claude Desktop shows a single input field). The model parses the
   // intent; this server never does.
   for (const surface of surfaces) {

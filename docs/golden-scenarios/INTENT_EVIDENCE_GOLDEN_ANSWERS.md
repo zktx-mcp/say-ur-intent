@@ -20,7 +20,7 @@ Before judging any client answer, call `read.get_server_status` and record these
 
 | Field | Required meaning |
 | --- | --- |
-| `packageName` | The client is connected to the expected Say Ur Intent package. |
+| `packageName` | The client is connected to the expected Sui MCP package. |
 | `version` | The package build under observation. |
 | `evidencePolicy.version` | The evidence policy version used for the answer. |
 | `network` | Must be `mainnet`. |

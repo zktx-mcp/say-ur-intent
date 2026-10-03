@@ -4,6 +4,7 @@ import {
   InMemoryLocalTransactionMaterialStore,
   LocalTransactionMaterialStoreError,
   verifyLocalTransactionMaterialArtifacts,
+  localTransactionMaterialHandleSchema,
   type LocalTransactionMaterialStore
 } from "../src/core/session/transactionMaterialStore.js";
 import { SqliteTransactionMaterialStore } from "../src/core/session/sqliteTransactionMaterialStore.js";
@@ -40,7 +41,7 @@ describe.each(stores)("local transaction material store (%s)", (_label, makeStor
         planId: "plan_1",
         account,
         kind: "deepbook_swap_transaction_data",
-        source: "say_ur_intent_built",
+        source: "sui_mcp_built",
         transactionBytes: bytes,
         expiresAt: new Date("2026-06-06T00:30:00.000Z"),
         redactedDiagnostics: { commandCount: 3 }
@@ -53,9 +54,10 @@ describe.each(stores)("local transaction material store (%s)", (_label, makeStor
       planId: "plan_1",
       account,
       kind: "deepbook_swap_transaction_data",
-      source: "say_ur_intent_built",
+      source: "sui_mcp_built",
       createdAt: "2026-06-06T00:00:00.000Z"
     });
+    expect(() => localTransactionMaterialHandleSchema.parse({ ...handle, source: "say_ur_intent_built" })).toThrow(/source/);
     expect(handle).not.toHaveProperty("transactionBytes");
     expect(handle).not.toHaveProperty("redactedDiagnostics");
 
@@ -76,7 +78,7 @@ describe.each(stores)("local transaction material store (%s)", (_label, makeStor
         planId: "plan_1",
         account,
         kind: "deepbook_swap_transaction_data",
-        source: "say_ur_intent_built",
+        source: "sui_mcp_built",
         transactionBytes: new Uint8Array([1]),
         expiresAt: new Date("2026-06-06T00:30:00.000Z")
       },
@@ -96,7 +98,7 @@ describe.each(stores)("local transaction material store (%s)", (_label, makeStor
         planId: "plan_1",
         account,
         kind: "deepbook_swap_transaction_data",
-        source: "say_ur_intent_built",
+        source: "sui_mcp_built",
         transactionBytes: new Uint8Array([1]),
         expiresAt: new Date("2026-06-06T00:00:10.000Z")
       },
@@ -112,7 +114,7 @@ describe.each(stores)("local transaction material store (%s)", (_label, makeStor
         planId: "plan_1",
         account,
         kind: "deepbook_swap_transaction_data",
-        source: "say_ur_intent_built",
+        source: "sui_mcp_built",
         transactionBytes: new Uint8Array([2]),
         expiresAt: new Date("2026-06-06T00:30:00.000Z")
       },
@@ -130,7 +132,7 @@ describe.each(stores)("local transaction material store (%s)", (_label, makeStor
         planId: "plan_1",
         account: "not-an-address",
         kind: "deepbook_swap_transaction_data",
-        source: "say_ur_intent_built",
+        source: "sui_mcp_built",
         transactionBytes: new Uint8Array([1]),
         expiresAt: new Date("2026-06-06T00:30:00.000Z")
       })
@@ -142,7 +144,7 @@ describe.each(stores)("local transaction material store (%s)", (_label, makeStor
         planId: "plan_1",
         account,
         kind: "deepbook_swap_transaction_data",
-        source: "say_ur_intent_built",
+        source: "sui_mcp_built",
         transactionBytes: new Uint8Array([]),
         expiresAt: new Date("2026-06-06T00:30:00.000Z")
       })
@@ -155,7 +157,7 @@ describe.each(stores)("local transaction material store (%s)", (_label, makeStor
           planId: "plan_1",
           account,
           kind: "deepbook_swap_transaction_data",
-          source: "say_ur_intent_built",
+          source: "sui_mcp_built",
           transactionBytes: new Uint8Array([1]),
           expiresAt: new Date("2026-06-06T00:00:00.000Z")
         },

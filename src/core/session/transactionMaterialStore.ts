@@ -13,8 +13,8 @@ export const LOCAL_TRANSACTION_MATERIAL_KINDS = [
 ] as const;
 
 export const LOCAL_TRANSACTION_MATERIAL_SOURCES = [
-  "say_ur_intent_built",
-  "say_ur_intent_verified"
+  "sui_mcp_built",
+  "sui_mcp_verified"
 ] as const;
 
 export type LocalTransactionMaterialKind = (typeof LOCAL_TRANSACTION_MATERIAL_KINDS)[number];

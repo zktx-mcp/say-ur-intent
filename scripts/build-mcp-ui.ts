@@ -61,7 +61,7 @@ for (const kind of ["account", "receipt", "chart", "connect", "review"]) {
     configFile: false,
     root,
     define: {
-      __SAY_UR_INTENT_VERSION__: JSON.stringify(manifest.version)
+      __SUI_MCP_VERSION__: JSON.stringify(manifest.version)
     },
     build: {
       outDir, write: false, emptyOutDir: false,
@@ -87,7 +87,7 @@ for (const kind of ["account", "receipt", "chart", "connect", "review"]) {
   }
   const licenseText = await notices(Object.keys(script.modules));
   const escape = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Say Ur Intent</title><style>${css.replaceAll("</style", "<\\/style")}</style></head><body><main id="app" aria-live="polite"></main><template id="dependency-notices">${escape(licenseText)}</template><script type="module">${script.code.replaceAll("</script", "<\\/script")}</script></body></html>`;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sui MCP</title><style>${css.replaceAll("</style", "<\\/style")}</style></head><body><main id="app" aria-live="polite"></main><template id="dependency-notices">${escape(licenseText)}</template><script type="module">${script.code.replaceAll("</script", "<\\/script")}</script></body></html>`;
   await writeFile(join(outDir, `${kind}.html`), html);
   await writeFile(join(outDir, `${kind}.notices.txt`), licenseText);
 }

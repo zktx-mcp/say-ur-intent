@@ -5,16 +5,16 @@ import { receiptDisplaySchema, walletDisplaySchema } from "../core/session/cardS
 export { cardKindSchema, cardSnapshotSchema } from "../core/session/cardSession.js";
 export type { CardKind, CardSnapshot, CardReference, CardSubmission } from "../core/session/cardSession.js";
 export const CARD_RESOURCE_URIS = {
-  account: "ui://say-ur-intent/account.html",
-  receipt: "ui://say-ur-intent/receipt.html",
-  chart: "ui://say-ur-intent/chart.html",
-  connect: "ui://say-ur-intent/connect.html",
-  review: "ui://say-ur-intent/review.html"
+  account: "ui://sui-mcp/account.html",
+  receipt: "ui://sui-mcp/receipt.html",
+  chart: "ui://sui-mcp/chart.html",
+  connect: "ui://sui-mcp/connect.html",
+  review: "ui://sui-mcp/review.html"
 } as const;
-export const CARD_METADATA_KEY = "say-ur-intent/card";
-export const CARD_DISPLAY_METADATA_KEY = "say-ur-intent/receipt-display";
-export const WALLET_DISPLAY_METADATA_KEY = "say-ur-intent/wallet-display";
-export const CARD_RESOURCE_PREFIX = "sayurintent://cards/";
+export const CARD_METADATA_KEY = "sui-mcp/card";
+export const CARD_DISPLAY_METADATA_KEY = "sui-mcp/receipt-display";
+export const WALLET_DISPLAY_METADATA_KEY = "sui-mcp/wallet-display";
+export const CARD_RESOURCE_PREFIX = "suimcp://cards/";
 export const cardInputRequiredSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("account"), status: z.literal("input_required"), field: z.literal("account"), message: z.string().min(1) }).strict(),
   z.object({ kind: z.literal("receipt"), status: z.literal("input_required"), field: z.literal("digest"), message: z.string().min(1) }).strict()

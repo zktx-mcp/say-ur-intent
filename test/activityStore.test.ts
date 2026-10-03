@@ -80,8 +80,8 @@ function planFor(id: string, requestedIntent?: unknown): ActionPlan {
 }
 
 function withTempDb<T>(fn: (store: SqliteActivityStore, dbPath: string) => Promise<T>): Promise<T> {
-  const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-activity-test-"));
-  const dbPath = join(dir, "say-ur-intent.sqlite");
+  const dir = mkdtempSync(join(tmpdir(), "sui-mcp-activity-test-"));
+  const dbPath = join(dir, "sui-mcp.sqlite");
   const store = newTestSqliteActivityStore(dbPath);
   return fn(store, dbPath).finally(() => {
     store.close();
@@ -371,7 +371,7 @@ describe("SqliteActivityStore", () => {
   });
 
   it("wraps activity data directory creation failures with a product error", () => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-data-dir-error-test-"));
+    const dir = mkdtempSync(join(tmpdir(), "sui-mcp-data-dir-error-test-"));
     const fileParent = join(dir, "not-a-directory");
     writeFileSync(fileParent, "not a directory");
     try {
@@ -384,8 +384,8 @@ describe("SqliteActivityStore", () => {
   });
 
   it("refuses to open a local database from a newer schema version", () => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-activity-test-"));
-    const dbPath = join(dir, "say-ur-intent.sqlite");
+    const dir = mkdtempSync(join(tmpdir(), "sui-mcp-activity-test-"));
+    const dbPath = join(dir, "sui-mcp.sqlite");
     const db = new Database(dbPath);
     try {
       db.exec("PRAGMA user_version = 999");
@@ -400,8 +400,8 @@ describe("SqliteActivityStore", () => {
   });
 
   it.each([0, 2, 3, 6, 7, DB_USER_VERSION, 999])("rejects an incompatible existing format %i without changing its bytes", (version) => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-format-refusal-"));
-    const path = join(dir, "say-ur-intent.sqlite");
+    const dir = mkdtempSync(join(tmpdir(), "sui-mcp-format-refusal-"));
+    const path = join(dir, "sui-mcp.sqlite");
     const db = new Database(path);
     try { createLegacyExternalActivityTables(db, { userVersion: version }); } finally { db.close(); }
     const before = readFileSync(path);
@@ -1240,7 +1240,7 @@ describe("SqliteActivityStore", () => {
       const sourceLocalData = source.createLocalDataService(localDataOptions());
       const exported = await sourceLocalData.exportLocalData(new Date("2026-05-11T00:00:00.000Z"));
       expect(exported).toMatchObject({
-        format: "say-ur-intent.local-data",
+        format: "sui-mcp.local-data",
         network: "mainnet",
         data: {
           externalActivityScans: [
@@ -2450,10 +2450,30 @@ describe("SqliteActivityStore", () => {
 
   it("resolves data directory overrides and rejects null bytes", () => {
     expect(
-      resolveActivityDatabasePath({ SAY_UR_INTENT_DATA_DIR: "/tmp/say-ur-intent-test" } as NodeJS.ProcessEnv)
-    ).toBe(join("/tmp/say-ur-intent-test", ACTIVITY_DATABASE_FILENAME));
+      resolveActivityDatabasePath({ SUI_MCP_DATA_DIR: "/tmp/sui-mcp-test" } as NodeJS.ProcessEnv)
+    ).toBe(join("/tmp/sui-mcp-test", ACTIVITY_DATABASE_FILENAME));
     expect(() =>
-      resolveActivityDatabasePath({ SAY_UR_INTENT_DATA_DIR: "/tmp/bad\0path" } as NodeJS.ProcessEnv)
-    ).toThrow("SAY_UR_INTENT_DATA_DIR must not contain null bytes");
+      resolveActivityDatabasePath({ SUI_MCP_DATA_DIR: "/tmp/bad\0path" } as NodeJS.ProcessEnv)
+    ).toThrow("SUI_MCP_DATA_DIR must not contain null bytes");
+  });
+});
+
+
+it("rejects a previous-package backup without replacing current data", async () => {
+  await withTempDb(async (store) => {
+    await store.createPreferencesRepository().ensureDefaultLocalSettings({
+      suiGrpcUrl: "https://fullnode.mainnet.sui.io:443",
+      suiGraphqlUrl: "https://graphql.mainnet.sui.io/graphql"
+    });
+    await store.setActiveAccount(walletAccount, "wallet_connection", new Date("2026-05-11T00:00:00.000Z"));
+    const localData = store.createLocalDataService(localDataOptions());
+    const at = new Date("2026-05-11T00:00:00.000Z");
+    const exported = await localData.exportLocalData(at);
+    expect(exported.format).toBe("sui-mcp.local-data");
+    await expect(localData.previewImportLocalData(exported)).resolves.toMatchObject({ status: "valid" });
+    const previousPackage = { ...exported, format: "say-ur-intent.local-data" };
+    await expect(localData.previewImportLocalData(previousPackage)).rejects.toMatchObject({ kind: "input_invalid", details: { reason: "invalid_backup_shape" } });
+    await expect(localData.importLocalDataReplace(previousPackage)).rejects.toMatchObject({ kind: "input_invalid", details: { reason: "invalid_backup_shape" } });
+    expect(await localData.exportLocalData(at)).toEqual(exported);
   });
 });

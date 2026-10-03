@@ -111,7 +111,7 @@ export async function verifyMainnetGraphqlEndpoint(
   try {
     const chainIdentifier = await Promise.race([
       client.query<{ chainIdentifier: string }>({
-        query: "query SayUrIntentChainIdentifier { chainIdentifier }",
+        query: "query SuiMcpChainIdentifier { chainIdentifier }",
         variables: {}
       }).then((result) => {
         const value = result.data?.chainIdentifier;

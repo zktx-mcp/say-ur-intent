@@ -67,7 +67,7 @@ export function registerReviewActivityListTool(server: McpServer, deps: McpServe
     TOOL_NAMES.readListReviewActivity,
     {
       title: "List review activity",
-      description: "List local Say Ur Intent review-session records for one account. Not wallet transaction history.",
+      description: "List local Sui MCP review-session records for one account. Not wallet transaction history.",
       inputSchema: z.object({
         ...reviewActivityInputSchema,
         reviewStatus: internalSessionStatusSchema.optional(),
@@ -106,7 +106,7 @@ export function registerReviewActivitySummaryTools(server: McpServer, deps: McpS
     TOOL_NAMES.readSummarizeReviewFunnel,
     {
       title: "Summarize review funnel",
-      description: "Lifecycle counts for local Say Ur Intent review sessions in one account scope.",
+      description: "Lifecycle counts for local Sui MCP review sessions in one account scope.",
       inputSchema: reviewActivityInputSchema,
       outputSchema: successOutputSchema({
         ...reviewActivityCommonOutput,
@@ -150,7 +150,7 @@ export function registerReviewActivitySummaryTools(server: McpServer, deps: McpS
     TOOL_NAMES.readGetReviewSessionDetail,
     {
       title: "Get review session detail",
-      description: "Return one stored Say Ur Intent review session with plan, snapshots, transitions, and result.",
+      description: "Return one stored Sui MCP review session with plan, snapshots, transitions, and result.",
       inputSchema: {
         reviewSessionId: z.string().min(1),
         account: z.string().min(1).optional()

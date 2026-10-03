@@ -86,7 +86,7 @@ export async function startOrDeferReviewServer<T extends StartedReviewServerLike
   if (!holder || holder.service !== deps.serviceName || holder.pid === deps.currentPid) {
     throw Object.assign(new Error(
       `Review server port ${port} is already in use by a process that is not a separate ${deps.serviceName} review server. ` +
-        `Use the same current runtime and data directory for every client, or choose a different SAY_UR_INTENT_REVIEW_PORT. The listener is not replaced automatically.`
+        `Use the same current runtime and data directory for every client, or choose a different SUI_MCP_REVIEW_PORT. The listener is not replaced automatically.`
     ), { code: "REVIEW_PORT_CONFLICT" });
   }
 

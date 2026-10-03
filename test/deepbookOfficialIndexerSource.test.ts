@@ -164,7 +164,7 @@ describe("DeepbookOfficialIndexerSource", () => {
         {
           ...publicPoolsFixture()[0],
           enabled: true,
-          min_size: "not consumed by Say Ur Intent"
+          min_size: "not consumed by Sui MCP"
         }
       ])
     });

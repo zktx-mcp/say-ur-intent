@@ -129,7 +129,7 @@ function assertLocalFiles(): void {
 }
 
 async function smokeInstallPackedTarball(tarballPath: string): Promise<void> {
-  const installDir = mkdtempSync(join(tmpdir(), "say-ur-intent-install-"));
+  const installDir = mkdtempSync(join(tmpdir(), "sui-mcp-install-"));
   let runtimeOwnsCleanup = false;
   try {
     run(
@@ -138,9 +138,9 @@ async function smokeInstallPackedTarball(tarballPath: string): Promise<void> {
       installDir
     );
 
-    const binPath = resolve(installDir, "node_modules/.bin/say-ur-intent");
+    const binPath = resolve(installDir, "node_modules/.bin/sui-mcp");
     if (!existsSync(binPath)) {
-      throw new Error("Packed install did not create node_modules/.bin/say-ur-intent.");
+      throw new Error("Packed install did not create node_modules/.bin/sui-mcp.");
     }
     const stat = statSync(binPath);
     if (!stat.isFile() && !stat.isSymbolicLink()) {
@@ -182,7 +182,7 @@ export async function smokeInstalledRuntime(installDir: string, binPath: string)
   try {
     const port = await unusedPort();
     transport = new StdioClientTransport({ command: process.execPath, args: [binPath], cwd: installDir,
-      env: { SUI_NETWORK: "mainnet", SAY_UR_INTENT_DATA_DIR: join(installDir, "runtime-data"), SAY_UR_INTENT_REVIEW_PORT: String(port),
+      env: { SUI_NETWORK: "mainnet", SUI_MCP_DATA_DIR: join(installDir, "runtime-data"), SUI_MCP_REVIEW_PORT: String(port),
         ...(process.env.SUI_GRPC_URL ? { SUI_GRPC_URL: process.env.SUI_GRPC_URL } : {}),
         ...(process.env.SUI_GRAPHQL_URL ? { SUI_GRAPHQL_URL: process.env.SUI_GRAPHQL_URL } : {}) }, stderr: "pipe" });
     // Drain SDK diagnostics without publishing a project identifier or token.
@@ -240,7 +240,7 @@ export async function smokeInstalledRuntime(installDir: string, binPath: string)
     for (const asset of ["settings.js", "settings.css", "ui.css", "favicon.svg", "brand-light.svg", "brand-dark.svg"]) {
       if (!(await (await get(`/review-assets/${asset}`)).text()).trim()) throw new Error(`Installed asset is empty: ${asset}`);
     }
-    const status = await (await get(`/api${settings.pathname}`, { "x-say-ur-intent-token": settings.hash.slice(1) })).json() as { server?: { version?: string; network?: string } };
+    const status = await (await get(`/api${settings.pathname}`, { "x-sui-mcp-token": settings.hash.slice(1) })).json() as { server?: { version?: string; network?: string } };
     if (status.server?.version !== manifest.version || status.server.network !== "mainnet") throw new Error("Installed Settings server metadata mismatch.");
     stage = "packaged wallet child and retired-input rejection";
     const parentPid = transport.pid;
@@ -314,7 +314,7 @@ async function main(): Promise<void> {
   const dryRunInfo = parsePackOutput(capture("npm", ["pack", "--dry-run", "--json"]));
   assertPackContents(dryRunInfo);
 
-  const packDir = mkdtempSync(join(tmpdir(), "say-ur-intent-pack-"));
+  const packDir = mkdtempSync(join(tmpdir(), "sui-mcp-pack-"));
   try {
     const packedInfo = parsePackOutput(
       capture("npm", ["pack", "--json", "--pack-destination", packDir])

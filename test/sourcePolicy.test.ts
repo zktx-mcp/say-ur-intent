@@ -185,7 +185,7 @@ describe("source policy", () => {
     expect(source).not.toMatch(/@mysten\/sui|dappKit|createLocalDAppKit|suiMainnetClient|executeTransactionBlock/i);
     expect(source).not.toMatch(/all matched|safe to sign|ready to sign/i);
     // Public page: never carries a session token or review/session evidence.
-    expect(source).not.toMatch(/x-say-ur-intent-token|readPageToken|tokenHeaders/);
+    expect(source).not.toMatch(/x-sui-mcp-token|readPageToken|tokenHeaders/);
     expect(source).not.toMatch(/reviewedRequest|labeledSessionFacts|transactionReviewData|reviewState/);
     }
   });
@@ -272,7 +272,7 @@ describe("source policy", () => {
       const escapedToolName = toolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const source = readFileSync(join(process.cwd(), file), "utf8");
 
-      expect(source).toMatch(new RegExp(`registerSayUrIntentTool\\(\\s*server,\\s*${escapedToolName},`));
+      expect(source).toMatch(new RegExp(`registerSuiMcpTool\\(\\s*server,\\s*${escapedToolName},`));
       expect(source).not.toMatch(new RegExp(`server\\.registerTool\\(\\s*${escapedToolName},`));
     }
 
@@ -451,7 +451,7 @@ describe("source policy", () => {
       .join("\n");
 
     expect(agents).toMatch(/Required Detailed Policies/);
-    expect(developmentPolicy).toMatch(/third-party reader with no Say Ur Intent\s+background/);
+    expect(developmentPolicy).toMatch(/third-party reader with no Sui MCP\s+background/);
     expect(developmentPolicy).toMatch(/Do not introduce project-specific\s+terms, internal shorthand, or product labels/);
     expect(developmentPolicy).toMatch(/define it in plain\s+language at first use/);
     expect(developmentPolicy).toMatch(/MCP API Response Clarity/);
@@ -525,8 +525,8 @@ describe("source policy", () => {
     // DeepBook external-web routing rules live in docs/AGENT_BEHAVIOR.md and
     // docs/golden-scenarios/BEHAVIOR_MATRIX.md.
     const priceRoutingDocs = {
-      "docs/AGENT_BEHAVIOR.md": /Say Ur Intent product source[^.\n]{0,200}supported SUI\/DeepBook price context/i,
-      "docs/golden-scenarios/BEHAVIOR_MATRIX.md": /Say Ur Intent verified context[\s\S]{0,200}Do not use external web data unless the user explicitly asks for non-product market context/i
+      "docs/AGENT_BEHAVIOR.md": /Sui MCP product source[^.\n]{0,200}supported SUI\/DeepBook price context/i,
+      "docs/golden-scenarios/BEHAVIOR_MATRIX.md": /Sui MCP verified context[\s\S]{0,200}Do not use external web data unless the user explicitly asks for non-product market context/i
     };
 
     for (const [file, requiredPattern] of Object.entries(priceRoutingDocs)) {
@@ -558,9 +558,9 @@ describe("source policy", () => {
       /search (the )?web before (using )?DeepBook/i,
       /external web sources before DeepBook/i,
       new RegExp(["use", "web", "fallback", "for", "the", "price", "answer"].join(" "), "i"),
-      new RegExp(["web", "fallback"].join(" ") + ".{0,120}Say Ur Intent", "i"),
+      new RegExp(["web", "fallback"].join(" ") + ".{0,120}Sui MCP", "i"),
       /external web.{0,120}verified (Sui|DeepBook|product) state/i,
-      /external web.{0,120}\bas Say Ur Intent verified state/i
+      /external web.{0,120}\bas Sui MCP verified state/i
     ];
 
     for (const file of pricePolicySurfaces) {
@@ -731,7 +731,7 @@ describe("source policy", () => {
     expect(docs).toContain(`quantitySemantics.allowedUse: "${DEEPBOOK_OFFICIAL_INDEXER_CANDLE_USE.allowedUse}"`);
     expect(docs).toContain(`source.kind: "${DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.kind}"`);
     expect(docs).toContain(
-      `source.chainRecomputedBySayUrIntent: ${String(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent)}`
+      `source.chainRecomputedBySuiMcp: ${String(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp)}`
     );
     expect(docs).toMatch(/does not independently recompute/i);
     expect(docs).toContain(DEEPBOOK_SOURCE_OWNER_RUNTIME_WORDING.usdcNotFiatUsdAndNotPeg);
@@ -752,7 +752,7 @@ describe("source policy", () => {
       `usdPegGuaranteeAvailable: ${String(DEEPBOOK_OFFICIAL_INDEXER_USDC_REFERENCE.usdPegGuaranteeAvailable)}`
     );
     expect(source).toContain(
-      `chainRecomputedBySayUrIntent: ${String(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent)}`
+      `chainRecomputedBySuiMcp: ${String(DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp)}`
     );
     expect(source).toMatch(/liveQuoteAvailable:\s*false/);
     expect(source).toMatch(/historicalMidPriceAvailable:\s*false/);
@@ -939,7 +939,7 @@ describe("source policy", () => {
     expect(source).toMatch(/deepbook_usdc_token_denominated_reference_candles_for_supported_assets/);
     expect(source).toMatch(/usdcIsFiatUsd:\s*false/);
     expect(source).toMatch(/usdPegGuaranteeAvailable:\s*false/);
-    expect(source).toMatch(/chainRecomputedBySayUrIntent:\s*false/);
+    expect(source).toMatch(/chainRecomputedBySuiMcp:\s*false/);
   });
 
   it("keeps review-time simulation requirements separate from transaction bytes and quote reads", () => {
@@ -1123,7 +1123,7 @@ describe("source policy", () => {
       expect(source).toMatch(/not a supported-protocol\s+list/i);
       expect(source).toMatch(/not signing readiness/i);
       expect(source).not.toMatch(/Future derived protocol classification/i);
-      expect(source).not.toMatch(/If Say Ur Intent later auto-classifies/i);
+      expect(source).not.toMatch(/If Sui MCP later auto-classifies/i);
       expect(source).not.toMatch(/Automatic protocol classification/i);
       expect(source).not.toMatch(/ProtocolClassifierMatch/i);
       expect(source).not.toMatch(/direct_package_match|object_match|event_match/i);
@@ -1762,7 +1762,7 @@ describe("source policy", () => {
     expect(mcpSetup).toMatch(/Current-format backups can contain `function_scan` provenance/i);
     expect(mcpSetup).toMatch(/Unsupported formats and scan-kind values are rejected/i);
     expect(source).toMatch(/does not accept[\s\S]{0,120}`kind`[\s\S]{0,120}`function`[\s\S]{0,120}function-history filters/i);
-    expect(source).toMatch(/Provider retention and rate-limit behavior[\s\S]{0,160}not Say Ur Intent guarantees/i);
+    expect(source).toMatch(/Provider retention and rate-limit behavior[\s\S]{0,160}not Sui MCP guarantees/i);
     expect(source).toMatch(/requestedAccountTransactionFacts/);
     expect(source).toMatch(/requestedAccount\.coinFlows/);
     expect(source).toMatch(/transactions\[\]\.requestedAccountEffect/);
@@ -1809,7 +1809,7 @@ describe("source policy", () => {
     expect(source).toMatch(/Do not convert raw token amounts into display units unless[\s\S]{0,120}verified decimals/i);
     expect(source).toMatch(/gasCost\.display|analysis\.gas\.netGasCost\.display/);
     expect(source).toMatch(/MIST_PER_SUI/);
-    expect(source).toMatch(/Profit, tax, performance, and cost-basis calculations[\s\S]{0,120}not Say Ur Intent surfaces/i);
+    expect(source).toMatch(/Profit, tax, performance, and cost-basis calculations[\s\S]{0,120}not Sui MCP surfaces/i);
     expect(source).toMatch(/assumed acquisition price[\s\S]{0,220}unsupported/i);
     expect(source).toMatch(/Do not provide profit formulas or hypothetical profit examples/i);
     expect(source).toMatch(/fiat USD cash-out|fiat cash-out/i);
@@ -1829,8 +1829,8 @@ describe("source policy", () => {
     expect(source).not.toMatch(/background (wallet )?index(er|ing) is supported/i);
     expect(source).not.toMatch(/complete wallet history is supported/i);
     expect(source).not.toMatch(/complete dApp history is supported/i);
-    expect(source).not.toMatch(/provider retention (is|are) guaranteed by Say Ur Intent/i);
-    expect(source).not.toMatch(/rate limits? (is|are) guaranteed by Say Ur Intent/i);
+    expect(source).not.toMatch(/provider retention (is|are) guaranteed by Sui MCP/i);
+    expect(source).not.toMatch(/rate limits? (is|are) guaranteed by Sui MCP/i);
     expect(source).not.toMatch(/P&L is supported/i);
     expect(source).not.toMatch(/cost basis[\s\S]{0,120}(profit would be|profit is|calculate profit)/i);
     const boundedHistoryTerms =

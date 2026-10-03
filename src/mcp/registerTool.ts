@@ -10,9 +10,9 @@ import type {
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { TOOL_NAMES, assertValidToolName } from "./toolNames.js";
 
-export type SayUrIntentToolName = (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES];
+export type SuiMcpToolName = (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES];
 
-export type SayUrIntentToolConfig<
+export type SuiMcpToolConfig<
   OutputArgs extends ZodRawShapeCompat | AnySchema,
   InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined
 > = {
@@ -40,13 +40,13 @@ function mergedAnnotations(
   };
 }
 
-export function registerSayUrIntentTool<
+export function registerSuiMcpTool<
   OutputArgs extends ZodRawShapeCompat | AnySchema,
   InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined
 >(
   server: McpServer,
-  name: SayUrIntentToolName,
-  config: SayUrIntentToolConfig<OutputArgs, InputArgs>,
+  name: SuiMcpToolName,
+  config: SuiMcpToolConfig<OutputArgs, InputArgs>,
   callback: ToolCallback<InputArgs>
 ): RegisteredTool {
   assertValidToolName(name);

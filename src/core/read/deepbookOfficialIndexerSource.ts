@@ -7,7 +7,7 @@ export const DEEPBOOK_OFFICIAL_INDEXER_CANONICAL_USDC_COIN_TYPE =
   "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC";
 export const DEEPBOOK_OFFICIAL_INDEXER_PRICE_CONVENTION = "USDC_PER_BASE";
 export const DEEPBOOK_OFFICIAL_INDEXER_SOURCE_STATEMENT =
-  "Say Ur Intent read DeepBookV3 official Indexer candle data for this response.";
+  "Sui MCP read DeepBookV3 official Indexer candle data for this response.";
 export const DEEPBOOK_OFFICIAL_INDEXER_CANDLE_TIMESTAMP_BOUNDARY = "open" as const;
 export const DEEPBOOK_OFFICIAL_INDEXER_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"] as const;
 export const DEFAULT_DEEPBOOK_OFFICIAL_INDEXER_INTERVAL = "15m" as const;
@@ -245,7 +245,7 @@ export class DeepbookOfficialIndexerSource implements DeepbookOfficialIndexerSou
         signal: controller.signal,
         headers: {
           accept: "application/json",
-          "user-agent": "say-ur-intent"
+          "user-agent": "sui-mcp"
         }
       });
     } catch (error) {

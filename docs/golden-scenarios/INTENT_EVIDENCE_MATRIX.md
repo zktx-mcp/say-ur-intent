@@ -87,7 +87,7 @@ Fiat cash-out boundary:
 A USDC quote is not a fiat USD cash-out estimate, external USDC/USD market lookup, or peg assumption.
 
 P&L unsupported:
-Profit, tax, performance, and cost-basis calculations are not Say Ur Intent surfaces. Do not provide a profit formula or hypothetical profit example, even when the user supplies an assumed acquisition price.
+Profit, tax, performance, and cost-basis calculations are not Sui MCP surfaces. Do not provide a profit formula or hypothetical profit example, even when the user supplies an assumed acquisition price.
 
 Display intent:
 Display intent is proposal context, not a raw signing amount.
@@ -116,7 +116,7 @@ Do not provide final min-out, transaction-building input, route quality, or sign
 `If I sell 10 SUI, how many dollars do I get?`
 Do not quote until the user selects a registered DeepBook quote asset or pool, or asks for wallet-scoped USD-denominated intent evidence.
 If the user chooses a pool such as SUI/USDC, call `read.quote_deepbook_display_amount`.
-Say Say Ur Intent cannot turn "dollars" into fiat USD or silently choose USDC/USDT.
+Say Sui MCP cannot turn "dollars" into fiat USD or silently choose USDC/USDT.
 Ask whether the user wants a specific DeepBook USD-denominated quote token/pool or wallet-scoped settlement-asset-group evidence.
 Do not provide a silent USDC/USDT default, USDC/USD peg conversion, web or finance lookup, bank cash-out estimate, final min-out, route quality, or signing readiness.
 
@@ -160,13 +160,13 @@ Do not infer position inventory, P&L, supported-protocol list, or signing readin
 
 `How much profit did I make?`
 Unsupported.
-Explain P&L is not a Say Ur Intent surface.
+Explain P&L is not a Sui MCP surface.
 Offer available raw activity, balance snapshots, or quote evidence if useful.
 Do not provide P&L, tax, performance, profit calculation, cost-basis formula, or hypothetical profit example.
 
 `Can you calculate my profit if I bought 10 SUI for 10 USDC?`
 Unsupported.
-Explain that an assumed acquisition price still does not turn Say Ur Intent into a P&L or accounting surface.
+Explain that an assumed acquisition price still does not turn Sui MCP into a P&L or accounting surface.
 State available quote proceeds or raw activity evidence only if already fetched.
 Do not provide a profit calculation, cost-basis formula, hypothetical example, or tax/accounting interpretation.
 

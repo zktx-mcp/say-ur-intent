@@ -30,7 +30,7 @@ export type RuntimeConfig = BootConfig & {
 export function loadBootConfig(env: NodeJS.ProcessEnv = process.env): BootConfig {
   const network = env.SUI_NETWORK ?? "mainnet";
   if (network !== "mainnet") {
-    throw new Error("Say Ur Intent product runtime only supports mainnet");
+    throw new Error("Sui MCP product runtime only supports mainnet");
   }
 
   if (env.SUI_RPC_URL) {
@@ -43,7 +43,7 @@ export function loadBootConfig(env: NodeJS.ProcessEnv = process.env): BootConfig
     network: "mainnet",
     expectedChainIdentifier: SUI_MAINNET_CHAIN_IDENTIFIER,
     reviewHost: "127.0.0.1",
-    reviewPort: parseReviewPort(env.SAY_UR_INTENT_REVIEW_PORT),
+    reviewPort: parseReviewPort(env.SUI_MCP_REVIEW_PORT),
     activityDatabasePath: resolveActivityDatabasePath(env)
   };
 }
@@ -68,7 +68,7 @@ function parseReviewPort(value: string | undefined): number {
   }
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`SAY_UR_INTENT_REVIEW_PORT must be an integer between 1 and 65535, got: ${value}`);
+    throw new Error(`SUI_MCP_REVIEW_PORT must be an integer between 1 and 65535, got: ${value}`);
   }
   return port;
 }

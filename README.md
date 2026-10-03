@@ -1,6 +1,6 @@
-# Say Ur Intent
+# Sui MCP
 
-Say Ur Intent is a local-first Sui review and evidence layer for AI clients.
+Sui MCP is a local-first Sui review and evidence layer for AI clients.
 
 It turns a supported Sui action into an internal Review card where you inspect
 verified transaction facts and a PTB graph, then request approval in your own
@@ -27,21 +27,20 @@ Users can ask ordinary questions:
 - "How much are my USD-denominated assets together?"
 - "What is the shortfall?"
 
-This document describes the current checkout. Its card and connection changes
-are not included merely by installing the published `0.4.4` package. Use
-[Developer Checkout Setup](docs/MCP_SETUP.md#developer-checkout-setup) for this
-build, or the documentation bundled with your installed package.
+This document describes `@zktx.io/sui-mcp@0.5.0`. Confirm that version is
+published before using npm installation commands. For a local build, follow
+[Developer Checkout Setup](docs/MCP_SETUP.md#developer-checkout-setup).
 
 ## Product Scope in Two Layers
 
-- **Implemented:** Sui mainnet read evidence, non-signable external proposal review, and account-bound DeepBook swap review using protocol-agnostic adapters. Five internal cards use the same SQLite state and permission model. The backend verifies stored material, ownership, quote/policy provenance, human-readable facts, simulation and PTB evidence before an explicit user request. WalletConnect carries bytes only between the backend and wallet; ordinary MCP responses expose facts, request status and observed execution results. Settings remains a local token page; its card and the next package release are sequenced separately.
+- **Implemented:** Sui mainnet read evidence, non-signable external proposal review, and account-bound DeepBook swap review using protocol-agnostic adapters. Five internal cards use the same SQLite state and permission model. The backend verifies stored material, ownership, quote/policy provenance, human-readable facts, simulation and PTB evidence before an explicit user request. WalletConnect carries bytes only between the backend and wallet; ordinary MCP responses expose facts, request status and observed execution results. Settings remains a local token page; an internal Settings card is not implemented.
 - **Never (permanently unsupported at every layer):** no private-key custody, no MCP or AI autonomous execution, no forwarding of opaque external transaction bytes to a wallet, no silent settlement-token or route choice, no fiat cash-out, no P&L, no peg guarantee.
 
 DeepBook provides the current scoped Sui conversion, price, and orderbook
 evidence through the shared protocol adapter contracts. Wallet and Sui balance reads
 describe held assets. They do not define the whole product.
 
-Say Ur Intent does not custody funds, hold private keys, or autonomously trade
+Sui MCP does not custody funds, hold private keys, or autonomously trade
 on behalf of users.
 By current design, it does not rank venues, choose routes, make best-price
 recommendations, or silently choose settlement tokens for users.
@@ -56,7 +55,7 @@ The current release flow is:
 
 ```text
 The user states an intent in natural language.
-Say Ur Intent resolves the supported Sui mainnet evidence surface.
+Sui MCP resolves the supported Sui mainnet evidence surface.
 The AI answers only from returned evidence and boundaries.
 Supported swap transaction material build is an account-bound review step, not
 part of the natural-language intent evidence answer.
@@ -85,7 +84,7 @@ The current release can run as a local stdio MCP server and expose mainnet Sui D
 - DeepBook pools, tokens, mid price, orderbook context, raw quotes, display-amount quotes, and account inventory;
 - user-requested bounded Sui transaction digest lookup, account activity scans, sent-function activity scans with known-wallet-only persistence, and stored normalized activity summaries;
 - read-only external proposal review sessions that display proposed action, asset flow, recipient or target, freshness, missing evidence, user choices, unsupported claims, and non-signable reason;
-- local Say Ur Intent review evidence and review-session status reads;
+- local Sui MCP review evidence and review-session status reads;
 - account-bound DeepBook review with verified material, digest, ownership, policy, human-readable facts, simulation and PTB visualization, followed by explicit card selection and wallet approval through the backend;
 - separately recorded request state and chain success/failure, shown in the Review card and available through ordinary reads;
 - a Receipt card for server-read facts about any transaction digest, independent of signing.
@@ -141,7 +140,7 @@ Fiat cash-out, P&L, tax, and cost-basis support are not part of the current rele
 
 These are product boundaries and must not be relaxed by ordinary feature work:
 
-- Say Ur Intent does not custody funds, hold private keys, or autonomously trade.
+- Sui MCP does not custody funds, hold private keys, or autonomously trade.
 - It does not treat USDC, USDT, or any USD-denominated settlement asset as fiat
   USD, a bank cash-out amount, or a USDC/USD peg guarantee.
 - It does not turn quote-only conversion candidates into payment coverage, shortfall evidence, funding readiness, payment execution readiness, or signing readiness.
@@ -186,26 +185,28 @@ For quote responses alone, these conclusions are unsupported:
 Use the checkout setup above for unpublished changes. A local commit or successful
 package check does not publish a release.
 
-This release uses npm package `@zktx.io/say-ur-intent` and MCP Registry name
-`io.github.zktx-mcp/say-ur-intent`. Once the requested version is published,
-install through your client's registry support or run `npx -y @zktx.io/say-ur-intent`.
+This release uses npm package `@zktx.io/sui-mcp` and MCP Registry name
+`io.github.zktx-mcp/sui-mcp`. Once the requested version is published,
+install through your client's registry support or run `npx -y @zktx.io/sui-mcp`.
 For per-client configuration (Claude Code, Claude Desktop, Codex, Cursor) and
 running from a local checkout, see [docs/MCP_SETUP.md](docs/MCP_SETUP.md).
 
 ### Package and repository transition
 
-Version 0.4.0 is the final release under `@stelis/say-ur-intent`.
-Version 0.4.1 uses `@zktx.io/say-ur-intent`. The repository has moved to
-`zktx-mcp/say-ur-intent` with its history preserved. These versions provide the
-same functionality and retain the local Settings page.
+The package for this release is `@zktx.io/sui-mcp@0.5.0`, and its repository is
+`zktx-mcp/sui-mcp`. The previous package is `@zktx.io/say-ur-intent` (through
+0.4.4). The older `@stelis/say-ur-intent@0.4.0` is also a separate package.
+Existing installations and MCP client registrations do not change names
+automatically. Before switching, confirm the new package with
+`npm view @zktx.io/sui-mcp@0.5.0 version`; renaming the repository does not publish
+an npm package or MCP Registry entry.
 
-The unscoped package name and `zktx-dev` destination in the 0.4.0 advance notice
-were superseded by the names above. Existing installations and client settings
-do not move automatically. Before switching, confirm the target release with
-`npm view @zktx.io/say-ur-intent@0.4.4 version`; a repository transfer alone does
-not confirm npm or Registry publication. Keep the MCP registration name and
-executable command exactly `say-ur-intent`, without a suffix. See the
-[setup guide](docs/MCP_SETUP.md#switching-the-installed-package) for the transition.
+Use the full scoped package name: the unscoped `sui-mcp` package is a different
+project. Keep the MCP registration name `sui-mcp`, without a suffix. This release
+starts with a new local data directory and does not import or
+convert data from the previous package. See the
+[setup guide](docs/MCP_SETUP.md#switching-the-installed-package) for installation
+and shared-server restart instructions.
 
 After the MCP server is connected, use [docs/MCP_SETUP.md](docs/MCP_SETUP.md#first-use-flow) for first-use setup, [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) for API fields and statuses, and [docs/AGENT_BEHAVIOR.md](docs/AGENT_BEHAVIOR.md) for user-question flow and response wording.
 

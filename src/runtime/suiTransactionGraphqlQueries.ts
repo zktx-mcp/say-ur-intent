@@ -10,7 +10,7 @@ const LOCAL_TRANSACTION_DETAIL_LIMITS = {
 } as const;
 
 const TRANSACTION_DETAIL_FRAGMENT = `
-  fragment SayUrIntentTransactionDetail on Transaction {
+  fragment SuiMcpTransactionDetail on Transaction {
     digest
     sender { address }
     kind {
@@ -137,7 +137,7 @@ export async function queryInspectTransaction(
 ): Promise<GraphqlTransactionResult> {
   return queryGraphql<GraphqlTransactionResult>(client, {
     query: `
-      query SayUrIntentInspectTransaction(
+      query SuiMcpInspectTransaction(
         $digest: String!
         $moveCallLimit: Int!
         $balanceChangeLimit: Int!
@@ -145,7 +145,7 @@ export async function queryInspectTransaction(
         $eventLimit: Int!
       ) {
         transaction(digest: $digest) {
-          ...SayUrIntentTransactionDetail
+          ...SuiMcpTransactionDetail
         }
       }
       ${TRANSACTION_DETAIL_FRAGMENT}
@@ -165,7 +165,7 @@ export async function queryScanAccountTransactions(
 ): Promise<GraphqlTransactionsResult> {
   return queryGraphql<GraphqlTransactionsResult>(client, {
     query: `
-      query SayUrIntentScanAccountActivity(
+      query SuiMcpScanAccountActivity(
         $last: Int!
         $before: String
         $filter: TransactionFilter!
@@ -176,7 +176,7 @@ export async function queryScanAccountTransactions(
       ) {
         transactions(last: $last, before: $before, filter: $filter) {
           nodes {
-            ...SayUrIntentTransactionDetail
+            ...SuiMcpTransactionDetail
           }
           pageInfo {
             hasPreviousPage
@@ -211,7 +211,7 @@ export function cursorFromPageInfo(pageInfo: { hasPreviousPage?: unknown; startC
 export async function loadGraphqlServiceLimits(client: SuiGraphQLClient): Promise<GraphqlServiceLimits> {
   const result = await queryGraphql<GraphqlServiceConfigResult>(client, {
     query: `
-      query SayUrIntentGraphqlServiceLimits {
+      query SuiMcpGraphqlServiceLimits {
         serviceConfig {
           transactionPageLimit: maxPageSize(type: "Query", field: "transactions")
           moveCallLimit: maxPageSize(type: "ProgrammableTransaction", field: "commands")

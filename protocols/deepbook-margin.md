@@ -4,7 +4,7 @@ This file is a protocol reference for AI and human readers. It is not a runtime 
 
 Current product support is declared by `read.get_server_status`, `read.list_supported_protocols`, concrete MCP tool schemas, and concrete MCP tool responses. This note does not expose margin support by itself.
 
-DeepBook Margin is treated as mainnet protocol notes for Say Ur Intent.
+DeepBook Margin is treated as mainnet protocol notes for Sui MCP.
 
 This note covers these protocol topics only:
 

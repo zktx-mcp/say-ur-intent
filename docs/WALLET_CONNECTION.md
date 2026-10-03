@@ -8,7 +8,7 @@ individual wallet requests. It is not login, proof of address ownership, custody
 
 `session.create_wallet_connection` takes an intent: `connect`, `disconnect` or `manage` (the default). A connect-intent card automatically starts one pairing after the View confirms current state with its UI permission, unless a connection or operation already exists. Manage opens connection controls without starting pairing; Connect wallet starts it only after the user clicks. Disconnect opens target-specific confirmation when one connection is available; the user chooses Confirm disconnect or returns with Back. No model-facing call can disconnect or request a signature. Public saved reads never start pairing. QR data stays in UI metadata bound to the exact card, connection and revision; reopening a waiting card preserves that pairing.
 
-Say Ur Intent uses one wallet connection at a time across all clients sharing a
+Sui MCP uses one wallet connection at a time across all clients sharing a
 data directory. That connection can approve several Sui mainnet addresses; other
 chains are not supported. The same connection rule controls displayed actions,
 restoration, SDK observations and atomic SQLite admission. An unexpired connected wallet, pending approval or pending disconnection
@@ -82,7 +82,7 @@ confirms a usable connection.
 
 There is no card or Settings control for restarting the connection service.
 If the service stops or a disconnection remains unresponsive, fully quit all
-apps using Say Ur Intent, then reopen them. Closing a non-owning app or only a
+apps using Sui MCP, then reopen them. Closing a non-owning app or only a
 window does not stop the shared backend; another open client may take over.
 Confirm the new service is available before starting a new wallet operation.
 This does not guarantee that a relay responds or that a connection is removed

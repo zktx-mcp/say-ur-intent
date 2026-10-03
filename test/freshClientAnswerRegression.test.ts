@@ -636,7 +636,7 @@ describe("fresh-client answer regression", () => {
   it("does not duplicate response-surface rules in SERVER_INSTRUCTIONS prose", () => {
     // These rules are structurally enforced on the relevant tool response
     // (userAnswerUse.cannotAnswer, conclusionRuleFields, quantitySemantics, or
-    // pollingHint) or live in sayurintent://docs/agent-behavior. Keep
+    // pollingHint) or live in suimcp://docs/agent-behavior. Keep
     // SERVER_INSTRUCTIONS short and non-duplicative.
     const responseSurfaceRulesThatMustNotReturnAsProse: RegExp[] = [
       /DeepBook signing (?:is|remains) blocked in (?:this|the current) release/i,
@@ -663,7 +663,7 @@ describe("fresh-client answer regression", () => {
     // product identity, the userAnswerUse priority, USD preflight, active
     // account read context, the unsupported-category list, and a docs link.
     // Detailed answer-shape rules belong in per-response fields or in
-    // sayurintent://docs/agent-behavior. The thresholds below are slack-aware
+    // suimcp://docs/agent-behavior. The thresholds below are slack-aware
     // ceilings, not targets.
     const lineCount = SERVER_INSTRUCTIONS.split("\n").length;
     expect(lineCount, "SERVER_INSTRUCTIONS line count must stay short").toBeLessThanOrEqual(8);
@@ -686,7 +686,7 @@ describe("fresh-client answer regression", () => {
       /read\.summarize_settlement_asset_group_parity/i,
       /active account context/i,
       /Unsupported:/i,
-      /sayurintent:\/\/docs\/agent-behavior/i
+      /suimcp:\/\/docs\/agent-behavior/i
     ];
     for (const pattern of requiredDirections) {
       expect(SERVER_INSTRUCTIONS, `SERVER_INSTRUCTIONS must still carry: ${pattern}`).toMatch(pattern);

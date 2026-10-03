@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { SETTINGS_APPLIES_AFTER_RESTART } from "../../../core/preferences/preferencesStore.js";
-import { registerSayUrIntentTool } from "../../registerTool.js";
+import { registerSuiMcpTool } from "../../registerTool.js";
 import { errorToolResult, okToolResult } from "../../result.js";
 import { noParamsInputSchema, successOutputSchema } from "../../schemas.js";
 import type { McpServerDeps } from "../../server.js";
@@ -53,12 +53,12 @@ export function registerSettingsTools(server: McpServer, deps: McpServerDeps): v
     }
   );
 
-  registerSayUrIntentTool(
+  registerSuiMcpTool(
     server,
     TOOL_NAMES.settingsGetLocalSettings,
     {
       title: "Get local settings",
-      description: "Read local Say Ur Intent settings.",
+      description: "Read local Sui MCP settings.",
       inputSchema: noParamsInputSchema,
       outputSchema: successOutputSchema({
         suiGrpcUrl: endpointSettingSchema,

@@ -135,10 +135,10 @@ it.each([
   { label: "SDK failure", failure: "init", project: undefined, initCalls: 1, reason: "initialization_failed", message: "could not start" },
   { label: "restore failure", failure: "restore", project: undefined, initCalls: 1, reason: "restoration_failed", message: "could not be restored" }
 ])("handles $label through the real runtime and MCP cards", async ({ failure, project, initCalls, reason, message }) => {
-  source.failure = failure; vi.stubEnv("SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID", project);
+  source.failure = failure; vi.stubEnv("SUI_MCP_WALLETCONNECT_PROJECT_ID", project);
   const directory = mkdtempSync(join(tmpdir(), "say-startup-"));
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-  const app = await createRuntimeApplication(loadBootConfig({ SAY_UR_INTENT_DATA_DIR: directory }), logger);
+  const app = await createRuntimeApplication(loadBootConfig({ SUI_MCP_DATA_DIR: directory }), logger);
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const response = {} as { result: CallToolResult };
     await app.handleMcp({ call: { name, arguments: args } } as unknown as IncomingMessage, response as unknown as ServerResponse);
@@ -151,8 +151,8 @@ it.each([
     if (initCalls) {
       expect(fingerprint(source.init.mock.calls[0]![0].projectId)).toBe(approvedProjectFingerprint);
       expect(source.init.mock.calls[0]![0].metadata).toMatchObject({
-        name: "@zktx.io/say-ur-intent",
-        url: "https://github.com/zktx-mcp/say-ur-intent#readme"
+        name: "@zktx.io/sui-mcp",
+        url: "https://github.com/zktx-mcp/sui-mcp#readme"
       });
     }
     if (message) expect(JSON.stringify(created)).toContain(message);
@@ -204,11 +204,11 @@ it("uses the same approved project identity for stdio peers regardless of old en
       return { close: async () => {} };
     }
   }));
-  vi.stubEnv("SAY_UR_INTENT_DATA_DIR", directory);
+  vi.stubEnv("SUI_MCP_DATA_DIR", directory);
   vi.stubEnv("SUI_GRPC_URL", undefined); vi.stubEnv("SUI_GRAPHQL_URL", undefined);
   try {
     for (const [index, project] of [undefined, "not-a-project-id", "1".repeat(32)].entries()) {
-      vi.stubEnv("SAY_UR_INTENT_WALLETCONNECT_PROJECT_ID", project);
+      vi.stubEnv("SUI_MCP_WALLETCONNECT_PROJECT_ID", project);
       vi.resetModules();
       await import("../src/runtime/start.js");
       await vi.waitFor(() => expect(controls).toHaveLength(index + 1));
@@ -244,7 +244,7 @@ it.each(["expired_pairing", "inactive_pairing"] as const)("keeps the real parent
   const directory = mkdtempSync(join(tmpdir(), "say-runtime-sdk-held-")), relay = await walletRelay();
   source.realRelay = relay.url;
   await seedWalletSdk(directory, kind);
-  const app = await createRuntimeApplication(loadBootConfig({ SAY_UR_INTENT_DATA_DIR: directory }), { info() {}, warn() {}, error() {} });
+  const app = await createRuntimeApplication(loadBootConfig({ SUI_MCP_DATA_DIR: directory }), { info() {}, warn() {}, error() {} });
   const call = async (name: string, args: Record<string, unknown> = {}) => {
     const response = {} as { result: CallToolResult };
     await app.handleMcp({ call: { name, arguments: args } } as unknown as IncomingMessage, response as unknown as ServerResponse);

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { activeAccountResponse, activeAccountResponseSchema } from "../../activeAccountResponse.js";
-import { registerSayUrIntentTool } from "../../registerTool.js";
+import { registerSuiMcpTool } from "../../registerTool.js";
 import { okToolResult } from "../../result.js";
 import { noParamsInputSchema, successOutputSchema } from "../../schemas.js";
 import type { McpServerDeps } from "../../server.js";
@@ -31,7 +31,7 @@ export function registerAccountTools(server: McpServer, deps: McpServerDeps): vo
     }
   );
 
-  registerSayUrIntentTool(
+  registerSuiMcpTool(
     server,
     TOOL_NAMES.accountClearActiveAccount,
     {

@@ -5,7 +5,7 @@ import {
   type StartedReviewServerLike
 } from "../src/runtime/reviewServerAcquire.js";
 
-const SERVICE = "say-ur-intent";
+const SERVICE = "sui-mcp";
 const noopLogger = { info() {}, warn() {} };
 const noDelay = async () => {};
 
@@ -109,7 +109,7 @@ describe("startOrDeferReviewServer", () => {
     });
 
     await expect(startOrDeferReviewServer(start, 8765, deps)).rejects.toThrow(
-      /not a separate say-ur-intent review server/
+      /not a separate sui-mcp review server/
     );
   });
 
@@ -120,7 +120,7 @@ describe("startOrDeferReviewServer", () => {
     const deps = baseDeps({ probeIdentity: vi.fn(async () => null) });
 
     await expect(startOrDeferReviewServer(start, 8765, deps)).rejects.toThrow(
-      /not a separate say-ur-intent review server/
+      /not a separate sui-mcp review server/
     );
   });
 
@@ -134,7 +134,7 @@ describe("startOrDeferReviewServer", () => {
     });
 
     await expect(startOrDeferReviewServer(start, 8765, deps)).rejects.toThrow(
-      /not a separate say-ur-intent review server/
+      /not a separate sui-mcp review server/
     );
   });
 

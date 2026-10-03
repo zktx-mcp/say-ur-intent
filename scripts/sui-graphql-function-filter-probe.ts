@@ -436,7 +436,7 @@ async function latestTransactionDigests(
     } | null;
   }>({
     query: `
-      query SayUrIntentFunctionFilterProbeLatestTransactions($last: Int!) {
+      query SuiMcpFunctionFilterProbeLatestTransactions($last: Int!) {
         transactions(last: $last) {
           nodes { digest }
         }

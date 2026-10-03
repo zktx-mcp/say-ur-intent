@@ -104,7 +104,7 @@ if (settingsSessionId && token) {
 
 function render(): void {
   const content: HTMLElement[] = [];
-  content.push(element("h1", "settings-title", "Say Ur Intent Settings"));
+  content.push(element("h1", "settings-title", "Sui MCP Settings"));
   content.push(
     note(
       "Use this local page to manage the default address for reads, local data, and Sui read endpoints. Settings changes do not sign transactions or grant custody."
@@ -221,7 +221,7 @@ function renderLocalDataPanel(): HTMLElement {
   file.type = "file";
   file.accept = "application/json,.json";
   file.className = "settings-file";
-  file.setAttribute("aria-label", "Choose a Say Ur Intent backup file to import");
+  file.setAttribute("aria-label", "Choose a Sui MCP backup file to import");
   file.onchange = () => void previewImport(file);
 
   panel.append(
@@ -254,7 +254,7 @@ function renderResetPanel(): HTMLElement {
   const panel = card("Danger zone");
   panel.append(
     note(
-      "Reset permanently clears all local Say Ur Intent data and invalidates every open card and settings session. This cannot be undone."
+      "Reset permanently clears all local Sui MCP data and invalidates every open card and settings session. This cannot be undone."
     )
   );
   panel.append(note(unknownOutcomeWarning()));
@@ -338,7 +338,7 @@ async function exportLocalData(): Promise<void> {
     const link = document.createElement("a");
     const downloadUrl = URL.createObjectURL(blob);
     link.href = downloadUrl;
-    link.download = `say-ur-intent-local-data-${new Date().toISOString().replaceAll(":", "-")}.json`;
+    link.download = `sui-mcp-local-data-${new Date().toISOString().replaceAll(":", "-")}.json`;
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
     busy = undefined;
@@ -380,7 +380,7 @@ async function previewImport(fileInput: HTMLInputElement): Promise<void> {
     importPreview = undefined;
     fileInput.value = "";
     busy = undefined;
-    actionFeedback = { scope: "localData", kind: "error", text: messageForHttpError(error, "Import preview failed. Check that the file is a Say Ur Intent local data export.") };
+    actionFeedback = { scope: "localData", kind: "error", text: messageForHttpError(error, "Import preview failed. Check that the file is a Sui MCP local data export.") };
   }
   render();
 }
@@ -410,7 +410,7 @@ async function importLocalData(): Promise<void> {
 }
 
 async function resetLocalData(): Promise<void> {
-  if (!window.confirm("Reset all local Say Ur Intent data? This invalidates all open cards and settings sessions. " + unknownOutcomeWarning())) {
+  if (!window.confirm("Reset all local Sui MCP data? This invalidates all open cards and settings sessions. " + unknownOutcomeWarning())) {
     return;
   }
   try {

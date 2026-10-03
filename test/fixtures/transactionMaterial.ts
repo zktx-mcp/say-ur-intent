@@ -75,7 +75,7 @@ export async function recordTestTransactionMaterial(input: {
       planId: input.planId,
       account: input.account,
       kind: "deepbook_swap_transaction_data",
-      source: "say_ur_intent_built",
+      source: "sui_mcp_built",
       transactionBytes,
       expiresAt: input.expiresAt
     },

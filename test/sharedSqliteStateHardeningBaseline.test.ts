@@ -74,8 +74,8 @@ function withTwoStores<T>(fn: (stores: {
   firstDb: Database.Database;
   secondDb: Database.Database;
 }) => T): T {
-  const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-shared-state-baseline-"));
-  const dbPath = join(dir, "say-ur-intent.sqlite");
+  const dir = mkdtempSync(join(tmpdir(), "sui-mcp-shared-state-baseline-"));
+  const dbPath = join(dir, "sui-mcp.sqlite");
   const firstDb = new Database(dbPath);
   const secondDb = new Database(dbPath);
   try {
@@ -161,8 +161,8 @@ describe("shared SQLite state hardening baseline", () => {
   });
 
   it("refuses legacy live review sessions without rewriting them", () => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-live-session-migration-"));
-    const dbPath = join(dir, "say-ur-intent.sqlite");
+    const dir = mkdtempSync(join(tmpdir(), "sui-mcp-live-session-migration-"));
+    const dbPath = join(dir, "sui-mcp.sqlite");
     const db = new Database(dbPath);
     try {
       configureDatabase(db);
@@ -221,8 +221,8 @@ describe("shared SQLite state hardening baseline", () => {
   });
 
   it("rolls back audit writes when a stale live-session transition loses the race", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-shared-state-activity-"));
-    const dbPath = join(dir, "say-ur-intent.sqlite");
+    const dir = mkdtempSync(join(tmpdir(), "sui-mcp-shared-state-activity-"));
+    const dbPath = join(dir, "sui-mcp.sqlite");
     const firstStore = new SqliteActivityStore({
       databasePath: dbPath,
       validateAdapterLifecycle: validateSupportedAdapterLifecycle
@@ -303,8 +303,8 @@ describe("shared SQLite state hardening baseline", () => {
   });
 
   it("checks the active account inside the wallet-binding transaction", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "say-ur-intent-active-account-binding-"));
-    const dbPath = join(dir, "say-ur-intent.sqlite");
+    const dir = mkdtempSync(join(tmpdir(), "sui-mcp-active-account-binding-"));
+    const dbPath = join(dir, "sui-mcp.sqlite");
     const firstStore = new SqliteActivityStore({
       databasePath: dbPath,
       validateAdapterLifecycle: validateSupportedAdapterLifecycle

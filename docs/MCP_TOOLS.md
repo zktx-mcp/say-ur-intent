@@ -1,6 +1,6 @@
 # MCP Tools
 
-Say Ur Intent tools are grouped by authority.
+Sui MCP tools are grouped by authority.
 
 This document is the MCP API reference. It owns tool contracts, response fields, statuses, follow-up fields, and output boundaries.
 
@@ -28,9 +28,9 @@ Tool names use dot prefixes and avoid arbitrary shell, arbitrary Move calls, and
 | `read.list_settlement_asset_groups` | Implemented | Lists supported settlement asset groups derived from pinned mainnet SDK registries. |
 | `read.summarize_settlement_asset_group_parity` | Implemented | Summarizes direct DeepBook mid-price parity across a supported settlement asset group against a declared measurement reference. |
 | `read.preview_intent_evidence` | Implemented | Builds current wallet and DeepBook evidence for a natural-language settlement intent; not transaction building or signing. |
-| `read.list_review_activity` | Implemented | Lists local Say Ur Intent review evidence for one account. |
+| `read.list_review_activity` | Implemented | Lists local Sui MCP review evidence for one account. |
 | `read.summarize_review_funnel` | Implemented | Summarizes local review lifecycle counts, status distribution, and review timing. |
-| `read.get_review_session_detail` | Implemented | Returns stored local evidence for one Say Ur Intent review session. |
+| `read.get_review_session_detail` | Implemented | Returns stored local evidence for one Sui MCP review session. |
 | `read.inspect_sui_transaction` | Implemented | Looks up one Sui transaction digest and stores normalized facts only when the transaction sender or a returned balance-change owner matches a known local wallet. |
 | `read.scan_sui_account_activity` | Implemented | Runs a bounded GraphQL activity scan for a known or explicit Sui account. |
 | `read.summarize_sui_activity_scan` | Implemented | Runs a bounded Sui activity scan and returns requested-account facts plus deterministic normalized-fact analysis without full details. |
@@ -117,7 +117,7 @@ Candles are returned by the DeepBookV3 official Indexer for the requested interv
 
 `quantitySemantics.kind: "deepbook_official_indexer_candles"` and `quantitySemantics.allowedUse: "official_deepbook_usdc_candle_history"` mean this output is candle evidence only.
 
-`source.kind: "deepbook_v3_official_indexer"` and `source.chainRecomputedBySayUrIntent: false` mean Say Ur Intent read official Indexer candles and did not independently recompute candle values from chain history for this response.
+`source.kind: "deepbook_v3_official_indexer"` and `source.chainRecomputedBySuiMcp: false` mean Sui MCP read official Indexer candles and did not independently recompute candle values from chain history for this response.
 
 USDC in this tool is the token-denominated quote asset for the returned official DeepBookV3 Indexer candles. It is not fiat USD and not a USDC/USD peg guarantee.
 
@@ -153,12 +153,12 @@ When Chart pool choices cannot be prepared, the backend creates a `closed`/`fail
 
 `ui.read_card` and `ui.submit_card` are app-only operations. Permission travels in UI metadata and is absent from model content and public saved resources. Input submission carries card ID, permission, expected revision and typed input. There is no first-view ownership or open/close operation. Recreated frames and chat returns read the same DB record. Identical duplicate input returns the stored request; conflicting input returns `card_conflict` and the authenticated current snapshot in error details. Invalid input returns `invalid_card_input` without consuming a valid selection. Invalid permission exposes neither current state nor private display data.
 
-Receipt model results retain input kinds/indices/object references and identify input values and PTB as UI-only details. Receipt and completed Review show the executed transaction graph above their result summary when bound private metadata is available. Technical records are in one Details slide. Missing metadata leaves the saved result available without inventing a graph. The typed `say-ur-intent/receipt-display` metadata binds display data to the same card ID, transaction digest and revision. It carries individual on-chain Pure input values and the graph derived from those inputs; never a serialized transaction, signature or wallet credential. Public saved resources contain only the model projection. A missing UI detail payload means unavailable display data, not that a transaction had no inputs.
+Receipt model results retain input kinds/indices/object references and identify input values and PTB as UI-only details. Receipt and completed Review show the executed transaction graph above their result summary when bound private metadata is available. Technical records are in one Details slide. Missing metadata leaves the saved result available without inventing a graph. The typed `sui-mcp/receipt-display` metadata binds display data to the same card ID, transaction digest and revision. It carries individual on-chain Pure input values and the graph derived from those inputs; never a serialized transaction, signature or wallet credential. Public saved resources contain only the model projection. A missing UI detail payload means unavailable display data, not that a transaction had no inputs.
 
 Backend expiry ends unsubmitted input. A server restart invalidates unfinished cards; stored completed results remain readable. Reset/import removes cards and their permissions with the data change. Completed input does not reopen, while still-valid unsubmitted input is unaffected by chat navigation. A lost submit response is resolved by reading the same card, without another source request.
 
 When a Host replays a historical card without its private input permission, the
-View reads `sayurintent://cards/{cardId}` to restore the same card's current saved
+View reads `suimcp://cards/{cardId}` to restore the same card's current saved
 facts. The creating snapshot alone is not current state. This path creates no
 permission and offers no input, wallet or transaction actions. It does not
 recover private receipt details or pairing data that the Host did not supply.
@@ -423,7 +423,7 @@ This tool does not silently choose USDC, USDT, or any settlement token for the u
 
 Gas reserve remains outside the current evidence boundary. `gas_reserve_not_evaluated` is an explicit non-evaluation marker, not gas readiness or a policy result.
 
-Review activity tools read only local Say Ur Intent review evidence.
+Review activity tools read only local Sui MCP review evidence.
 
 They are not complete wallet transaction history, gas history, P&L, or external wallet activity.
 
@@ -499,7 +499,7 @@ Coverage and pagination boundaries:
 - Checkpoint bounds are inclusive user bounds translated to the pinned GraphQL API's exclusive checkpoint filters.
 - Timestamp bounds are page filters and coverage signals, not GraphQL provider filters.
 - Continue with `continuationCursor` until `windowComplete` proves coverage or the provider cannot continue.
-- Provider retention and rate-limit behavior are endpoint/operator properties, not Say Ur Intent guarantees.
+- Provider retention and rate-limit behavior are endpoint/operator properties, not Sui MCP guarantees.
 - Empty pages, bounded pages, and stored local summaries are not complete wallet or dApp history.
 
 Local persistence boundaries:
@@ -1216,7 +1216,7 @@ facts actually exist.
 | Tool | Status | Purpose |
 | --- | --- | --- |
 | `settings.create_local_settings_session` | Implemented | Creates a same-machine local settings page session. |
-| `settings.get_local_settings` | Implemented | Reads local Say Ur Intent settings, including effective Sui gRPC and GraphQL endpoint sources. |
+| `settings.get_local_settings` | Implemented | Reads local Sui MCP settings, including effective Sui gRPC and GraphQL endpoint sources. |
 
 Settings MCP tools are session-gateway/read tools, not direct mutators.
 
@@ -1237,15 +1237,22 @@ Custom providers can affect read data quality, so use trusted mainnet providers.
 
 ## Resources
 
+Sui MCP serves the URI prefixes `suimcp://` and `ui://sui-mcp/`.
+The
+`sui-mcp/card`, `sui-mcp/receipt-display` and
+`sui-mcp/wallet-display` metadata keys bind stored cards to their
+permissions and display facts. Clients must use the returned URI/key values.
+
+
 | URI | Purpose |
 | --- | --- |
-| `sayurintent://docs/readme` | Public entry document: product purpose, current release boundary, setup path, and documentation map. |
-| `sayurintent://docs/mcp-setup` | Setup guide: installation, MCP client connection, first-use flow, settings, and troubleshooting. |
-| `sayurintent://docs/mcp-tools` | API reference: tool contracts, response fields, statuses, follow-up fields, and output boundaries. |
-| `sayurintent://docs/wallet-connection` | Wallet connection reference: active read context, private SDK ownership and user-approved transaction requests. |
-| `sayurintent://docs/agent-behavior` | Answer playbook: user-question flows, tool selection, and response wording boundaries. |
-| `sayurintent://protocols/deepbook-v3` | Protocol reference only; use MCP tool responses and `read.list_supported_protocols` for current support. |
-| `sayurintent://protocols/deepbook-margin` | Protocol reference only; no margin MCP read tools or signable actions are exposed in this release. |
+| `suimcp://docs/readme` | Public entry document: product purpose, current release boundary, setup path, and documentation map. |
+| `suimcp://docs/mcp-setup` | Setup guide: installation, MCP client connection, first-use flow, settings, and troubleshooting. |
+| `suimcp://docs/mcp-tools` | API reference: tool contracts, response fields, statuses, follow-up fields, and output boundaries. |
+| `suimcp://docs/wallet-connection` | Wallet connection reference: active read context, private SDK ownership and user-approved transaction requests. |
+| `suimcp://docs/agent-behavior` | Answer playbook: user-question flows, tool selection, and response wording boundaries. |
+| `suimcp://protocols/deepbook-v3` | Protocol reference only; use MCP tool responses and `read.list_supported_protocols` for current support. |
+| `suimcp://protocols/deepbook-margin` | Protocol reference only; no margin MCP read tools or signable actions are exposed in this release. |
 
 Only allowlisted mainnet protocol references are exposed as MCP resources.
 

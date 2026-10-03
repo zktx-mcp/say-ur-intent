@@ -127,7 +127,7 @@ Research sources:
 - DeeptradeProtocol/deeptrade-core README, examples, and docs.
 - DeepTrade web app.
 - Direct Sui mainnet object lookup. This was evidence collection only and is not
-  a Say Ur Intent runtime path.
+  a Sui MCP runtime path.
 
 Mainnet addresses recorded in the research snapshot:
 
@@ -217,7 +217,7 @@ Surfaces identified by the research snapshot:
 - CLMM DEX modules for contract, trade, pool, position, account, and math.
 - Swap result computation and swap transaction construction in protocol SDK
   material. This note does not make that transaction construction available in
-  Say Ur Intent.
+  Sui MCP.
 - Pool config and fee read, position and liquidity operations, vault and
   rewarder surfaces.
 

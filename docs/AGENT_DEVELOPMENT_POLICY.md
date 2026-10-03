@@ -109,7 +109,7 @@ Remove wording that is ambiguous, overly broad, contradictory, likely to make a
 reader overclaim product support, skip required verification, or optimize for
 size instead of quality.
 
-Write and review documents so a third-party reader with no Say Ur Intent
+Write and review documents so a third-party reader with no Sui MCP
 background can understand and use the content without guessing.
 
 Use ordinary industry terms when they exist. Do not introduce project-specific

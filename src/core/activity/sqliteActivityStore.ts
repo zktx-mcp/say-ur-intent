@@ -134,8 +134,8 @@ export { ActivityStoreError };
 export type { SqliteActivityStoreOptions };
 
 const ACTIVE_ACCOUNT_SINGLETON_ID = 1;
-export const DATA_DIR_ENV = "SAY_UR_INTENT_DATA_DIR";
-export const ACTIVITY_DATABASE_FILENAME = "say-ur-intent.sqlite";
+export const DATA_DIR_ENV = "SUI_MCP_DATA_DIR";
+export const ACTIVITY_DATABASE_FILENAME = "sui-mcp.sqlite";
 
 // Best-effort permission hardening. The owner-only data directory is the primary
 // protection; failures (e.g. on Windows, which ignores POSIX modes) are non-fatal.
@@ -1411,10 +1411,10 @@ export function assertSqliteEngineAvailable(): void {
 function defaultDataDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
   const home = homedir();
   if (platform === "darwin") {
-    return resolve(home, "Library", "Application Support", "say-ur-intent");
+    return resolve(home, "Library", "Application Support", "sui-mcp");
   }
   if (platform === "win32") {
-    return resolve(env.APPDATA ?? resolve(home, "AppData", "Roaming"), "say-ur-intent");
+    return resolve(env.APPDATA ?? resolve(home, "AppData", "Roaming"), "sui-mcp");
   }
-  return resolve(env.XDG_DATA_HOME ?? resolve(home, ".local", "share"), "say-ur-intent");
+  return resolve(env.XDG_DATA_HOME ?? resolve(home, ".local", "share"), "sui-mcp");
 }

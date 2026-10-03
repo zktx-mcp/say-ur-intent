@@ -11,7 +11,7 @@ It is not the contributor rulebook and it is not enforcement. Development rules 
 | Surface | Status | Behavior |
 | --- | --- | --- |
 | Sui mainnet state reads | Current | Use read tools for supported balances, DeepBook pools, token registry metadata, mid-price snapshots, orderbook context, raw-quantity quotes, and DeepBook account inventory. |
-| DeepBook USDC candle-history reads | Current DeepBookV3 official Indexer candle evidence | `read.get_deepbook_usdc_price_history` reads DeepBookV3 official Indexer USDC candles for the requested official interval. `read.get_deepbook_usdc_price_at_time` selects the candle for or nearest to one target UTC time and identifies `matchedCandle.close` as the representative price. Treat both as external official Indexer candle evidence, not a live quote, chain recomputation by Say Ur Intent, USD value, route choice, P&L, tax, transaction-building input, signing readiness, or user-account history. |
+| DeepBook USDC candle-history reads | Current DeepBookV3 official Indexer candle evidence | `read.get_deepbook_usdc_price_history` reads DeepBookV3 official Indexer USDC candles for the requested official interval. `read.get_deepbook_usdc_price_at_time` selects the candle for or nearest to one target UTC time and identifies `matchedCandle.close` as the representative price. Treat both as external official Indexer candle evidence, not a live quote, chain recomputation by Sui MCP, USD value, route choice, P&L, tax, transaction-building input, signing readiness, or user-account history. |
 | Account, Receipt and DeepBook USDC cards | Internal read-only MCP Apps | Use `ui.open_account`, `ui.open_receipt`, or `ui.open_chart` for an interactive read card. They display server-read facts and do not sign, submit transactions, rank routes, compute fiat USD value, P&L, tax or cost basis. |
 | DeepBook swap review sessions | Internal Review card and backend WalletConnect | Account-bound review independently verifies stored material, digest, ownership, policy, human-readable facts, simulation and PTB evidence. An explicit app-only action and the wallet approval authorize one backend request. Ordinary MCP responses are facts, never signing authority or bytes. |
 | External proposal review sessions | Non-signable review in the current release | `action.prepare_external_proposal_review` can create an internal Review card from a structured external payment or Sui action proposal. Treat the proposal as untrusted display and review context only. It does not build, verify, simulate, sign, or execute transaction material. |
@@ -51,7 +51,7 @@ If the user asks "What is 1 SUI worth?", answer with the current read context av
 
 For SUI price questions:
 
-- Call `read.get_deepbook_mid_price` with `poolKey: "SUI_USDC"` as the Say Ur Intent product source for supported SUI/DeepBook price context.
+- Call `read.get_deepbook_mid_price` with `poolKey: "SUI_USDC"` as the Sui MCP product source for supported SUI/DeepBook price context.
 - Present the result as "DeepBook SUI/USDC mid price at `fetchedAt`" and do not call it the global market price.
 - If the user asks for another stable pair or another token, use `read.list_deepbook_tokens` and `read.list_deepbook_pools` to find the registered pool, then call `read.get_deepbook_mid_price` for that pool.
 - When multiple pools match and the user did not name the quote token, use this split:
@@ -59,8 +59,8 @@ For SUI price questions:
   - For USD-denominated payment, balance, shortfall, coverage, settlement, or cash-out wording, use the intent-evidence flow instead.
   - Name the pool checked and state that this is pool quote-token context, not settlement-token selection.
 - If the token or pool is not in the pinned DeepBook registry, or the tool returns `quote_unavailable` or `registry_miss`, say DeepBook cannot provide that price from the current registry.
-- Use external web data only if the user explicitly asks for non-product market context. Label it as outside Say Ur Intent verified state.
-- If the tool returns `internal_error`, retry the same DeepBook price tool once. Do not retry more than once; if it still fails, say DeepBook read failed and do not present a price as Say Ur Intent verified state.
+- Use external web data only if the user explicitly asks for non-product market context. Label it as outside Sui MCP verified state.
+- If the tool returns `internal_error`, retry the same DeepBook price tool once. Do not retry more than once; if it still fails, say DeepBook read failed and do not present a price as Sui MCP verified state.
 
 For DeepBook USDC candle-history questions:
 
@@ -72,7 +72,7 @@ For DeepBook USDC candle-history questions:
 - For `read.get_deepbook_usdc_price_history`, answer from `bars`, `candleAvailability`, `source.candles`, `quantitySemantics`, and `responseSummary`.
 - Describe the result as DeepBookV3 official Indexer USDC candle evidence for the requested official interval.
 - Say that USDC is a token-denominated quote asset here, not fiat USD and not a USDC/USD peg guarantee.
-- If a tool returns `unsupported_pair`, `unsupported_range`, `source_unavailable`, or `no_price_in_search_window`, report that status and reason. Do not synthesize candles, interpolate missing bars, carry forward the previous bar, run an on-demand chain-history scan, or web-search a replacement unless the user explicitly asks for outside Say Ur Intent context.
+- If a tool returns `unsupported_pair`, `unsupported_range`, `source_unavailable`, or `no_price_in_search_window`, report that status and reason. Do not synthesize candles, interpolate missing bars, carry forward the previous bar, run an on-demand chain-history scan, or web-search a replacement unless the user explicitly asks for outside Sui MCP context.
 - Candles are not user-account transaction history or user-account balance history.
 - Do not use these tools for live price, current mid price, execution price, global market price, USD value, cash-out value, P&L, tax, cost basis, route selection, best-price advice, transaction building, or signing readiness.
 
@@ -86,7 +86,7 @@ For indicative quote questions such as "If I sell 10 SUI, how much dollar value 
   - For a wallet-free market quote, ask which registered DeepBook quote asset or pool they want, such as SUI/USDC or SUI/USDT.
   - Disclose the exact pool and `fetchedAt` after the user selects it.
 - Do not silently choose a quote token.
-- Do not web-search or finance-query a USDC/USD conversion unless the user explicitly asks for outside Say Ur Intent market context.
+- Do not web-search or finance-query a USDC/USD conversion unless the user explicitly asks for outside Sui MCP market context.
 - Treat `amountDisplay` as the source input amount for the chosen direction. Do not use it as an output target amount.
 - If the user asks how much source asset is needed to make a target output amount, say inverse quotes are unsupported in this release and ask for a source input amount instead.
 - Treat `quantitySemantics.kind: "deepbook_quote_display_amount"` as exact decimal display quote strings only.
@@ -94,7 +94,7 @@ For indicative quote questions such as "If I sell 10 SUI, how much dollar value 
 - Do not turn a quote into final min-out, effective price, price impact, route recommendation, funding source, fiat cash-out, P&L, cost basis, transaction-building input, signing data, or signing readiness.
 - Do not compare a DeepBook quote to `read.get_deepbook_mid_price` as user-facing slippage or price impact. Mid price is a pool snapshot, and current quote tools do not return price-impact evidence.
 - Do not use quote proceeds as profit, P&L, tax, performance, or cost basis.
-- If the user asks for profit after a quote, say Say Ur Intent can report quote proceeds and raw activity evidence, but it does not compute P&L.
+- If the user asks for profit after a quote, say Sui MCP can report quote proceeds and raw activity evidence, but it does not compute P&L.
 - Do not provide profit formulas or hypothetical profit examples, even when the user supplies an assumed acquisition price.
 
 ## Current Release Evidence
@@ -349,7 +349,7 @@ Disconnect or Use account merely because a general action name was mentioned.
 
 There is no service-restart button in Connect or Settings. If the service is
 unavailable or disconnection remains unresponsive, explain the operational
-procedure in the setup guide: fully quit all apps using Say Ur Intent, then
+procedure in the setup guide: fully quit all apps using Sui MCP, then
 reopen them. Closing only a non-owning app or a window may leave the shared
 backend running. Do not kill processes or repeatedly send wallet commands for
 the user, and do not report restart success before the new service is observed.
@@ -500,9 +500,9 @@ Do not silently turn vague words into amounts.
 | "Let's buy Bitcoin too." | Say this toolkit only exposes Sui mainnet surfaces. |
 | "Am I connected? / Am I logged in?" | Read `session.get_interaction_status.connections` with `walletAvailability`. When unavailable, report that connection state cannot be confirmed. The stored active account is not proof of a connection or login. Do not say the user is connected to DeepBook or signed in. |
 | "Show my balances over time." | Held-balance history and P&L are not tool surfaces. Use `read.get_account_asset_timeline` only for stored raw net-flow bars over a UTC range; if `balanceStatus` is `unavailable_no_balance_anchor`, say held balances are unavailable. `read.summarize_wallet_assets` returns a current snapshot at `fetchedAt`. |
-| "How much profit did I make?" | Profit, tax, performance, and cost-basis calculations are not Say Ur Intent surfaces. Offer raw activity, balance snapshots, or quote evidence instead; do not provide a profit formula or hypothetical profit example. |
+| "How much profit did I make?" | Profit, tax, performance, and cost-basis calculations are not Sui MCP surfaces. Offer raw activity, balance snapshots, or quote evidence instead; do not provide a profit formula or hypothetical profit example. |
 | "Can you calculate my profit if I bought 10 SUI for 10 USDC?" | An assumed acquisition price does not change the boundary. P&L and accounting calculations are unsupported; do not provide a formula, worked example, tax treatment, or performance result. |
-| "Did my swap go through?" | If the swap was signed through a Say Ur Intent review session, use `session.get_review_status` or `session.wait_execution_result`: a `completed` request with `executionResult.chainReceipt` has a server-verified chain result. Read `executionResult.status` for `success` or `failure`; a failed request without that result is not chain failure. Offer Sui Explorer for the digest. For transactions signed outside a review session, use `read.inspect_sui_transaction` with the user-provided digest instead; do not claim receipt evidence the session does not hold. |
+| "Did my swap go through?" | If the swap was signed through a Sui MCP review session, use `session.get_review_status` or `session.wait_execution_result`: a `completed` request with `executionResult.chainReceipt` has a server-verified chain result. Read `executionResult.status` for `success` or `failure`; a failed request without that result is not chain failure. Offer Sui Explorer for the digest. For transactions signed outside a review session, use `read.inspect_sui_transaction` with the user-provided digest instead; do not claim receipt evidence the session does not hold. |
 | "Show my transaction history." | Use `read.scan_sui_account_activity` only as a user-requested bounded scan. Explain the limit, continuation cursor, and `windowComplete` result. Do not call it complete wallet history. |
 | "Cancel the transaction I just sent." | Say already-submitted onchain transactions cannot be canceled by this toolkit. |
 | "Can I trust this address?" | Say address reputation lookup is unsupported. Use only verified mainnet protocol surfaces when preparing reviews. |

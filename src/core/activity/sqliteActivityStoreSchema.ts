@@ -336,7 +336,7 @@ export function assertCurrentDatabaseFormat(db: SqliteDatabase): "empty" | "curr
   if (version === 0 && signature === "[]") return "empty";
   if (version === DB_USER_VERSION && signature === expectedSchemaSignature()) return "current";
   throw new ActivityStoreError(
-    "Local database format does not match this runtime. Use a new empty SAY_UR_INTENT_DATA_DIR; existing data is not converted or deleted."
+    "Local database format does not match this runtime. Use a new empty SUI_MCP_DATA_DIR; existing data is not converted or deleted."
   );
 }
 

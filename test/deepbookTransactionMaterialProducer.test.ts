@@ -258,7 +258,7 @@ describe("DeepBook transaction material producer", () => {
         planId: "plan_1",
         account,
         kind: "deepbook_swap_transaction_data",
-        source: "say_ur_intent_built",
+        source: "sui_mcp_built",
         transactionBytes: new Uint8Array([1, 2, 3]),
         expiresAt: new Date("2026-05-15T00:00:30.000Z")
       },

@@ -373,7 +373,7 @@ function deepbookUsdcPriceHistorySource(input: {
       endTimeMs: input.candleSource.endTimeMs ?? 0,
       limit: input.candleSource.limit ?? MAX_DEEPBOOK_USDC_PRICE_HISTORY_BARS
     },
-    chainRecomputedBySayUrIntent: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent
+    chainRecomputedBySuiMcp: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp
   };
 }
 
@@ -1123,7 +1123,7 @@ export class SuiReadService {
             url: poolResult.source.url,
             fetchedAt: poolResult.source.fetchedAt
           },
-          chainRecomputedBySayUrIntent: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent
+          chainRecomputedBySuiMcp: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp
         }
       };
     }

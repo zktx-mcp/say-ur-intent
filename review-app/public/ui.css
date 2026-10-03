@@ -1,4 +1,4 @@
-/* Shared design tokens and atomic components for every Say Ur Intent page.
+/* Shared design tokens and atomic components for every Sui MCP page.
    This file is the only place that declares `.ui-*` rules and the only place that
    styles the bare interactive elements button/input/select/textarea. Pages keep
    only their own layout, containers, third-party sizing, and compositions.

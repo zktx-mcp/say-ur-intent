@@ -2205,7 +2205,7 @@ describe("SuiReadService", () => {
           poolName: "SUI_USDC",
           interval: "15m"
         },
-        chainRecomputedBySayUrIntent: false
+        chainRecomputedBySuiMcp: false
       },
       responseSummary: {
         sourceStatement: DEEPBOOK_OFFICIAL_INDEXER_RESPONSE_TEXT.sourceStatement,
@@ -2216,7 +2216,7 @@ describe("SuiReadService", () => {
         quoteAsset: "USDC",
         usdcIsFiatUsd: false,
         usdPegGuaranteeAvailable: false,
-        chainRecomputedBySayUrIntent: false,
+        chainRecomputedBySuiMcp: false,
         routeRecommendationAvailable: false,
         signingReadinessAvailable: false
       },
@@ -2366,7 +2366,7 @@ describe("SuiReadService", () => {
       quantitySemantics: {
         allowedUse: DEEPBOOK_ANSWER_USE.officialUsdcCandleHistory,
         usdcIsFiatUsd: false,
-        chainRecomputedBySayUrIntent: false
+        chainRecomputedBySuiMcp: false
       }
     });
   });

@@ -1,6 +1,6 @@
 # Local DB Architecture
 
-Say Ur Intent uses a local SQLite database for durable product state that must survive MCP server restarts. The database stores account read context, Say Ur Intent review activity evidence, live review and session state shared across local AI clients, and user-requested bounded Sui activity facts. It is not a custody store, background indexer, complete wallet-history store, or raw transaction archive. Private per-request authority records enforce one admitted transaction; they do not grant standing wallet approval or hold the user's signing key.
+Sui MCP uses a local SQLite database for durable product state that must survive MCP server restarts. The database stores account read context, Sui MCP review activity evidence, live review and session state shared across local AI clients, and user-requested bounded Sui activity facts. It is not a custody store, background indexer, complete wallet-history store, or raw transaction archive. Private per-request authority records enforce one admitted transaction; they do not grant standing wallet approval or hold the user's signing key.
 
 This document is for maintainers and contributors who change local state, import/export behavior, activity queries, or review evidence storage. Product users normally need only the README and `docs/MCP_SETUP.md`.
 
@@ -19,12 +19,12 @@ Stdout is reserved for MCP JSON-RPC messages. Logs go to stderr.
 
 ## Local Data
 
-The runtime creates a local SQLite file for account read context and Say Ur Intent review activity evidence. Users do not install a database server separately.
+The runtime creates a local SQLite file for account read context and Sui MCP review activity evidence. Users do not install a database server separately.
 
 Override the app data directory only when needed:
 
 ```bash
-export SAY_UR_INTENT_DATA_DIR="/path/to/local/app-data"
+export SUI_MCP_DATA_DIR="/path/to/local/app-data"
 ```
 
 The stored active account is for reading wallet state only. It does not let the toolkit sign transactions on your behalf.
@@ -33,7 +33,7 @@ User-requested bounded transaction scans can store normalized facts only when a 
 
 The default Sui mainnet gRPC and GraphQL endpoints are stored in the local SQLite settings table on first run.
 
-To inspect settings or change local data, ask your AI client to create a Say Ur Intent local settings session and open the returned settings URL in the same machine's system browser.
+To inspect settings or change local data, ask your AI client to create a Sui MCP local settings session and open the returned settings URL in the same machine's system browser.
 
 Endpoint changes apply after the MCP server restarts.
 
@@ -47,12 +47,21 @@ The package targets Node.js `>=22`. Node 22 or 24 LTS is recommended.
 
 ## File Location
 
-On first start, the runtime creates a SQLite file named `say-ur-intent.sqlite` under the operating system's app data directory for Say Ur Intent.
+The default data directory name is `sui-mcp` on each supported operating
+system. Sui MCP uses the `SUI_MCP_DATA_DIR` override and the
+`sui-mcp.local-data` backup format identifier. Material source enum values
+`sui_mcp_built` and `sui_mcp_verified` identify backend-built or
+backend-verified material. Only the current `sui-mcp.local-data` backup format is accepted. This installation
+uses its own data directory and does not discover or convert another package's
+data. A new installation starts with empty state.
+
+
+On first start, the runtime creates a SQLite file named `sui-mcp.sqlite` under the operating system's app data directory for Sui MCP.
 
 The optional override is:
 
 ```bash
-export SAY_UR_INTENT_DATA_DIR="/path/to/local/app-data"
+export SUI_MCP_DATA_DIR="/path/to/local/app-data"
 ```
 
 Product docs, MCP responses, and tool outputs must not reveal a user's absolute database path. Use placeholders in documentation.
@@ -69,9 +78,9 @@ PRAGMA foreign_keys=ON;
 
 Writes use SQLite's normal file-backed engine. An empty file is initialized to the current schema. An existing file is checked read-only before opening for writes: its format identifier and schema metadata must match the current definitions. The runtime does not migrate, repair or silently reset another format.
 
-Use an empty `SAY_UR_INTENT_DATA_DIR` for a new installation. Existing files remain untouched. Product reset is a separate confirmed Settings action.
+Use an empty `SUI_MCP_DATA_DIR` for a new installation. Existing files remain untouched. Product reset is a separate confirmed Settings action.
 
-WAL mode can create companion files next to the main database, such as `say-ur-intent.sqlite-wal` and `say-ur-intent.sqlite-shm`. Backups and manual moves should keep those files together with the main database while the MCP server is stopped. Avoid placing `SAY_UR_INTENT_DATA_DIR` in cloud-synchronized folders such as iCloud Drive, Dropbox, or similar sync roots because WAL companion files can be copied out of order.
+WAL mode can create companion files next to the main database, such as `sui-mcp.sqlite-wal` and `sui-mcp.sqlite-shm`. Backups and manual moves should keep those files together with the main database while the MCP server is stopped. Avoid placing `SUI_MCP_DATA_DIR` in cloud-synchronized folders such as iCloud Drive, Dropbox, or similar sync roots because WAL companion files can be copied out of order.
 
 ## Tables
 
@@ -129,7 +138,7 @@ Non-terminal review session expiry is recorded lazily when the session is read o
 
 ## Shared local server
 
-Exactly one parent runtime owner per data directory binds the configured loopback port and creates the shared product services and SQLite stores. Other clients authenticate the listener before sending control credentials and forward MCP messages to it. The authentication covers database identity, internal API version 6, configuration (including WalletConnect project configuration) and server instance. Proof and subsequent dispatch use the same TCP connection. Host/Origin validation is separate from authentication; neither protects against a malicious process running as the same OS user.
+Exactly one parent runtime owner per data directory binds the configured loopback port and creates the shared product services and SQLite stores. Other clients authenticate the listener before sending control credentials and forward MCP messages to it. The authentication covers database identity, internal API version 7, configuration (including WalletConnect project configuration) and server instance. Proof and subsequent dispatch use the same TCP connection. Host/Origin validation is separate from authentication; neither protects against a malicious process running as the same OS user.
 
 The private `runtime-control.key` file is separate from UI permissions and wallet credentials and is excluded from product backups. Stdio closure and process signals close the owned server. No client signals a peer backend. The parent may terminate only its own SDK child. A peer can acquire the port after it becomes free. Failed calls are not replayed automatically. MCP framing, cancellation and EOF handling start before backend acquisition; wallet SDK readiness does not block parent service startup.
 

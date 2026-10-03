@@ -37,7 +37,7 @@ ${options.body}
 
 export function settingsHtml(sessionId: string): string {
   return pageDocument({
-    title: "Say Ur Intent Settings",
+    title: "Sui MCP Settings",
     css: "settings.css",
     js: "settings.js",
     ui: true,

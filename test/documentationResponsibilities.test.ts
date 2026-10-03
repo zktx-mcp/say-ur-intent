@@ -42,31 +42,31 @@ describe("documentation responsibility boundaries", () => {
   it("keeps runtime resource metadata aligned with README documentation map wording", () => {
     expect(MCP_RESOURCES.map((resource) => [resource.uri, resource.description])).toEqual([
       [
-        "sayurintent://docs/readme",
+        "suimcp://docs/readme",
         "Public entry document: product purpose, current release boundary, setup path, and documentation map."
       ],
       [
-        "sayurintent://docs/mcp-setup",
+        "suimcp://docs/mcp-setup",
         "Setup guide: installation, MCP client connection, first-use flow, settings, and troubleshooting."
       ],
       [
-        "sayurintent://docs/mcp-tools",
+        "suimcp://docs/mcp-tools",
         "API reference: tool contracts, response fields, statuses, follow-up fields, and output boundaries."
       ],
       [
-        "sayurintent://docs/wallet-connection",
+        "suimcp://docs/wallet-connection",
         "Wallet connection reference: active read context, private SDK ownership and user-approved transaction requests."
       ],
       [
-        "sayurintent://docs/agent-behavior",
+        "suimcp://docs/agent-behavior",
         "Answer playbook: user-question flows, tool selection, and response wording boundaries."
       ],
       [
-        "sayurintent://protocols/deepbook-v3",
+        "suimcp://protocols/deepbook-v3",
         "Protocol reference only; use MCP tool responses and read.list_supported_protocols for current support."
       ],
       [
-        "sayurintent://protocols/deepbook-margin",
+        "suimcp://protocols/deepbook-margin",
         "Protocol reference only; no margin MCP read tools or signable actions are exposed in this release."
       ]
     ]);
@@ -191,7 +191,7 @@ describe("documentation responsibility boundaries", () => {
     }
 
     expect(mcpTools).toMatch(/Protocol resources are not runtime registries, supported-protocol lists, live liquidity sources, route recommendations, or signing-readiness signals/);
-    for (const resource of MCP_RESOURCES.filter((resource) => resource.uri.startsWith("sayurintent://protocols/"))) {
+    for (const resource of MCP_RESOURCES.filter((resource) => resource.uri.startsWith("suimcp://protocols/"))) {
       expect(resource.description).toMatch(/Protocol reference only/);
       expect(resource.description).not.toMatch(/support notes/i);
     }

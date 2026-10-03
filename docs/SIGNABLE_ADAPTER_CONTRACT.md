@@ -67,8 +67,8 @@ The signable bytes must have exactly one origin and one handoff path, so an
 adapter cannot display a commitment while signing different bytes through a side
 channel:
 
-- Origin: the bytes are produced only inside Say Ur Intent's review layer (the
-  signable adapter), from material Say Ur Intent independently built or verified.
+- Origin: the bytes are produced only inside Sui MCP's review layer (the
+  signable adapter), from material Sui MCP independently built or verified.
   They are never accepted from an external MCP or AI-client proposal.
 - Storage: the bytes live only in the local review-server session keyed by
   `reviewSessionId`. They never appear in an MCP tool response or in the
@@ -117,7 +117,7 @@ signing authority. Internal preparation is distinct from final user admission.
 ## Adapter Contract
 
 A wallet-review adapter that returns this contract must regenerate or
-independently verify action material inside Say Ur Intent before any wallet
+independently verify action material inside Sui MCP before any wallet
 handoff exists. External MCP or AI-client proposals remain untrusted structured
 input and cannot become transaction-building authority.
 

@@ -4,7 +4,7 @@ This file is a protocol reference for AI and human readers. It is not a runtime 
 
 Current product support is declared by `read.get_server_status`, `read.list_supported_protocols`, concrete MCP tool schemas, and concrete MCP tool responses. This note only explains DeepBookV3 protocol concepts that those runtime surfaces may reference.
 
-DeepBookV3 is the first protocol domain for Say Ur Intent.
+DeepBookV3 is the first protocol domain for Sui MCP.
 
 Protocol concepts referenced by current runtime evidence include:
 

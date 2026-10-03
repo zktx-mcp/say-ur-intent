@@ -47,7 +47,7 @@ async function material(mode: "objects" | "address" | "mixed" | "address_input_o
   const bytes = await tx.build({ client });
   const store = new InMemoryLocalTransactionMaterialStore();
   const handle = store.recordTransactionMaterial({ reviewSessionId: "funding-review", planId: "funding-plan", account,
-    kind: "deepbook_swap_transaction_data", source: "say_ur_intent_built", transactionBytes: bytes,
+    kind: "deepbook_swap_transaction_data", source: "sui_mcp_built", transactionBytes: bytes,
     expiresAt: new Date(now.getTime() + 30000) }, now);
   const result = await createDeepbookSwapTransactionMaterialDigestProducer({ materialStore: store })({ materialHandle: handle, now });
   if (result.status !== "completed") throw new Error("Material digest missing");

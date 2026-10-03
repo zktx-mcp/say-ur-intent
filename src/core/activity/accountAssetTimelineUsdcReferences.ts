@@ -36,7 +36,7 @@ export type AccountAssetTimelineUsdcReferenceSummary = {
   usdcIsFiatUsd: typeof DEEPBOOK_OFFICIAL_INDEXER_USDC_REFERENCE.usdcIsFiatUsd;
   usdPegGuaranteeAvailable: typeof DEEPBOOK_OFFICIAL_INDEXER_USDC_REFERENCE.usdPegGuaranteeAvailable;
   source: typeof DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.kind;
-  chainRecomputedBySayUrIntent: typeof DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent;
+  chainRecomputedBySuiMcp: typeof DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp;
   quantitySemantics: ReturnType<typeof deepbookUsdcPriceHistoryQuantitySemantics>;
   responseSummary: ReturnType<typeof deepbookUsdcPriceHistoryResponseSummary>;
   unsupportedClaims: typeof DEEPBOOK_USDC_PRICE_HISTORY_UNSUPPORTED_CLAIMS[number][];
@@ -124,7 +124,7 @@ function emptyReferenceSummary(): AccountAssetTimelineUsdcReferenceSummary {
     status: "unavailable",
     ...DEEPBOOK_OFFICIAL_INDEXER_USDC_REFERENCE,
     source: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.kind,
-    chainRecomputedBySayUrIntent: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySayUrIntent,
+    chainRecomputedBySuiMcp: DEEPBOOK_OFFICIAL_INDEXER_SOURCE_BASE.chainRecomputedBySuiMcp,
     quantitySemantics: deepbookUsdcPriceHistoryQuantitySemantics(),
     responseSummary: deepbookUsdcPriceHistoryResponseSummary(),
     unsupportedClaims: [...DEEPBOOK_USDC_PRICE_HISTORY_UNSUPPORTED_CLAIMS],

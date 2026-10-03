@@ -289,7 +289,7 @@ export function createDeepbookSwapTransactionMaterialProducer(
           planId: input.plan.id,
           account: input.account,
           kind: "deepbook_swap_transaction_data",
-          source: "say_ur_intent_built",
+          source: "sui_mcp_built",
           transactionBytes,
           expiresAt: quoteExpiresAt,
           redactedDiagnostics: {
@@ -315,7 +315,7 @@ export function createDeepbookSwapTransactionMaterialProducer(
           passReviewCheck(
             "deepbook_transaction_material_built",
             "Transaction material build",
-            "Built account-bound DeepBook swap transaction material from Say Ur Intent quote policy and stored the unsigned transaction bytes only in the local material store until quote expiry. This is not wallet handoff, signing data, signing readiness, or execution readiness.",
+            "Built account-bound DeepBook swap transaction material from Sui MCP quote policy and stored the unsigned transaction bytes only in the local material store until quote expiry. This is not wallet handoff, signing data, signing readiness, or execution readiness.",
             "adapter"
           )
         ]

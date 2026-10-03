@@ -12,7 +12,7 @@ and compare the result with the pinned SDK/source path used by this repository.
 
 ## Product Boundary
 
-The relevant Say Ur Intent problem is explaining DeepTrade or DeepBook-based
+The relevant Sui MCP problem is explaining DeepTrade or DeepBook-based
 actions before authorization. DeepTrade Core appears to add fee, reserve,
 loyalty, governance, and UI-adjacent surfaces on top of DeepBook. This note does
 not add DeepTrade execution, custody, signing, quotes, route selection, or
@@ -33,7 +33,7 @@ fees, and account-bound effects from live data.
   fee, loyalty, oracle pricing security, versioning, and admin docs.
 - DeepTrade web app surfaces: Trade, Earn, Migration, and Create Pool.
 - Direct Sui mainnet object lookup. This was evidence collection only and is not
-  a Say Ur Intent runtime path.
+  a Sui MCP runtime path.
 
 ## Summary
 
@@ -311,7 +311,7 @@ Observed app menus:
 
 Earn material included smart-contract risk, bad-debt scenarios, withdrawal delay
 when unborrowed liquidity is insufficient, and overheated pool waiting states.
-Say Ur Intent must not guarantee APR or withdrawability from these static notes.
+Sui MCP must not guarantee APR or withdrawability from these static notes.
 Those values require live margin pool state.
 
 ## Integration Checklist

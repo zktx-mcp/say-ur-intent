@@ -4,18 +4,18 @@ import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import type { IncomingMessage } from "node:http";
 
-// Version 6 binds read selection to its connection and publishes that selection
-// for the View. An older owner must not serve its previous eligibility contract.
-export const INTERNAL_API_VERSION = 6;
+// Version 7 uses the Sui MCP resource, metadata and response-field identities.
+// Clients must not attach to an owner that serves the previous package contract.
+export const INTERNAL_API_VERSION = 7;
 export const IDENTITY_PATH = "/__runtime/identity";
 export const INTERNAL_MCP_PATH = "/__runtime/mcp";
-export const IDENTITY_CHALLENGE_HEADER = "x-say-identity-challenge";
-export const SERVER_INSTANCE_HEADER = "x-say-server-instance";
+export const IDENTITY_CHALLENGE_HEADER = "x-sui-mcp-identity-challenge";
+export const SERVER_INSTANCE_HEADER = "x-sui-mcp-server-instance";
 // The existing review-server identity probe allows one second for a local response.
 export const IDENTITY_TIMEOUT_MS = 1000;
 const secretSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const serverIdentitySchema = z.object({
-  service: z.literal("say-ur-intent"),
+  service: z.literal("sui-mcp"),
   role: z.literal("shared-server"),
   apiVersion: z.literal(INTERNAL_API_VERSION),
   databaseId: z.string().regex(/^[0-9a-f]{64}$/),
@@ -58,7 +58,7 @@ function identityPayload(identity: Omit<ServerIdentity, "proof">): string {
 }
 export function createServerIdentity(control: ControlIdentity, instanceId: string, challenge: string): ServerIdentity {
   secretSchema.parse(challenge);
-  const identity = { service: "say-ur-intent", role: "shared-server", apiVersion: INTERNAL_API_VERSION,
+  const identity = { service: "sui-mcp", role: "shared-server", apiVersion: INTERNAL_API_VERSION,
     databaseId: control.databaseId, configurationId: control.configurationId,
     instanceId, pid: process.pid, challenge } as const;
   return { ...identity, proof: createHmac("sha256", control.key).update(identityPayload(identity)).digest("base64url") };

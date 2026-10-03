@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   publish-npm:
-    name: Publish @zktx.io/say-ur-intent
+    name: Publish @zktx.io/sui-mcp
     runs-on: ubuntu-latest
     timeout-minutes: 20
 

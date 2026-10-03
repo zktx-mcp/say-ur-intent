@@ -436,7 +436,7 @@ describe("MCP discoverability", () => {
       expect(client.getInstructions()).toContain("toolAvailability.requiredToolsAvailable");
       expect(client.getInstructions()).toContain("userAnswerUse.answerFields");
       expect(client.getInstructions()).toContain("active account context");
-      expect(client.getInstructions()).toContain("sayurintent://docs/agent-behavior");
+      expect(client.getInstructions()).toContain("suimcp://docs/agent-behavior");
     } finally {
       await server.close();
     }
@@ -461,18 +461,18 @@ describe("MCP discoverability", () => {
       const uris = result.resources.map((resource) => resource.uri).sort();
 
       expect(uris).toEqual([
-        "sayurintent://docs/agent-behavior",
-        "sayurintent://docs/mcp-setup",
-        "sayurintent://docs/mcp-tools",
-        "sayurintent://docs/readme",
-        "sayurintent://docs/wallet-connection",
-        "sayurintent://protocols/deepbook-margin",
-        "sayurintent://protocols/deepbook-v3",
-        "ui://say-ur-intent/account.html",
-        "ui://say-ur-intent/chart.html",
-        "ui://say-ur-intent/connect.html",
-        "ui://say-ur-intent/receipt.html",
-        "ui://say-ur-intent/review.html"
+        "suimcp://docs/agent-behavior",
+        "suimcp://docs/mcp-setup",
+        "suimcp://docs/mcp-tools",
+        "suimcp://docs/readme",
+        "suimcp://docs/wallet-connection",
+        "suimcp://protocols/deepbook-margin",
+        "suimcp://protocols/deepbook-v3",
+        "ui://sui-mcp/account.html",
+        "ui://sui-mcp/chart.html",
+        "ui://sui-mcp/connect.html",
+        "ui://sui-mcp/receipt.html",
+        "ui://sui-mcp/review.html"
       ]);
 
       for (const expectedResource of MCP_RESOURCES) {
@@ -1625,7 +1625,7 @@ describe("MCP discoverability", () => {
               poolName: "SUI_USDC",
               interval: "15m"
             },
-            chainRecomputedBySayUrIntent: false
+            chainRecomputedBySuiMcp: false
           },
           userAnswerUse: {
             canAnswer: expect.arrayContaining([DEEPBOOK_ANSWER_USE.officialUsdcCandleHistory]),
@@ -1644,7 +1644,7 @@ describe("MCP discoverability", () => {
             priceConvention: "USDC_PER_BASE",
             usdcIsFiatUsd: false,
             usdPegGuaranteeAvailable: false,
-            chainRecomputedBySayUrIntent: false,
+            chainRecomputedBySuiMcp: false,
             liveQuoteAvailable: false,
             historicalMidPriceAvailable: false,
             routeRecommendationAvailable: false,
@@ -1735,7 +1735,7 @@ describe("MCP discoverability", () => {
           quantitySemantics: {
             kind: "deepbook_official_indexer_candles",
             usdcIsFiatUsd: false,
-            chainRecomputedBySayUrIntent: false,
+            chainRecomputedBySuiMcp: false,
             liveQuoteAvailable: false,
             globalMarketPriceAvailable: false
           },
@@ -2830,7 +2830,7 @@ describe("MCP discoverability", () => {
             quoteAsset: "USDC",
             usdcIsFiatUsd: false,
             usdPegGuaranteeAvailable: false,
-            chainRecomputedBySayUrIntent: false,
+            chainRecomputedBySuiMcp: false,
             coinReferences: [
               expect.objectContaining({
                 coinType: "0x2::sui::SUI",
