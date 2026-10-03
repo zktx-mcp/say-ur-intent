@@ -6,7 +6,7 @@ It does not define tool field contracts or response wording. Use `docs/MCP_TOOLS
 
 The README keeps only the short entry path; client-specific setup, restart behavior, and troubleshooting live here.
 
-These instructions target `@zktx.io/sui-mcp@0.5.1`. Package installation requires
+These instructions target `@zktx.io/sui-mcp@0.5.2`. Package installation requires
 that exact version to be published; use the developer checkout instructions when
 it is not available. A repository rename or local build does not publish the
 package. Changing client settings or rebuilding files does not replace an
@@ -50,6 +50,10 @@ This placeholder is only the sender value required by DeepBook SDK simulation re
 Reads that require a connected default account use `session.create_wallet_connection`. Tools with an `account` input also accept an explicit Sui address without a wallet connection.
 
 ## Developer Checkout Setup
+
+Use Node.js 22.12 or newer within 22.x, or Node.js 24 or newer, for source builds
+and tests. These ranges satisfy Vite, Rolldown and Vitest together. The installed
+package's runtime requirement remains Node.js 22 or newer.
 
 Use this path when you download the repository from GitHub and want to test the local build:
 
@@ -121,7 +125,7 @@ per-client configuration below, which give the exact `command` and `args`.
 
 The npm package for this release is `@zktx.io/sui-mcp`. The commands below
 require the requested version to be published; confirm it with
-`npm view @zktx.io/sui-mcp@0.5.1 version` before switching. Both installation
+`npm view @zktx.io/sui-mcp@0.5.2 version` before switching. Both installation
 methods start the same `sui-mcp` stdio MCP server. Use a local checkout when
 working on a version that has not been published.
 
@@ -143,8 +147,11 @@ then restart the client:
 
 ```bash
 npx -y @zktx.io/sui-mcp
-# wait until it logs "review server started", then stop it with Ctrl-C
+# after the server binds or a healthy peer is confirmed, stop it with Ctrl-C
 ```
+
+The startup log reports either an owned shared server or an authenticated healthy
+peer. A bootstrap failure instead reports its stage and reason on stderr.
 
 ### Install once (global, fastest startup, pinned version)
 
@@ -213,7 +220,7 @@ restart first. A previous wallet pairing can remain in the wallet app; remove
 an unwanted pairing there rather than assuming new local storage disconnected it.
 
 Replace the old registration instead of adding a second one. Use exactly
-`sui-mcp` for the registration name and select `@zktx.io/sui-mcp@0.5.1` in its
+`sui-mcp` for the registration name and select `@zktx.io/sui-mcp@0.5.2` in its
 command arguments. Do not append an environment label, version or numeric
 suffix. Remove obsolete runtime environment overrides. If you set
 `SUI_MCP_DATA_DIR`, choose a new empty directory; never point it at another
@@ -734,7 +741,7 @@ If the user supplied a specific Sui address for `read.summarize_wallet_assets` o
 
 A 404 means the requested package or version could not be retrieved from the
 selected registry. Confirm the exact name and version, for example with
-`npm view @zktx.io/sui-mcp@0.5.1 version --registry=https://registry.npmjs.org`.
+`npm view @zktx.io/sui-mcp@0.5.2 version --registry=https://registry.npmjs.org`.
 A new version may not have been published or become visible yet; a mistyped name
 or an alternate/private registry can also explain the response. Check the
 publication result and registry configuration before retrying. Do not assume

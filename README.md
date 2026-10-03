@@ -27,7 +27,7 @@ Users can ask ordinary questions:
 - "How much are my USD-denominated assets together?"
 - "What is the shortfall?"
 
-This document describes `@zktx.io/sui-mcp@0.5.1`. Confirm that version is
+This document describes `@zktx.io/sui-mcp@0.5.2`. Confirm that version is
 published before using npm installation commands. For a local build, follow
 [Developer Checkout Setup](docs/MCP_SETUP.md#developer-checkout-setup).
 
@@ -193,12 +193,12 @@ running from a local checkout, see [docs/MCP_SETUP.md](docs/MCP_SETUP.md).
 
 ### Package and repository transition
 
-The package for this release is `@zktx.io/sui-mcp@0.5.1`, and its repository is
+The package for this release is `@zktx.io/sui-mcp@0.5.2`, and its repository is
 `zktx-mcp/sui-mcp`. The previous package is `@zktx.io/say-ur-intent` (through
 0.4.4). The older `@stelis/say-ur-intent@0.4.0` is also a separate package.
 Existing installations and MCP client registrations do not change names
 automatically. Before switching, confirm the new package with
-`npm view @zktx.io/sui-mcp@0.5.1 version`; renaming the repository does not publish
+`npm view @zktx.io/sui-mcp@0.5.2 version`; renaming the repository does not publish
 an npm package or MCP Registry entry.
 
 Use the full scoped package name: the unscoped `sui-mcp` package is a different

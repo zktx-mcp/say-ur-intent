@@ -51,10 +51,13 @@ Source-checkout scripts are not packaged product commands, MCP tools, review-tim
 
 ## Release Package Check
 
-`npm run release:check` is a source-checkout maintainer command. Node 22 or newer,
+`npm run release:check` is a source-checkout maintainer command. Node 22.12+ within
+22.x, or Node 24+,
 installed development dependencies, npm registry access for a temporary tarball
 installation, local loopback sockets, and reachable Sui mainnet endpoints are
 required. Native SQLite must work both in the checkout and the installed package.
+The source build and tests use Vite, Rolldown and Vitest's common Node ranges; the
+installed package's Node runtime requirement is documented in MCP Setup.
 The runtime uses its built-in endpoints unless `SUI_GRPC_URL` or `SUI_GRAPHQL_URL`
 is supplied; the actual mainnet checks remain enabled.
 

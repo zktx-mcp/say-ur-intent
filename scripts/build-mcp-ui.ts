@@ -66,7 +66,7 @@ for (const kind of ["account", "receipt", "chart", "connect", "review"]) {
     build: {
       outDir, write: false, emptyOutDir: false,
       cssCodeSplit: false, assetsInlineLimit: Number.MAX_SAFE_INTEGER,
-      rollupOptions: { input: join(root, `src/mcp-ui/view/${kind}-entry.ts`), output: { inlineDynamicImports: true, format: "es" } }
+      rollupOptions: { input: join(root, `src/mcp-ui/view/${kind}-entry.ts`), output: { codeSplitting: false, format: "es" } }
     }
   });
   if (Array.isArray(built) || !("output" in built)) throw new Error(`${kind} card requires one completed build output.`);
